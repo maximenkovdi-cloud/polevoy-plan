@@ -200,6 +200,10 @@ const Ln = (x1, y1, x2, y2) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}
 const DOT = '<circle cx="12" cy="12" r="1.6" fill="currentColor"/>';
 const BENCHMARK = '<circle cx="12" cy="12" r="8" fill="currentColor"/><rect x="5.5" y="10.6" width="13" height="2.8" fill="#fff"/>';
 
+// Молния — жирный зигзаг с залитой стрелкой (читается и на мелком знаке); рамка с буквой — для газовых сооружений
+const BOLT = '<path d="M15.2 3.2 8.4 12.8h6.4l-4.5 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="miter" stroke-miterlimit="6"/><path d="M9.2 21.4 12.4 20.1 8.7 17.6Z" fill="currentColor"/>';
+const BOXK = t => `<rect x="2.5" y="5" width="19" height="14" fill="#fff" stroke="currentColor" stroke-width="1.6"/><text x="12" y="16.3" font-size="10.5" text-anchor="middle" font-style="italic" font-family="Roboto Condensed, Arial Narrow, Arial, sans-serif" fill="currentColor">${t}</text>`;
+
 const POINT_GROUPS = [
   { id: 'geo', title: 'Геодезия', items: [
     { id: 'ggs', name: 'Пункт ГГС', svg: '<path d="M12 3 L21.5 20 H2.5 Z" fill="#fff" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="14.3" r="1.6" fill="currentColor"/>' },
@@ -227,25 +231,109 @@ const POINT_GROUPS = [
     { id: 'w_razr', name: 'Колодец разрушенный', svg: R, suffix: 'разр.' },
     { id: 'w_zam', name: 'Колодец под асфальтом', svg: R, suffix: 'зам.' }
   ]},
+  // группа 3 (ГКИНП 02-049-86, табл. 22–24, 29–31, 65; сверены 29.10.2026)
+  { id: 'poles', title: 'Опоры', items: [
+    { id: 'pole_wood', name: 'Столб деревянный', svg: '<circle cx="12" cy="12" r="4.2" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' },
+    { id: 'pole_brace', name: 'Столб деревянный с подкосом', svg: '<circle cx="9" cy="12" r="4.2" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + Ln(13.2, 12, 21.5, 12) + '<path d="M21.5 12 18.5 10M21.5 12 18.5 14" stroke="currentColor" stroke-width="1.4" fill="none"/>' },
+    { id: 'pole_metal', name: 'Столб металлический', svg: '<circle cx="12" cy="12" r="4.2" fill="currentColor"/>' },
+    { id: 'pole_truss', name: 'Опора металлическая фермовая', svg: '<rect x="6" y="6" width="12" height="12" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + Ln(6, 6, 18, 18) + Ln(18, 6, 6, 18) },
+    { id: 'pole_rc', name: 'Столб железобетонный', svg: '<circle cx="12" cy="12" r="5" fill="#fff" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/>' },
+    { id: 'lamp', name: 'Фонарь на столбе', svg: '<circle cx="12" cy="19" r="3" fill="#fff" stroke="currentColor" stroke-width="1.5"/>' + Ln(12, 16, 12, 6) + Ln(8, 6, 16, 6) + '<path d="M8 6v3.5M16 6v3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' }
+  ]},
+  { id: 'power', title: 'Электро', items: [
+    { id: 'tr_pole', name: 'Трансформатор на столбе', svg: '<rect x="8" y="9" width="8" height="6" fill="currentColor"/>', suffix: 'тр.' },
+    { id: 'tr_base', name: 'Трансформатор на постаменте', svg: '<rect x="5" y="6" width="14" height="12" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + BOLT, suffix: 'тр.' },
+    { id: 'tr_booth', name: 'Будка трансформаторная', svg: '<rect x="4" y="4" width="16" height="16" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + BOLT, suffix: 'б.тр.' },
+    { id: 'substation', name: 'Подстанция электрическая', svg: '<rect x="3" y="3" width="18" height="18" fill="#fff" stroke="currentColor" stroke-width="2.2"/>' + BOLT, suffix: 'эл.подст.' }
+  ]},
+  { id: 'misc', title: 'Связь, вода', items: [
+    { id: 'tel_booth', name: 'Будка телефонная', svg: '<path d="M4.5 10.2Q12 2.8 19.5 10.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M3.6 10.6 6.4 8.4M20.4 10.6 17.6 8.4" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>' + Ln(10, 8.6, 10, 11.6) + Ln(14, 8.6, 14, 11.6) + '<path d="M7.6 11.6H16.4L18.6 19H5.4Z" fill="currentColor"/>' },
+    { id: 'tel_cab', name: 'Шкаф телефонный распределительный', svg: '<rect x="4.5" y="8" width="15" height="8" fill="#fff" stroke="currentColor" stroke-width="1.6"/><circle cx="8.8" cy="12" r="1.15" fill="currentColor"/><circle cx="12" cy="12" r="1.15" fill="currentColor"/><circle cx="15.2" cy="12" r="1.15" fill="currentColor"/>' },
+    { id: 'hydrant', name: 'Гидрант пожарный', svg: '<circle cx="12" cy="16" r="4.2" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + Ln(12, 11.8, 12, 5) + Ln(9, 5, 15, 5), suffix: 'гидр.' },
+    { id: 'col_hyd', name: 'Колонка гидравлическая (водоналивная)', svg: '<path d="M10 20.5V3.5h5.5" fill="none" stroke="currentColor" stroke-width="3"/>' },
+    { id: 'col_water', name: 'Колонка водоразборная (водонапорная)', svg: '<path d="M11 3.5V16.5q0 3.5 4.5 3.5" fill="none" stroke="currentColor" stroke-width="2.8"/><line x1="8.2" y1="8.5" x2="14.2" y2="8.5" stroke="currentColor" stroke-width="2.2"/>' },
+    { id: 'col_drink', name: 'Колонка питьевая', svg: '<path d="M11 5V16.5q0 3.5 4.5 3.5" fill="none" stroke="currentColor" stroke-width="2.8"/><path d="M6 6.5V4.5H16V6.5" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="8.4" y1="9.5" x2="13.8" y2="9.5" stroke="currentColor" stroke-width="2"/>' }
+  ]},
+  // группа 4 («Правила начертания… подземных коммуникаций», табл. 2, 6; сверены 29.10.2026)
+  { id: 'netobj', title: 'На сетях', items: [
+    { id: 'kover', name: 'Ковер (газ)', svg: '<circle cx="12" cy="12" r="3.2" fill="currentColor"/>', suffix: 'ковер' },
+    { id: 'gas_booth', name: 'Будка смотровая (газ)', svg: BOXK('Н'), suffix: 'б.смотр.' },
+    { id: 'gas_kp', name: 'Контрольный пункт (газ)', svg: BOXK('Н'), suffix: 'контр.п.' },
+    { id: 'grs', name: 'Газораспределительная станция', svg: BOXK('К'), suffix: 'ГРС' },
+    { id: 'gru', name: 'Газораспределительная установка', svg: BOXK('К'), suffix: 'ГРУ' },
+    { id: 'grp', name: 'Газорегуляторный пункт', svg: BOXK('К'), suffix: 'ГРП' },
+    { id: 'chamber', name: 'Камера на теплосети', svg: '<path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="6" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + Ln(6.2, 10, 17.8, 10) + Ln(12, 10, 12, 18) },
+    { id: 'shurf', name: 'Шурф', svg: '<rect x="7" y="7" width="10" height="10" fill="#fff" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/>' }
+  ]},
   { id: 'other', title: 'Прочее', items: [
     { id: 'mark', name: 'Метка (просто точка)', svg: '<circle cx="12" cy="12" r="6" fill="#c62828" stroke="#fff" stroke-width="2"/>' }
   ]}
 ];
 
+// Подземные сети — по «Правилам начертания… подземных коммуникаций» (табл. 1–6), надземные — по ГКИНП (табл. 23–24, 31)
+// Коды прежних видов (p_v, p_k, p_d…) сохранены, чтобы уже нарисованные линии не потерялись
+const P = 0.35, C = 0.2;
 const LINE_GROUPS = [
-  { id: 'pipes', title: 'Трубопроводы', items: [
-    { id: 'p_v', name: 'Водопровод', kind: 'indexed', index: 'В', w: 0.35 },
-    { id: 'p_k', name: 'Канализация бытовая', kind: 'indexed', index: 'К', w: 0.35 },
-    { id: 'p_kl', name: 'Канализация ливневая', kind: 'indexed', index: 'Кл', w: 0.35 },
-    { id: 'p_d', name: 'Дренаж', kind: 'indexed', index: 'Д', w: 0.35 },
-    { id: 'p_g', name: 'Газопровод', kind: 'indexed', index: 'Г', w: 0.35 },
-    { id: 'p_t', name: 'Теплосеть', kind: 'indexed', index: 'Т', w: 0.35 },
-    { id: 'p_n', name: 'Нефтепровод', kind: 'indexed', index: 'Н', w: 0.35 }
+  { id: 'water', title: 'Водопровод', items: [
+    { id: 'v_p', name: 'Водопровод питьевой', kind: 'indexed', index: 'Вп', w: P },
+    { id: 'v_pzh', name: 'Водопровод хоз-противопожарный', kind: 'indexed', index: 'Впж', w: P },
+    { id: 'v_pr', name: 'Водопровод производственный', kind: 'indexed', index: 'Впр', w: P },
+    { id: 'p_v', name: 'Водопровод без подразделения', kind: 'indexed', index: 'В', w: P }
+  ]},
+  { id: 'sewer', title: 'Канализация', items: [
+    { id: 'k_b', name: 'Канализация бытовая', kind: 'indexed', index: 'Кб', w: P },
+    { id: 'k_pr', name: 'Канализация производственная', kind: 'indexed', index: 'Кпр', w: P },
+    { id: 'k_prl', name: 'Канализация производственно-ливневая', kind: 'indexed', index: 'Кпрл', w: P },
+    { id: 'p_kl', name: 'Канализация ливневая', kind: 'indexed', index: 'Кл', w: P },
+    { id: 'k_uch', name: 'Канализация условно чистых вод', kind: 'indexed', index: 'Куч', w: P },
+    { id: 'k_him', name: 'Канализация химически загрязнённых стоков', kind: 'indexed', index: 'Кхим', w: P },
+    { id: 'p_k', name: 'Канализация без подразделения', kind: 'indexed', index: 'К', w: P },
+    { id: 'k_flow', name: 'Канализация самотёчная (с направлением течения)', kind: 'indexed', index: 'К', w: P, flow: true },
+    { id: 'p_d', name: 'Дренаж', kind: 'indexed', index: 'Др', w: P }
+  ]},
+  { id: 'gas', title: 'Газ', items: [
+    { id: 'g_nd', name: 'Газопровод низкого давления', kind: 'indexed', index: 'Г', w: P, tag: 'н.д.' },
+    { id: 'g_sd', name: 'Газопровод среднего давления', kind: 'indexed', index: 'Г', w: P, tag: 'с.д.' },
+    { id: 'g_vd', name: 'Газопровод высокого давления', kind: 'indexed', index: 'Г', w: P, tag: 'в.д.' },
+    { id: 'p_g', name: 'Газопровод (давление не указано)', kind: 'indexed', index: 'Г', w: P }
+  ]},
+  { id: 'heat', title: 'Тепло', items: [
+    { id: 'p_t', name: 'Теплосеть бесканальная', kind: 'indexed', index: 'Т', w: P },
+    { id: 't_kn', name: 'Теплосеть в непроходном канале', kind: 'indexed', index: 'Т', w: C, double: 1.2, tag: 'к.н.', defCount: 2 },
+    { id: 't_kp', name: 'Теплосеть в полупроходном канале', kind: 'indexed', index: 'Т', w: C, double: 1.5, tag: 'к.п.', defCount: 2 },
+    { id: 't_prh', name: 'Теплосеть в проходном канале', kind: 'indexed', index: 'Т ст', w: C, double: 1.8, defCount: 2 }
   ]},
   { id: 'cables', title: 'Кабели', items: [
-    { id: 'c_hv', name: 'Электрокабель высокого напр.', kind: 'cable', double: true, w: 0.2 },
-    { id: 'c_lv', name: 'Электрокабель низкого напр.', kind: 'cable', double: false, w: 0.2 },
-    { id: 'c_s', name: 'Кабель связи', kind: 'indexed', index: 'V', w: 0.2 }
+    { id: 'c_lv', name: 'Электрокабель низкого напр. в траншее', kind: 'cable', double: false, w: C },
+    { id: 'c_hv', name: 'Электрокабель высокого напр. в траншее', kind: 'cable', double: true, w: C },
+    { id: 'c_hvp', name: 'Электрокабель высокого напр. со сторожками', kind: 'cable', double: true, w: C, post: true },
+    { id: 'c_block', name: 'Электрокабели в блоках', kind: 'cable', numbered: true, w: C, tag: 'бл.', defCount: 16 },
+    { id: 'c_chan', name: 'Электрокабели в канале', kind: 'cable', numbered: true, double2: 1.1, w: C, tag: 'к.', defCount: 4 }
+  ]},
+  { id: 'comm', title: 'Связь', items: [
+    { id: 'c_s', name: 'Кабель связи (общий)', kind: 'indexed', index: 'V', w: C },
+    { id: 's_br', name: 'Кабель связи бронированный', kind: 'indexed', index: 'Бр', w: C },
+    { id: 's_tel', name: 'Телефонная канализация', kind: 'indexed', index: '', w: C, numberedIndex: true, defCount: 4 },
+    { id: 's_radio', name: 'Кабель радиовещательный', kind: 'indexed', index: 'р', w: C },
+    { id: 's_sig', name: 'Кабель сигнализации', kind: 'indexed', index: 'с', w: C },
+    { id: 's_tlg', name: 'Кабель телеграфный', kind: 'plain', w: C }
+  ]},
+  { id: 'special', title: 'Спец.', items: [
+    { id: 'p_n', name: 'Нефтепровод', kind: 'indexed', index: 'Н', w: P },
+    { id: 'sp_vx', name: 'Воздухопровод', kind: 'indexed', index: 'ВХ', w: P },
+    { id: 'sp_m', name: 'Мазутопровод', kind: 'indexed', index: 'М', w: P },
+    { id: 'sp_b', name: 'Бензопровод', kind: 'indexed', index: 'Б', w: P },
+    { id: 'sp_z', name: 'Золопровод', kind: 'indexed', index: 'З', w: P },
+    { id: 'sp_p', name: 'Паропровод', kind: 'indexed', index: 'П', w: P },
+    { id: 'collector', name: 'Общий коллектор', kind: 'indexed', index: 'Т', w: C, double: 2.2 },
+    { id: 'sleeve', name: 'Трубопровод в защитной трубе (футляре)', kind: 'indexed', index: 'В', w: P, sleeve: true }
+  ]},
+  { id: 'air', title: 'Надземные', items: [
+    { id: 'lep_rc', name: 'ЛЭП высокого напр., ж/б опоры', kind: 'power', double: true, pole: 'circle', w: 0.25, placeholder: '10 кВ 3 пр.' },
+    { id: 'lep_truss', name: 'ЛЭП высокого напр., металлические фермы', kind: 'power', double: true, pole: 'rect', w: 0.25, placeholder: '35 кВ 6 пр.' },
+    { id: 'lep_lv', name: 'ЛЭП низкого напряжения', kind: 'power', double: false, pole: 'dot', w: 0.25, placeholder: '380 В 4 пр.' },
+    { id: 'lep_cab', name: 'ЛЭП кабельная воздушная', kind: 'power', double: true, pole: 'circle', w: 0.25, placeholder: '1 кВ 1 каб.' },
+    { id: 'air_comm', name: 'Линия связи воздушная', kind: 'air', w: C, placeholder: '8 пр. телеф.' }
   ]},
   { id: 'own', title: 'Своё', items: [
     { id: 'route', name: 'Трасса демонтажа (пикеты)', kind: 'route', w: 0.3, color: '#c62828' },
@@ -257,13 +345,17 @@ const POINTS = Object.fromEntries(POINT_GROUPS.flatMap(g => g.items).map(s => [s
 const LINES = Object.fromEntries(LINE_GROUPS.flatMap(g => g.items).map(s => [s.id, s]));
 // Цвет сети по назначению — включается переключателем «Цвета сетей»; по умолчанию всё чёрное, как в «Правилах»
 const NET_KIND = {
-  p_v: 'water', w_v: 'water',
-  p_k: 'sewer', p_kl: 'sewer', p_d: 'sewer', w_k: 'sewer', w_kl: 'sewer', w_d: 'sewer',
-  p_t: 'heat', w_t: 'heat',
-  p_g: 'gas', w_g: 'gas',
-  c_hv: 'el', c_lv: 'el', w_e: 'el',
+  p_v: 'water', v_p: 'water', v_pzh: 'water', v_pr: 'water', w_v: 'water', hydrant: 'water', col_hyd: 'water', col_water: 'water', col_drink: 'water',
+  p_k: 'sewer', k_b: 'sewer', k_pr: 'sewer', k_prl: 'sewer', p_kl: 'sewer', k_uch: 'sewer', k_him: 'sewer', k_flow: 'sewer', p_d: 'sewer', w_k: 'sewer', w_kl: 'sewer', w_d: 'sewer',
+  p_t: 'heat', t_kn: 'heat', t_kp: 'heat', t_prh: 'heat', w_t: 'heat', chamber: 'heat',
+  p_g: 'gas', g_nd: 'gas', g_sd: 'gas', g_vd: 'gas', w_g: 'gas', kover: 'gas', gas_booth: 'gas', gas_kp: 'gas', grs: 'gas', gru: 'gas', grp: 'gas',
+  c_hv: 'el', c_hvp: 'el', c_lv: 'el', c_block: 'el', c_chan: 'el', w_e: 'el', lep_rc: 'el', lep_truss: 'el', lep_lv: 'el', lep_cab: 'el',
+  tr_pole: 'el', tr_base: 'el', tr_booth: 'el', substation: 'el',
   route: 'own'
 };
+// Состояние линии («Правила», табл. 5–6) — настройка в карточке любой линии
+const STATES = [['', 'действующая'], ['off', 'недействующая'], ['reserve', 'в резерве'], ['project', 'проектируемая'], ['build', 'строящаяся'], ['staked', 'вынесенная в натуру'], ['approx', 'по неуточнённым данным']];
+const STATE_NAME = Object.fromEntries(STATES);
 const NET_HEX = { water: '#1b8a3a', sewer: '#8d5524', heat: '#1f4fbf', gas: '#1aa3d9', el: '#d32f2f', own: '#7b1fa2' };   // для KML
 let netColors = false;           // читается из настроек ниже, когда готовы pref()
 function netColor(type, fallback) {
@@ -544,11 +636,29 @@ function at(path, s) {
   return { x: p.x, y: p.y, a: Math.atan2(q.y - r.y, q.x - r.x) * 180 / Math.PI };
 }
 const upright = a => (a > 90 || a < -90) ? a + 180 : a;
-function segment(g, path, s0, s1, w) {
-  const pts = [];
-  for (let s = s0; s < s1; s += 3) { const p = path.getPointAtLength(s); pts.push(p.x.toFixed(1) + ',' + p.y.toFixed(1)); }
-  const p = path.getPointAtLength(s1); pts.push(p.x.toFixed(1) + ',' + p.y.toFixed(1));
-  el('polyline', { points: pts.join(' '), fill: 'none', stroke: 'currentColor', 'stroke-width': w, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);
+// Отрезок вдоль линии; off — сдвиг вбок в «мм» (двойные линии каналов, футляр), dash — штрих
+function segment(g, path, s0, s1, w, off, dash) {
+  const pts = [], o = (off || 0) * MM;
+  const push = s => {
+    const p = o ? at(path, s) : path.getPointAtLength(s), a = o ? (p.a + 90) * Math.PI / 180 : 0;
+    pts.push((p.x + Math.cos(a) * o).toFixed(1) + ',' + (p.y + Math.sin(a) * o).toFixed(1));
+  };
+  for (let s = s0; s < s1; s += 3) push(s);
+  push(s1);
+  el('polyline', Object.assign({ points: pts.join(' '), fill: 'none', stroke: 'currentColor', 'stroke-width': w, 'stroke-linecap': 'butt', 'stroke-linejoin': 'round' },
+    dash ? { 'stroke-dasharray': dash } : {}), g);
+}
+// Поперечный штрих длиной h (мм) под углом deg к линии
+function tick(g, path, s, h, w, deg) {
+  const p = at(path, s), a = (p.a + (deg == null ? 90 : deg)) * Math.PI / 180, r = h * MM / 2;
+  el('line', { x1: p.x - Math.cos(a) * r, y1: p.y - Math.sin(a) * r, x2: p.x + Math.cos(a) * r, y2: p.y + Math.sin(a) * r, stroke: 'currentColor', 'stroke-width': w }, g);
+}
+// Опора на линии ЛЭП / связи: точка, кружок или прямоугольник
+function poleMark(g, path, s, kind, w) {
+  const p = at(path, s), r = 0.6 * MM;
+  if (kind === 'dot') el('circle', { cx: p.x, cy: p.y, r, fill: 'currentColor' }, g);
+  if (kind === 'circle') el('circle', { cx: p.x, cy: p.y, r, fill: 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w }, g);
+  if (kind === 'rect') el('rect', { x: -r, y: -r * 0.8, width: 2 * r, height: 1.6 * r, fill: 'currentColor', transform: `translate(${p.x} ${p.y}) rotate(${p.a})` }, g);
 }
 function text(g, path, s, str, o) {
   o = Object.assign({ dy: 0, size: 2.8 * MM, italic: true }, o);
@@ -575,7 +685,7 @@ function textBox(p, deg, dy, w, h) {
 // Ставит надпись вдоль линии, только если место свободно; возвращает, поставлена ли она
 function placeText(g, path, s, str, o) {
   o = Object.assign({ dy: 0, size: 2.8 * MM, italic: true }, o);
-  const p = at(path, s), box = textBox(p, upright(p.a), o.dy, textWidth(str, o.size, o.italic) + 4, o.size + 3);
+  const p = at(path, s), box = textBox(p, upright(p.a), o.dy, textWidth(str, o.size, o.italic) + 6, o.size + 5);   // с запасом на обводку
   if (hits(box, curOwner)) return false;                              // своя линия не мешает, всё остальное — мешает
   text(g, path, s, str, o);
   reserve(box, 'txt');                                                // а поставленная надпись мешает всем, в том числе надписям своей линии
@@ -591,30 +701,61 @@ function arrowHead(g, path, s, dir, double, w) {
 }
 
 const DRAW = {
+  // «——Вп——Вп——»; двойная линия (канал, коллектор), футляр, стрелка течения; индекс в резерве — «тр»
   indexed(g, path, spec, line, w) {
-    const total = path.getTotalLength(), period = 9 * MM;
-    const index = (line.count > 1 ? line.count : '') + spec.index, size = 3 * MM;
+    const total = path.getTotalLength(), period = 9 * MM, size = 3 * MM;
+    const index = line.state === 'reserve' ? 'тр' : spec.numberedIndex ? String(line.count || 1) : (line.count > 1 ? line.count : '') + spec.index;
     const gap = textWidth(index, size, true) + 1.6 * MM;                 // разрыв точно по ширине индекса и с полями
+    const run = (a, b) => {
+      if (spec.double) { segment(g, path, a, b, w, -spec.double); segment(g, path, a, b, w, spec.double); } else segment(g, path, a, b, w);
+      if (spec.sleeve) { segment(g, path, a, b, Math.max(1, C * MM), -1.4, `${1.6 * MM} ${0.8 * MM}`); segment(g, path, a, b, Math.max(1, C * MM), 1.4, `${1.6 * MM} ${0.8 * MM}`); }
+    };
     for (let s = 0; s < total;) {
       const e = Math.min(s + period, total);
-      segment(g, path, s, e, w);
-      if (e + gap < total && !placeText(g, path, e + gap / 2, index, { size })) segment(g, path, e, e + gap, w);   // место занято — линия без разрыва
+      run(s, e);
+      if (e + gap < total && !placeText(g, path, e + gap / 2, index, { size })) run(e, e + gap);   // место занято — линия без разрыва
       s = e + gap;
     }
+    if (spec.flow && total > 14 * MM) {                                 // стрелка направления течения — по ходу рисования
+      const q = at(path, total * 0.8);
+      el('polygon', { points: `0,0 ${-2.4 * MM},${-0.9 * MM} ${-2.4 * MM},${0.9 * MM}`, fill: 'currentColor', transform: `translate(${q.x} ${q.y}) rotate(${q.a})` }, g);
+    }
   },
+  // Кабели: «←→ ——— ←→»; в блоках/канале — число прокладок в разрывах, в канале — двойная линия без стрелок; сторожки
   cable(g, path, spec, line, w) {
-    const total = path.getTotalLength(), arrowLen = 8 * MM, plain = 9 * MM, gap = 2 * MM;
+    const total = path.getTotalLength(), arrowLen = 8 * MM, plain = 9 * MM, size = 3 * MM;
+    const num = spec.numbered ? String(line.count || spec.defCount || 1) : null, gap = num ? textWidth(num, size, true) + 1.6 * MM : 2 * MM;
+    const run = (a, b) => { if (spec.double2) { segment(g, path, a, b, w, -spec.double2); segment(g, path, a, b, w, spec.double2); } else segment(g, path, a, b, w); };
+    const sep = (a) => { if (num && a + gap < total && !placeText(g, path, a + gap / 2, num, { size })) run(a, a + gap); };
     for (let s = 0, n = 0; s < total; n++) {
       const a1 = Math.min(s + arrowLen, total);
-      segment(g, path, s, a1, w);
-      if (a1 - s > 3 * MM) { arrowHead(g, path, s, -1, spec.double, w); arrowHead(g, path, a1, 1, spec.double, w); }
-      if (n % 2 === 0 && a1 - s > 4 * MM) placeText(g, path, (s + a1) / 2, 'каб.', { dy: -2.8 * MM, size: 2.8 * MM });
-      s = a1 + gap;
+      run(s, a1);
+      if (a1 - s > 3 * MM && !spec.double2) { arrowHead(g, path, s, -1, spec.double, w); arrowHead(g, path, a1, 1, spec.double, w); }
+      if (!num && n % 2 === 0 && a1 - s > 4 * MM) placeText(g, path, (s + a1) / 2, 'каб.', { dy: -2.8 * MM, size: 2.8 * MM });
+      if (spec.post && n % 2 === 1 && a1 - s > 4 * MM) { const m = (s + a1) / 2; poleMark(g, path, m, 'dot', w); tick(g, path, m, 1.8, w); }
+      sep(a1); s = a1 + gap;
       if (s >= total) break;
       const p1 = Math.min(s + plain, total);
-      segment(g, path, s, p1, w);
-      s = p1 + gap;
+      run(s, p1);
+      sep(p1); s = p1 + gap;
     }
+  },
+  // ЛЭП: «←•→ ——— ←•→», опора в середине стрелочного отрезка; напряжение и число проводов — подписью линии
+  power(g, path, spec, line, w) {
+    const total = path.getTotalLength(), arrowLen = 9 * MM, plain = 8 * MM;
+    for (let s = 0; s < total;) {
+      const a1 = Math.min(s + arrowLen, total);
+      segment(g, path, s, a1, w);
+      if (a1 - s > 4 * MM) { arrowHead(g, path, s, -1, spec.double, w); arrowHead(g, path, a1, 1, spec.double, w); poleMark(g, path, (s + a1) / 2, spec.pole, w); }
+      s = a1; if (s >= total) break;
+      const p1 = Math.min(s + plain, total); segment(g, path, s, p1, w); s = p1;
+    }
+  },
+  // Воздушная связь: тонкая линия с кружками опор через 9 мм
+  air(g, path, spec, line, w) {
+    const total = path.getTotalLength(), step = 9 * MM;
+    segment(g, path, 0, total, w);
+    for (let s = step / 2; s < total; s += step) poleMark(g, path, s, 'circle', w);
   },
   plain(g, path, spec, line, w) { segment(g, path, 0, path.getTotalLength(), w); },
   route(g, path, spec, line, w, pts) {
@@ -655,8 +796,16 @@ function drawLines() {
     const path = el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'none' }, g);
     if (path.getTotalLength() < 6) continue;
     curOwner = line.id;                                                // надписи своей линии не мешают ей самой
-    DRAW[spec.kind](g, path, spec, line, Math.max(1, spec.w * MM) * (isSel ? 1.8 : 1), pts);   // тонкая ровная линия, как пером
-    if (line.caption) captionAlong(g, path, pts, line.caption);
+    const w = Math.max(1, spec.w * MM) * (isSel ? 1.8 : 1), thin = Math.max(0.8, 0.15 * MM) * (isSel ? 1.8 : 1), total = path.getTotalLength();
+    // состояние линии: проектируемая и вынесенная в натуру — тонким пунктиром, остальные — обычным знаком с пометкой
+    if (line.state === 'project') segment(g, path, 0, total, thin, 0, `${10 * MM} ${4 * MM}`);
+    else if (line.state === 'staked') { segment(g, path, 0, total, thin, 0, `${10 * MM} ${2 * MM}`); for (let s = 11 * MM; s < total; s += 12 * MM) tick(g, path, s, 2, thin); }
+    else if (line.state === 'build' || line.state === 'approx') segment(g, path, 0, total, thin);
+    else DRAW[spec.kind](g, path, spec, line, line.state === 'off' ? Math.max(1, C * MM) : w, pts);   // тонкая ровная линия, как пером
+    if (line.state === 'off') for (let s = 5 * MM; s < total; s += 11 * MM) tick(g, path, s, 2.8, Math.max(1, C * MM) * 1.3, 60);   // косые штрихи — недействующая
+    const tag = { build: 'стр.', approx: 'ориент.' }[line.state];
+    const cap = [tag, spec.tag, line.caption].filter(Boolean).join(' ');
+    if (cap) captionAlong(g, path, pts, cap);
     curOwner = null;
   }
 }
@@ -690,10 +839,21 @@ function linePreview(spec, w, h) {
   const c = netColor(spec.id, spec.color || 'var(--sym)'), m = h / 2;
   const head = (x, d) => `<path d="M${x + 4 * d} ${m - 4}L${x} ${m}L${x + 4 * d} ${m + 4}" fill="none" stroke="currentColor" stroke-width="1.3"/>`;
   let body;
-  if (spec.kind === 'cable') body = `<path d="M4 ${m}H${w - 4}" stroke="currentColor" stroke-width="1.3"/>${head(4, 1)}${head(w - 4, -1)}${spec.double ? head(9, 1) + head(w - 9, -1) : ''}`;
+  const ital = 'font-style="italic" font-family="Roboto Condensed, Arial Narrow, Arial, sans-serif" fill="currentColor"';
+  if (spec.kind === 'cable' && spec.double2) body = `<path d="M2 ${m - 3}H${w * 0.38}M${w * 0.62} ${m - 3}H${w - 2}M2 ${m + 3}H${w * 0.38}M${w * 0.62} ${m + 3}H${w - 2}" stroke="currentColor" stroke-width="1.1"/><text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.defCount}</text>`;
+  else if (spec.kind === 'cable' && spec.numbered) body = `<path d="M3 ${m}H${w * 0.36}M${w * 0.64} ${m}H${w - 3}" stroke="currentColor" stroke-width="1.2"/>${head(3, 1)}${head(w - 3, -1)}<text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.defCount}</text>`;
+  else if (spec.kind === 'cable') body = `<path d="M4 ${m}H${w - 4}" stroke="currentColor" stroke-width="1.2"/>${head(4, 1)}${head(w - 4, -1)}${spec.double ? head(9, 1) + head(w - 9, -1) : ''}${spec.post ? `<circle cx="${w / 2}" cy="${m}" r="2.2" fill="currentColor"/><path d="M${w / 2} ${m}V${m - 6}" stroke="currentColor" stroke-width="1.2"/>` : ''}`;
+  else if (spec.kind === 'power') {
+    const pole = spec.pole === 'dot' ? `<circle cx="${w / 2}" cy="${m}" r="2.4" fill="currentColor"/>` : spec.pole === 'rect' ? `<rect x="${w / 2 - 3}" y="${m - 2.2}" width="6" height="4.4" fill="currentColor"/>` : `<circle cx="${w / 2}" cy="${m}" r="2.4" fill="var(--symBg)" stroke="currentColor" stroke-width="1.2"/>`;
+    body = `<path d="M4 ${m}H${w - 4}" stroke="currentColor" stroke-width="1.2"/>${head(4, 1)}${head(w - 4, -1)}${spec.double ? head(9, 1) + head(w - 9, -1) : ''}${pole}`;
+  }
+  else if (spec.kind === 'air') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="1.1"/>${[0.2, 0.5, 0.8].map(k => `<circle cx="${w * k}" cy="${m}" r="2.2" fill="var(--symBg)" stroke="currentColor" stroke-width="1.1"/>`).join('')}`;
+  else if (spec.kind === 'indexed' && spec.double) body = `<path d="M2 ${m - 3.5}H${w * 0.3}M${w * 0.7} ${m - 3.5}H${w - 2}M2 ${m + 3.5}H${w * 0.3}M${w * 0.7} ${m + 3.5}H${w - 2}" stroke="currentColor" stroke-width="1.1"/><text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.defCount && spec.defCount > 1 ? spec.defCount : ''}${spec.index}</text>`;
+  else if (spec.kind === 'indexed' && spec.sleeve) body = `<path d="M2 ${m}H${w * 0.3}M${w * 0.7} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.6"/><path d="M2 ${m - 5}H${w - 2}M2 ${m + 5}H${w - 2}" stroke="currentColor" stroke-width="1" stroke-dasharray="5 3"/><text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.index}</text>`;
+  else if (spec.kind === 'indexed' && spec.numberedIndex) body = `<path d="M2 ${m}H${w * 0.36}M${w * 0.64} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.2"/><text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.defCount}</text>`;
   else if (spec.kind === 'route') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="2.2" stroke-dasharray="7 3"/><path d="M${w * 0.3} ${m - 5}V${m + 5}M${w * 0.7} ${m - 5}V${m + 5}" stroke="currentColor" stroke-width="2"/>`;
   else if (spec.kind === 'plain') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="1.8"/>`;
-  else body = `<path d="M2 ${m}H${w * 0.3}M${w * 0.7} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.8"/><text x="${w / 2}" y="${m + 4.5}" font-size="13" text-anchor="middle" font-style="italic" font-family="Georgia, serif" fill="currentColor">${spec.index}</text>`;
+  else body = `<path d="M2 ${m}H${w * 0.3}M${w * 0.7} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.5"/><text x="${w / 2}" y="${m + 4.5}" font-size="12.5" text-anchor="middle" ${ital}>${spec.index}</text>${spec.flow ? `<path d="M${w - 2} ${m}l-6 -2.6v5.2Z" fill="currentColor"/>` : ''}`;
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="color:${c};display:block">${body}</svg>`;
 }
 function showCard(kind, obj) {
@@ -709,9 +869,10 @@ function showCard(kind, obj) {
     ll = [obj.lat, obj.lng];
   } else {
     const s = LINES[obj.type] || LINES.plain;
-    icon = linePreview(s, 40, 34); name = s.name + (obj.count > 1 ? ` · ${obj.count} прокладки` : '');
-    sub = obj.caption ? esc(obj.caption) : 'без подписи';
+    icon = linePreview(s, 40, 34); name = s.name + (obj.count > 1 ? ` · прокладок ${obj.count}` : '');
+    sub = [s.tag, obj.caption].filter(Boolean).map(esc).join(' ') || 'без подписи';
     kv = [['Длина', lineLength(obj).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' м'], ['Точек', obj.latlngs.length]];
+    if (obj.state) kv.push(['Состояние', STATE_NAME[obj.state] || obj.state]);
     if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${obj.pk0}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
   }
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x" data-act="close">×</button></div>
@@ -789,12 +950,17 @@ function editLine(line, isNew) {
       { key: 'pkDir', label: 'Нумерация по ходу', type: 'select', value: line.pkDir || 1, options: [[1, 'растёт: 39, 40…'], [-1, 'убывает: 39, 38…']], half: true },
       { key: 'caption', label: 'Подпись к трассе', value: line.caption, placeholder: 'марка кабеля, например ААБл 3×120', hint: 'Пикеты ставятся сами через каждые 100 м по местности.' });
   } else {
-    if (spec.kind === 'indexed') fields.push({ key: 'count', label: 'Прокладок в траншее', type: 'number', value: line.count || 1 });
-    fields.push({ key: 'caption', label: 'Подпись вдоль линии', value: line.caption, placeholder: 'например «гл. 1.2» или «ст. 100»' });
+    if (spec.kind === 'indexed' || spec.numbered)
+      fields.push({ key: 'count', label: spec.numbered || spec.numberedIndex ? 'Число прокладок' : 'Прокладок в траншее', type: 'number', value: line.count || spec.defCount || 1, half: true });
+    fields.push({ key: 'state', label: 'Состояние', type: 'select', value: line.state || '', options: STATES, half: true });
+    fields.push({ key: 'caption', label: spec.kind === 'power' || spec.kind === 'air' ? 'Напряжение, число проводов' : 'Подпись вдоль линии',
+      value: line.caption, placeholder: spec.placeholder ? 'например ' + spec.placeholder : 'например «гл. 1.2» или «ст. 100»',
+      hint: spec.tag ? `«${spec.tag}» поставится само.` : '' });
   }
   openForm(spec.name, fields, v => {
     if ('pk0' in v) { line.pk0 = v.pk0 === '' ? null : parseNum(v.pk0); if (line.pk0 != null && isNaN(line.pk0)) { toast('ПК — это число'); return false; } line.pkDir = Number(v.pkDir) || 1; }
     if ('count' in v) line.count = Math.max(1, parseInt(v.count, 10) || 1);
+    if ('state' in v) line.state = v.state || '';
     line.caption = v.caption || '';
     if (isNew) data.lines.push(line);
     save(); showCard('line', line);
@@ -857,7 +1023,7 @@ function refreshTemp() {
 function finishMode() {
   if (mode.kind === 'line') {
     if (mode.latlngs.length < 2) { toast('Нужно хотя бы две точки'); return; }
-    const line = { id: uid(), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: 1 };
+    const line = { id: uid(), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: (LINES[mode.type] || {}).defCount || 1, state: '' };
     setMode(null);
     editLine(line, true);
     return;
@@ -1013,7 +1179,7 @@ function toKml() {
     const s = LINES[l.type] || LINES.plain;
     const hex = (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || s.color || '#111111';
     const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
-    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir })}` +
+    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
       `<LineString><tessellate>1</tessellate><coordinates>${l.latlngs.map(a => a[1] + ',' + a[0] + ',0').join(' ')}</coordinates></LineString></Placemark>`;
   });
@@ -1048,7 +1214,8 @@ $('fileIn').onchange = async e => {
       } else if (ls) {
         const type = LINES[ext.tk_type] ? ext.tk_type : 'plain';
         data.lines.push({ id: uid(), type, latlngs: coords(ls).map(c => [c[1], c[0]]), caption: ext.tk_type ? (ext.tk_caption || '') : name,
-          count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1 }); nl++;
+          count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1,
+          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '' }); nl++;
       }
     }
     save(); redrawAll(); MENU.fit();
@@ -1123,7 +1290,9 @@ const GridLayer = L.Layer.extend({
     for (const { c, deg, x, y } of labels) {
       const at = `translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(`, cc = m.layerPointToContainerPoint(c);
       const sx = 'X – ' + fmt(x), sy = 'Y – ' + fmt(y), wx = textWidth(sx, fontPx, true) + 2, wy = textWidth(sy, fontPx, true) + 2;
-      const bx = { x: cc.x + gap, y: cc.y - 3 - fh, w: wx, h: fh }, by = { x: cc.x - 3 - fh, y: cc.y - gap - wy, w: fh, h: wy };
+      const PAD = 3;                                                   // запас на нижние выносные элементы букв и белую обводку
+      const bx = { x: cc.x + gap - PAD, y: cc.y - 3 - fh - PAD, w: wx + 2 * PAD, h: fh + 2 * PAD + 2 };
+      const by = { x: cc.x - 3 - fh - PAD, y: cc.y - gap - wy - PAD, w: fh + 2 * PAD + 2, h: wy + 2 * PAD };
       if (!hits(bx, null)) t(at + deg.toFixed(2) + ')', sx);
       if (!hits(by, null)) t(at + (deg - 90).toFixed(2) + ')', sy);
     }
