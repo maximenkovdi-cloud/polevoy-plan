@@ -46,7 +46,7 @@
     text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff, 0 0 4px #fff; }
   .gridlbl .gx { top:-3px; transform:translateY(-100%); }               /* над горизонтальной чертой, справа */
   .gridlbl .gyw { position:absolute; left:0; top:0; transform:rotate(-90deg); transform-origin:0 0; }
-  .gridlbl .gy { top:3px; }                                              /* после поворота — справа от вертикальной черты */
+  .gridlbl .gy { top:-3px; transform:translateY(-100%); }               /* после поворота — над вертикальной чертой (слева от неё) */
   .netlines { overflow:visible; pointer-events:none; }
   .netlines text { paint-order: stroke; stroke:#fff; stroke-width:3px; stroke-linejoin:round; }
   .leaflet-top { top:52px; }
@@ -639,10 +639,10 @@ const GridLayer = L.Layer.extend({
         // наклон креста на экране (сближение меридианов) — подписи идут параллельно его чертам
         const a = m.latLngToContainerPoint(ll(x, y - arm)), b = m.latLngToContainerPoint(ll(x, y + arm));
         const deg = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
-        // X — горизонтально над правой чертой креста; Y — вертикально справа от верхней черты (читается снизу вверх)
+        // X — горизонтально над правой чертой креста; Y — вертикально над верхней чертой (читается снизу вверх, текст над линией)
         const html = `<div class="glw" style="transform:rotate(${deg.toFixed(2)}deg);font-size:${fs}px">` +
-          `<div class="gx" style="left:${gap}px">X ${fmt(x)}</div>` +
-          `<div class="gyw"><div class="gy" style="left:${gap}px">Y ${fmt(y)}</div></div></div>`;
+          `<div class="gx" style="left:${gap}px">X – ${fmt(x)}</div>` +
+          `<div class="gyw"><div class="gy" style="left:${gap}px">Y – ${fmt(y)}</div></div></div>`;
         L.marker(ll(x, y), { icon: L.divIcon({ className: 'gridlbl', html, iconSize: [0, 0], iconAnchor: [0, 0] }), interactive: false, keyboard: false }).addTo(group);
       }
     }
