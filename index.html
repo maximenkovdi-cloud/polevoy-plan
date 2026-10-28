@@ -13,6 +13,9 @@
   body.day   { --bg:#f4f1e8; --panel:#ffffff; --ink:#151515; --muted:#5d5d5d; --line:#d9d6cc; --accent:#1f5fbf; --accentInk:#fff; --red:#c62828; --sym:#111111; --symBg:#ffffff; --halo:#ffffff; --shadow:0 1px 6px rgba(0,0,0,.18); --fs:14px; }
   body.sun   { --bg:#ffffff; --panel:#ffffff; --ink:#000000; --muted:#222222; --line:#000000; --accent:#0039a6; --accentInk:#fff; --red:#b00000; --sym:#000000; --symBg:#ffffff; --halo:#ffffff; --shadow:0 0 0 2px #000; --fs:15.5px; }
   body.night { --bg:#1c2127; --panel:#262c33; --ink:#e9edf1; --muted:#9aa5b1; --line:#38414b; --accent:#5aa2ff; --accentInk:#0d1117; --red:#ff6b6b; --sym:#e9edf1; --symBg:#1c2127; --halo:#1c2127; --shadow:0 1px 8px rgba(0,0,0,.5); --fs:14px; }
+  /* традиционные цвета сетей («Правила начертания…», п. 6 — по дополнительным требованиям) */
+  body { --c-water:#1b8a3a; --c-sewer:#8d5524; --c-heat:#1f4fbf; --c-gas:#1aa3d9; --c-el:#d32f2f; --c-own:#7b1fa2; }
+  body.night { --c-water:#4caf50; --c-sewer:#c49a6c; --c-heat:#6f9cff; --c-gas:#4fc3f7; --c-el:#ff6b6b; --c-own:#ce93d8; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { height:100%; margin:0; background:var(--bg); font:var(--fs)/1.35 system-ui, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
   #map { position:absolute; inset:0; background:var(--bg); }
@@ -247,6 +250,21 @@ const LINE_GROUPS = [
 
 const POINTS = Object.fromEntries(POINT_GROUPS.flatMap(g => g.items).map(s => [s.id, s]));
 const LINES = Object.fromEntries(LINE_GROUPS.flatMap(g => g.items).map(s => [s.id, s]));
+// Цвет сети по назначению — включается переключателем «Цвета сетей»; по умолчанию всё чёрное, как в «Правилах»
+const NET_KIND = {
+  p_v: 'water', w_v: 'water',
+  p_k: 'sewer', p_kl: 'sewer', p_d: 'sewer', w_k: 'sewer', w_kl: 'sewer', w_d: 'sewer',
+  p_t: 'heat', w_t: 'heat',
+  p_g: 'gas', w_g: 'gas',
+  c_hv: 'el', c_lv: 'el', w_e: 'el',
+  route: 'own'
+};
+const NET_HEX = { water: '#1b8a3a', sewer: '#8d5524', heat: '#1f4fbf', gas: '#1aa3d9', el: '#d32f2f', own: '#7b1fa2' };   // для KML
+let netColors = false;           // читается из настроек ниже, когда готовы pref()
+function netColor(type, fallback) {
+  const k = netColors && NET_KIND[type];
+  return k ? `var(--c-${k})` : fallback;
+}
 const PICKET_STEP_M = 100;     // пикет — каждые 100 м
 const MM = 4;                  // экранных пикселей на 1 «мм» знака
 const RECENT_MAX = 8;          // сколько «последних» знаков помнить
@@ -285,6 +303,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 // мелкие настройки (тема, вид координат, «последние») — только для удобства, без них всё работает
 function pref(key, def) { try { const v = localStorage.getItem('tk.' + key); return v == null ? def : JSON.parse(v); } catch (e) { return def; } }
 function setPref(key, v) { try { localStorage.setItem('tk.' + key, JSON.stringify(v)); } catch (e) { /* не критично */ } }
+netColors = pref('netColors', false);
 
 /* ───────────── Оформление: тема, размеры панелей ───────────── */
 
@@ -445,7 +464,7 @@ $('fabMe').onclick = () => {
 
 const pointLayer = L.layerGroup().addTo(map);
 let selected = null;                          // { kind: 'point'|'line', obj }
-function symbolSvg(svg, px) { return `<svg viewBox="0 0 24 24" width="${px}" height="${px}" style="color:var(--sym);display:block">${svg}</svg>`; }
+function symbolSvg(svg, px, color) { return `<svg viewBox="0 0 24 24" width="${px}" height="${px}" style="color:${color || 'var(--sym)'};display:block">${svg}</svg>`; }
 function pointLabel(p) {
   const s = POINTS[p.type] || POINTS.mark;
   return [s.prefix, p.name, s.suffix].filter(Boolean).join(' ');
@@ -455,7 +474,7 @@ function drawPoints() {
   for (const p of data.points) {
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [22, 22], iconAnchor: [11, 11],
-      html: symbolSvg(s.svg, 22) + (lbl ? `<span class="lbl">${esc(lbl)}</span>` : '') });
+      html: symbolSvg(s.svg, 22, netColor(p.type)) + (lbl ? `<span class="lbl">${esc(lbl)}</span>` : '') });
     L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (!mode) showCard('point', p); }).addTo(pointLayer);
   }
 }
@@ -561,7 +580,7 @@ function drawLines() {
     if (pts.length < 2) continue;
     const g = el('g', {}, netSvg);
     const isSel = selected && selected.obj === line;
-    g.style.color = isSel ? 'var(--accent)' : (spec.color || 'var(--sym)');
+    g.style.color = isSel ? 'var(--accent)' : netColor(line.type, spec.color || 'var(--sym)');
     const path = el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'none' }, g);
     if (path.getTotalLength() < 6) continue;
     DRAW[spec.kind](g, path, spec, line, spec.w * MM * 1.6 * (isSel ? 1.6 : 1), pts);
@@ -595,7 +614,7 @@ function lineLength(line) { let m = 0; for (let i = 1; i < line.latlngs.length; 
 
 function linePreview(spec, w, h) {
   w = w || 46; h = h || 22;
-  const c = spec.color || 'var(--sym)', m = h / 2;
+  const c = netColor(spec.id, spec.color || 'var(--sym)'), m = h / 2;
   const head = (x, d) => `<path d="M${x + 4 * d} ${m - 4}L${x} ${m}L${x + 4 * d} ${m + 4}" fill="none" stroke="currentColor" stroke-width="1.3"/>`;
   let body;
   if (spec.kind === 'cable') body = `<path d="M4 ${m}H${w - 4}" stroke="currentColor" stroke-width="1.3"/>${head(4, 1)}${head(w - 4, -1)}${spec.double ? head(9, 1) + head(w - 9, -1) : ''}`;
@@ -610,7 +629,7 @@ function showCard(kind, obj) {
   let icon, name, sub, kv, ll;
   if (kind === 'point') {
     const s = POINTS[obj.type] || POINTS.mark, c = coordText(L.latLng(obj.lat, obj.lng));
-    icon = symbolSvg(s.svg, 34); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
+    icon = symbolSvg(s.svg, 34, netColor(obj.type)); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [['СК-42', `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
     if (obj.h != null && obj.h !== '') kv.push(['Отметка', esc(obj.h) + ' м']);
@@ -803,7 +822,7 @@ function openPicker(kind) {
   const groups = kind === 'point' ? POINT_GROUPS : LINE_GROUPS, all = kind === 'point' ? POINTS : LINES;
   const recent = pref('recent.' + kind, []).filter(id => all[id]);
   let tab = recent.length ? 'recent' : groups[0].id, query = '';
-  const tile = s => `<button class="tile" data-pick="${s.id}">${kind === 'point' ? symbolSvg(s.svg, 32) : linePreview(s, 56, 30)}<span>${tileName(s.name)}</span></button>`;
+  const tile = s => `<button class="tile" data-pick="${s.id}">${kind === 'point' ? symbolSvg(s.svg, 32, netColor(s.id)) : linePreview(s, 56, 30)}<span>${tileName(s.name)}</span></button>`;
   const render = () => {
     let html = '';
     if (query) {
@@ -853,10 +872,12 @@ function openList(title, items, onPick) {
 $('fabLayers').onclick = () => {
   const items = [{ header: 'Подложка' }, ...Object.keys(bases).map(n => ({ id: 'base:' + n, icon: '🗺', text: n, on: n === baseName, check: true })),
     { header: 'Поверх карты' }, { id: 'grid', icon: '▦', text: 'Сетка СК-42', on: map.hasLayer(gridLayer), check: true },
+    { id: 'netcolors', icon: '🎨', text: 'Цвета сетей (традиционные)', on: netColors, check: true },
     ...Object.keys(rasterLayers).map(id => ({ id: 'r:' + id, icon: '🖼', text: rasterLayers[id].r.name, on: map.hasLayer(rasterLayers[id]), check: true }))];
   openList('Слои', items, pick => {
     if (pick.startsWith('base:')) setBase(pick.slice(5));
     if (pick === 'grid') MENU.grid();
+    if (pick === 'netcolors') MENU.netcolors();
     if (pick.startsWith('r:')) { const l = rasterLayers[pick.slice(2)]; if (map.hasLayer(l)) map.removeLayer(l); else l.addTo(map); }
     $('fabLayers').onclick();
   });
@@ -868,6 +889,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'import', icon: '⬆', text: 'Загрузить KML' },
   { header: 'Карта' },
   { id: 'grid', icon: '▦', text: 'Сетка СК-42', on: map.hasLayer(gridLayer), check: true },
+  { id: 'netcolors', icon: '🎨', text: netColors ? 'Цвета сетей: традиционные' : 'Цвета сетей: чёрные (по «Правилам»)', on: netColors, check: true },
   { id: 'raster', icon: '🖼', text: 'Наложить свой растр (план, ортофото, скан)' },
   { id: 'rasters', icon: '◐', text: 'Свои растры: прозрачность, удаление' },
   { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
@@ -885,6 +907,11 @@ const MENU = {
   raster: () => rasterInput.click(),
   rasters: () => rasterMenu(),
   theme: () => $('fabTheme').click(),
+  netcolors: () => {
+    netColors = !netColors; setPref('netColors', netColors); redrawAll();
+    if (selected) showCard(selected.kind, selected.obj);
+    toast(netColors ? 'Цвета сетей включены' : 'Все сети чёрные, как в «Правилах»');
+  },
   fit: () => {
     const all = data.points.map(p => [p.lat, p.lng]).concat(...data.lines.map(l => l.latlngs));
     if (all.length) map.fitBounds(all, { padding: [60, 60], maxZoom: 18 }); else toast('На карте пока ничего нет');
@@ -911,7 +938,8 @@ function toKml() {
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
-    const color = (s.color || '#111111').replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
+    const hex = (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || s.color || '#111111';
+    const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
     return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
       `<LineString><tessellate>1</tessellate><coordinates>${l.latlngs.map(a => a[1] + ',' + a[0] + ',0').join(' ')}</coordinates></LineString></Placemark>`;
