@@ -39,6 +39,14 @@
   .xy { font-size:1.08em; font-weight:700; margin-top:4px; letter-spacing:.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .xy small { font-weight:400; color:var(--muted); font-size:.75em; }
   #gpsLine { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); margin-top:3px; }
+  #satLine { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink); margin-top:3px; cursor:pointer; white-space:nowrap; overflow:hidden; }
+  #satLine #satText { overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+  #satLine .more { color:var(--muted); margin-left:auto; }
+  .sat-tab { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; margin-top:4px; }
+  .sat-tab th, .sat-tab td { padding:9px 6px; border-bottom:1px solid var(--line); text-align:right; }
+  .sat-tab th:first-child, .sat-tab td:first-child { text-align:left; }
+  .sat-tab th { color:var(--muted); font-weight:500; font-size:12.5px; }
+  .sat-tab tr.sum td { font-weight:700; }
   .dot { width:9px; height:9px; border-radius:50%; background:#9e9e9e; flex:none; }
   .dot.ok { background:#2e7d32; } .dot.mid { background:#f9a825; } .dot.bad { background:#c62828; }
 
@@ -164,6 +172,7 @@
   </div>
   <div id="coords"></div>
   <div id="gpsLine"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS выключен — нажмите ◎</span></div>
+  <div id="satLine" style="display:none"><span class="sat-ic">🛰</span><span id="satText"></span><span class="more">▾</span></div>
 </div>
 
 <svg id="cross" viewBox="0 0 34 34"><path d="M17 3v10M17 21v10M3 17h10M21 17h10" stroke="#c62828" stroke-width="2.4" stroke-linecap="round" paint-order="stroke"/><circle cx="17" cy="17" r="2" fill="#c62828"/></svg>
@@ -530,6 +539,7 @@ function calibrate() {
 
 let gps = null, gpsMarker = null, gpsCircle = null, gpsWatch = null;
 function startGps() {
+  startGnss();                                       // в Android-приложении — заодно и спутники
   if (!navigator.geolocation) { toast('В этом браузере нет GPS'); return; }
   if (gpsWatch != null) return;
   $('gpsText').textContent = 'Ищу спутники…'; $('gpsDot').className = 'dot mid';
@@ -552,7 +562,34 @@ function startGps() {
     $('gpsText').textContent = 'GPS: нет доступа — ' + err.message;
   }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
 }
+/* ───────────── Спутники ГНСС — только в Android-приложении (браузер этих данных не даёт) ───────────── */
+
+const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const GNSS = NATIVE && window.Capacitor.Plugins && window.Capacitor.Plugins.Gnss;
+const SAT_SHORT = { 'GPS': 'GPS', 'ГЛОНАСС': 'ГЛН', 'Galileo': 'GAL', 'BeiDou': 'BDS', 'QZSS': 'QZS', 'SBAS': 'SBAS', 'NavIC': 'NavIC', 'Прочие': 'проч.' };
+let sats = null, gnssOn = false;
+function showSats(st) {
+  sats = st;
+  $('satLine').style.display = 'flex';
+  $('satText').textContent = `Спутники ${st.used}/${st.total} · ` + (st.systems || []).map(s => `${SAT_SHORT[s.name] || s.name} ${s.used}/${s.seen}`).join(' · ');
+}
+function startGnss() {
+  if (!GNSS || gnssOn) return;
+  gnssOn = true;
+  GNSS.addListener('status', showSats);
+  GNSS.start().catch(e => { gnssOn = false; toast('Спутники: ' + (e && e.message || 'нет доступа')); });
+}
+$('satLine').onclick = () => {
+  if (!sats) return;
+  const rows = (sats.systems || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.seen}</td><td>${s.used}</td><td>${s.snr}</td></tr>`).join('');
+  showSheet(`<div class="sh-head"><b>Спутники ГНСС</b><button class="x" data-close>×</button></div>
+    <table class="sat-tab"><tr><th>Система</th><th>Видно</th><th>В решении</th><th>Сигнал, дБ·Гц</th></tr>${rows}
+    <tr class="sum"><td>Всего</td><td>${sats.total}</td><td>${sats.used}</td><td></td></tr></table>
+    <div class="hint" style="margin-top:10px;color:var(--muted);font-size:12.5px">Обновляется раз в секунду. Сигнал выше 30 дБ·Гц — хороший, ниже 20 — слабый.</div>`);
+};
+
 $('fabMe').onclick = () => {
+  startGnss();
   if (!gps) { startGps(); return; }
   map.setView([gps.lat, gps.lng], Math.max(map.getZoom(), 17));
 };
