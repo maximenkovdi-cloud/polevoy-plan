@@ -45,7 +45,7 @@
   .fab.on { background:var(--accent); color:var(--accentInk); }
 
   /* ── масштаб ── */
-  #scale { position:absolute; left:10px; z-index:1000; background:var(--panel); color:var(--ink); border-radius:9px; padding:4px 9px 5px; font-size:12.5px; font-weight:700; box-shadow:var(--shadow); pointer-events:none; }
+  #scale { position:absolute; left:10px; z-index:1000; background:var(--panel); color:var(--ink); border-radius:10px; padding:7px 11px 7px; font-size:13px; font-weight:700; box-shadow:var(--shadow); cursor:pointer; }
   #scale i { display:block; height:5px; border:2px solid var(--ink); border-top:0; margin-top:3px; }
 
   /* ── нижняя панель ── */
@@ -316,16 +316,18 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display
 
 /* ───────────── Карта ───────────── */
 
-const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([55.75, 37.62], 5);
+// zoomSnap: 0 — масштаб меняется плавно, без шагов «ровно вдвое»: так можно встать точно на 1:500
+const map = L.map('map', { zoomControl: true, attributionControl: true, zoomSnap: 0, zoomDelta: 1, wheelPxPerZoomLevel: 120 }).setView([55.75, 37.62], 5);
 map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');   // без флажка, только ссылка на библиотеку
 const OSM = '© участники OpenStreetMap';
+const MAX_ZOOM = 22;           // глубже, чем дают подложки (их снимки растягиваются), — чтобы 1:200 и 1:500 помещались на любом экране
 const bases = {
-  'Схема (OSM)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 19, attribution: OSM }),
-  'Схема контрастная (HOT)': L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 19, subdomains: 'abc', attribution: OSM + ', стиль HOT / OSM France' }),
-  'Тропы и грунтовки (CyclOSM)': L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20, subdomains: 'abc', attribution: OSM + ', CyclOSM' }),
-  'Рельеф (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 17, subdomains: 'abc', attribution: OSM + ', SRTM | © OpenTopoMap (CC-BY-SA)' }),
-  'Спутник подробный (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20, maxNativeZoom: 18, attribution: 'Снимки © Esri, Maxar, Earthstar Geographics' }),
-  'Спутник обзорный (Sentinel-2)': L.tileLayer('https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg', { maxZoom: 20, maxNativeZoom: 14, attribution: 'Sentinel-2 cloudless — s2maps.eu, EOX IT Services GmbH (модиф. данные Copernicus Sentinel 2023), CC BY-NC-SA 4.0' })
+  'Схема (OSM)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 19, attribution: OSM }),
+  'Схема контрастная (HOT)': L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 19, subdomains: 'abc', attribution: OSM + ', стиль HOT / OSM France' }),
+  'Тропы и грунтовки (CyclOSM)': L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 20, subdomains: 'abc', attribution: OSM + ', CyclOSM' }),
+  'Рельеф (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 17, subdomains: 'abc', attribution: OSM + ', SRTM | © OpenTopoMap (CC-BY-SA)' }),
+  'Спутник подробный (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: MAX_ZOOM, maxNativeZoom: 18, attribution: 'Снимки © Esri, Maxar, Earthstar Geographics' }),
+  'Спутник обзорный (Sentinel-2)': L.tileLayer('https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg', { maxZoom: MAX_ZOOM, maxNativeZoom: 14, attribution: 'Sentinel-2 cloudless — s2maps.eu, EOX IT Services GmbH (модиф. данные Copernicus Sentinel 2023), CC BY-NC-SA 4.0' })
 };
 let baseName = pref('base', 'Схема (OSM)');
 if (!bases[baseName]) baseName = 'Схема (OSM)';
@@ -355,18 +357,54 @@ $('coordSeg').onclick = e => {
 };
 map.on('move zoomend', updateInfo);
 
-// Масштаб «1:N»: размер экранного пикселя — ~0,16 мм на телефоне и ~0,26 мм на компьютере
-const PX_MM = matchMedia('(pointer: coarse)').matches ? 0.159 : 0.2646;
+// Масштаб «1:N»: размер экранного пикселя — ~0,16 мм на телефоне и ~0,26 мм на компьютере; точнее — калибровкой по линейке
+const PX_MM_DEFAULT = matchMedia('(pointer: coarse)').matches ? 0.159 : 0.2646;
+let PX_MM = pref('pxmm', PX_MM_DEFAULT);
 const NICE_M = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000];
-function updateScale() {
+const SCALES = [200, 500, 1000, 2000, 5000, 10000, 25000];
+function metersPerPx() {
   const y = map.getSize().y / 2, a = map.containerPointToLatLng([0, y]), b = map.containerPointToLatLng([100, y]);
-  const mPerPx = a.distanceTo(b) / 100;
+  return a.distanceTo(b) / 100;
+}
+function setScale(denom) {
+  const cur = metersPerPx(), target = denom * PX_MM / 1000;
+  if (!cur || !target) return;
+  map.setZoom(map.getZoom() + Math.log2(cur / target));
+}
+function updateScale() {
+  const mPerPx = metersPerPx();
   if (!mPerPx) return;
   const denom = mPerPx * 1000 / PX_MM, p = Math.pow(10, Math.floor(Math.log10(denom)) - 1);
-  const round = Math.round(denom / p) * p;
+  const preset = SCALES.find(s => Math.abs(denom / s - 1) < 0.01);      // стоим на стандартном масштабе — пишем его ровно
+  const round = preset || Math.round(denom / p) * p;
   const meters = NICE_M.find(m => m / mPerPx >= 50) || NICE_M[NICE_M.length - 1];
-  $('scaleText').textContent = `1:${round.toLocaleString('ru-RU')} · ${meters >= 1000 ? meters / 1000 + ' км' : meters + ' м'}`;
+  $('scaleText').textContent = `1:${round.toLocaleString('ru-RU')} · ${meters >= 1000 ? meters / 1000 + ' км' : meters + ' м'} ▾`;
   $('scaleBar').style.width = Math.round(meters / mPerPx) + 'px';
+}
+$('scale').onclick = () => openList('Масштаб', [
+  { header: 'Встать в масштаб' },
+  ...SCALES.map(s => ({ id: String(s), icon: '⤢', text: '1:' + s.toLocaleString('ru-RU') + (s === 500 ? ' — исполнительная съёмка' : '') })),
+  { header: 'Точность' },
+  { id: 'cal', icon: '📏', text: PX_MM === PX_MM_DEFAULT ? 'Откалибровать экран по линейке' : 'Калибровка экрана: сделана — повторить или сбросить' }
+], pick => pick === 'cal' ? calibrate() : setScale(Number(pick)));
+
+// Калибровка: на экране полоса известной длины в пикселях, геодезист меряет её линейкой
+const CAL_PX = 240;
+function calibrate() {
+  showSheet(`<div class="sh-head"><b>Калибровка экрана</b><button class="x" data-close>×</button></div><div class="form">
+    <div class="hint" style="font-size:13.5px">Приложите линейку к полосе ниже и измерьте её длину в миллиметрах — от левого края до правого.</div>
+    <div style="margin:16px 0 6px;height:22px;width:${CAL_PX}px;border:2px solid var(--ink);border-top:0;position:relative">
+      <div style="position:absolute;left:0;right:0;top:9px;height:3px;background:var(--accent)"></div></div>
+    <label for="f_mm">Длина полосы, мм</label><input id="f_mm" inputmode="decimal" placeholder="например 38,5" autocomplete="off">
+    <div class="hint">Сейчас: 1 точка экрана = ${PX_MM.toFixed(4).replace('.', ',')} мм${PX_MM === PX_MM_DEFAULT ? ' (примерно, без калибровки)' : ' (по калибровке)'}.</div>
+    <div class="acts"><button class="btn" id="calReset">Сбросить</button><button class="btn primary" id="calSave">Сохранить</button></div></div>`);
+  $('calSave').onclick = () => {
+    const mm = parseNum($('f_mm').value);
+    const px = mm / CAL_PX;
+    if (!(px > 0.05 && px < 0.6)) { toast('Проверьте длину: обычно это от 20 до 100 мм'); return; }
+    PX_MM = px; setPref('pxmm', px); closeSheet(); updateScale(); toast('Готово: масштаб на экране теперь по линейке');
+  };
+  $('calReset').onclick = () => { PX_MM = PX_MM_DEFAULT; setPref('pxmm', PX_MM_DEFAULT); closeSheet(); updateScale(); toast('Калибровка сброшена'); };
 }
 
 /* ───────────── GPS ───────────── */
