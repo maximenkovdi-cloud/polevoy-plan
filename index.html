@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1f3a5f">
+<title>Полевой план</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+<style>
+  :root { --bar:#1f3a5f; --barText:#fff; --ink:#1b1b1b; --muted:#666; --line:#ddd; --accent:#c62828; --sheet:#fff; }
+  * { box-sizing: border-box; }
+  html, body { height:100%; margin:0; background:#e9e7e1; font:15px/1.35 system-ui, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
+  #map { position:absolute; inset:0; }
+  #info { position:absolute; top:0; left:0; right:0; z-index:1000; background:rgba(31,58,95,.92); color:var(--barText); padding:6px 12px; font-size:13px; font-variant-numeric: tabular-nums; }
+  #info b { font-weight:600; }
+  #info .row { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #cross { position:absolute; left:50%; top:50%; width:28px; height:28px; margin:-14px 0 0 -14px; z-index:900; pointer-events:none; }
+  #mode { position:absolute; left:8px; right:8px; bottom:76px; z-index:1000; background:#fff; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.25); padding:8px 10px; display:none; }
+  #mode .title { font-weight:600; margin-bottom:6px; }
+  #mode .btns { display:flex; flex-wrap:wrap; gap:6px; }
+  #bar { position:absolute; left:0; right:0; bottom:0; z-index:1000; background:var(--bar); display:flex; justify-content:space-around; padding:6px 4px calc(6px + env(safe-area-inset-bottom)); }
+  #bar button { background:none; border:0; color:var(--barText); font-size:12px; display:flex; flex-direction:column; align-items:center; gap:2px; min-width:64px; padding:4px; }
+  #bar button span.i { font-size:22px; line-height:1; }
+  button.b { border:1px solid var(--line); background:#f6f6f3; border-radius:8px; padding:8px 12px; font-size:14px; color:var(--ink); }
+  button.b.primary { background:var(--bar); color:#fff; border-color:var(--bar); }
+  button.b.danger { color:var(--accent); }
+  #sheet { position:absolute; inset:0; z-index:2000; background:rgba(0,0,0,.35); display:none; }
+  #sheet .panel { position:absolute; left:0; right:0; bottom:0; max-height:78%; overflow:auto; background:var(--sheet); border-radius:14px 14px 0 0; padding:12px 12px 24px; }
+  #sheet h3 { margin:12px 4px 6px; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+  #sheet .item { display:flex; align-items:center; gap:12px; padding:9px 6px; border-bottom:1px solid #eee; cursor:pointer; }
+  #sheet .item:active { background:#f0efe9; }
+  #sheet .item svg { flex:none; }
+  #sheet .close { float:right; }
+  .sym { background:none; border:0; }
+  .sym .lbl { position:absolute; left:24px; top:-2px; white-space:nowrap; font:italic 12px Georgia, "Times New Roman", serif; color:#111; text-shadow:0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; }
+  .leaflet-popup-content { margin:10px 12px; font-size:14px; }
+  .pop .t { font-weight:600; margin-bottom:4px; }
+  .pop .c { font-size:12.5px; color:#444; font-variant-numeric: tabular-nums; }
+  .pop .btns { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .netlines { overflow:visible; pointer-events:none; }
+  .netlines text { paint-order: stroke; stroke:#fff; stroke-width:3px; stroke-linejoin:round; }
+  .leaflet-top { top:52px; }
+  .leaflet-bottom { bottom:62px; }
+  #toast { position:absolute; left:50%; bottom:90px; transform:translateX(-50%); z-index:3000; background:#222; color:#fff; padding:8px 14px; border-radius:18px; font-size:14px; display:none; max-width:90%; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="info">
+  <div class="row" id="infoWgs">WGS-84: —</div>
+  <div class="row" id="infoSk">СК-42: —</div>
+  <div class="row" id="infoGps">GPS: нажмите «Я»</div>
+</div>
+<svg id="cross" viewBox="0 0 28 28"><path d="M14 2v9M14 17v9M2 14h9M17 14h9" stroke="#c62828" stroke-width="2" stroke-linecap="round"/><circle cx="14" cy="14" r="1.6" fill="#c62828"/></svg>
+
+<div id="mode">
+  <div class="title" id="modeTitle"></div>
+  <div class="btns" id="modeBtns"></div>
+</div>
+
+<div id="bar">
+  <button id="btnMe"><span class="i">◎</span>Я</button>
+  <button id="btnPoint"><span class="i">⊕</span>Знак</button>
+  <button id="btnLine"><span class="i">〰</span>Линия</button>
+  <button id="btnMenu"><span class="i">☰</span>Меню</button>
+</div>
+
+<div id="sheet"><div class="panel" id="sheetPanel"></div></div>
+<div id="toast"></div>
+<input type="file" id="fileIn" accept=".kml,application/vnd.google-earth.kml+xml,text/xml" style="display:none">
+
+<script>
+'use strict';
+
+/* ───────────── Условные знаки (ГКИНП 02-049-86, 1:1000–1:500; сверены 28.10.2026) ───────────── */
+
+const R = '<circle cx="12" cy="12" r="9" fill="#fff" stroke="currentColor" stroke-width="1.6"/>';
+const Ln = (x1, y1, x2, y2) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`;
+const DOT = '<circle cx="12" cy="12" r="1.6" fill="currentColor"/>';
+const BENCHMARK = '<circle cx="12" cy="12" r="8" fill="currentColor"/><rect x="5.5" y="10.6" width="13" height="2.8" fill="#fff"/>';
+
+const POINT_GROUPS = [
+  { title: 'Геодезическая основа', items: [
+    { id: 'ggs', name: 'Пункт ГГС', svg: '<path d="M12 3 L21.5 20 H2.5 Z" fill="#fff" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="14.3" r="1.6" fill="currentColor"/>' },
+    { id: 'sgusch', name: 'Пункт сети сгущения', svg: '<rect x="4" y="4" width="16" height="16" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + DOT },
+    { id: 'ss_long', name: 'Точка съёмочной сети, долговр.', svg: '<circle cx="12" cy="12" r="5.5" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + DOT + Ln(12, 1.5, 12, 5) + Ln(12, 19, 12, 22.5) + Ln(1.5, 12, 5, 12) + Ln(19, 12, 22.5, 12) },
+    { id: 'ss_temp', name: 'Точка съёмочной сети, врем.', svg: '<circle cx="12" cy="12" r="6.5" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + DOT },
+    { id: 'rep_grunt', name: 'Репер грунтовый', svg: BENCHMARK },
+    { id: 'rep_fund', name: 'Репер фундаментальный', svg: BENCHMARK, prefix: 'ф' }
+  ]},
+  { title: 'Колодцы (люки)', items: [
+    { id: 'w_any', name: 'Колодец без разделения', svg: R + Ln(5.6, 5.6, 18.4, 18.4), suffix: 'Л' },
+    { id: 'w_v', name: 'Колодец водопровода', svg: R + Ln(3, 12, 21, 12) },
+    { id: 'w_k', name: 'Колодец канализации', svg: R + Ln(3, 12, 21, 12) + Ln(12, 3, 12, 21) },
+    { id: 'w_kl', name: 'Колодец ливнёвки', svg: R + Ln(3.4, 10.4, 20.6, 10.4) + Ln(3.4, 13.6, 20.6, 13.6) },
+    { id: 'w_d', name: 'Колодец дренажа', svg: R + Ln(3.4, 10.4, 20.6, 10.4) + Ln(3.4, 13.6, 20.6, 13.6) + Ln(12, 3, 12, 21) },
+    { id: 'w_g', name: 'Колодец газопровода', svg: R + Ln(5.6, 18.4, 18.4, 5.6) },
+    { id: 'w_n', name: 'Колодец нефтепровода', svg: R + Ln(8.5, 4.5, 8.5, 19.5) + Ln(15.5, 4.5, 15.5, 19.5) + Ln(8.5, 12, 15.5, 12) },
+    { id: 'w_t', name: 'Колодец теплосети', svg: R + Ln(3.5, 9.5, 20.5, 9.5) + Ln(12, 9.5, 12, 21) },
+    { id: 'w_e', name: 'Колодец электрокабелей', svg: R + '<polyline points="6.5,16 12,10.5 17.5,16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>' },
+    { id: 'w_s', name: 'Колодец кабелей связи', svg: R + Ln(12, 12, 12, 3) + Ln(12, 12, 4.4, 16.5) + Ln(12, 12, 19.6, 16.5) },
+    { id: 'w_air', name: 'Колодец воздухопровода', svg: R + Ln(5.6, 5.6, 18.4, 18.4) + Ln(5.6, 18.4, 18.4, 5.6) },
+    { id: 'w_maz', name: 'Колодец мазутопровода', svg: R + '<path d="M5 9.5 A7.6 7.6 0 0 1 19 9.5 Q12 15 12 17 Q12 15 5 9.5 Z" fill="currentColor"/>' },
+    { id: 'w_benz', name: 'Колодец бензопровода', svg: R + DOT },
+    { id: 'w_zol', name: 'Колодец золопровода', svg: R + Ln(12, 3, 12, 21) },
+    { id: 'w_razr', name: 'Колодец разрушенный', svg: R, suffix: 'разр.' },
+    { id: 'w_zam', name: 'Колодец под асфальтом', svg: R, suffix: 'зам.' }
+  ]},
+  { title: 'Прочее', items: [
+    { id: 'mark', name: 'Метка (просто точка)', svg: '<circle cx="12" cy="12" r="6" fill="#c62828" stroke="#fff" stroke-width="2"/>' }
+  ]}
+];
+
+const LINE_GROUPS = [
+  { title: 'Трубопроводы подземные', items: [
+    { id: 'p_v', name: 'Водопровод', kind: 'indexed', index: 'В', w: 0.35 },
+    { id: 'p_k', name: 'Канализация бытовая', kind: 'indexed', index: 'К', w: 0.35 },
+    { id: 'p_kl', name: 'Канализация ливневая', kind: 'indexed', index: 'Кл', w: 0.35 },
+    { id: 'p_d', name: 'Дренаж', kind: 'indexed', index: 'Д', w: 0.35 },
+    { id: 'p_g', name: 'Газопровод', kind: 'indexed', index: 'Г', w: 0.35 },
+    { id: 'p_t', name: 'Теплосеть', kind: 'indexed', index: 'Т', w: 0.35 },
+    { id: 'p_n', name: 'Нефтепровод', kind: 'indexed', index: 'Н', w: 0.35 }
+  ]},
+  { title: 'Кабели подземные', items: [
+    { id: 'c_hv', name: 'Электрокабель высокого напр.', kind: 'cable', double: true, w: 0.2 },
+    { id: 'c_lv', name: 'Электрокабель низкого напр.', kind: 'cable', double: false, w: 0.2 },
+    { id: 'c_s', name: 'Кабель связи', kind: 'indexed', index: 'V', w: 0.2 }
+  ]},
+  { title: 'Своё', items: [
+    { id: 'route', name: 'Трасса демонтажа (пикеты)', kind: 'route', w: 0.3, color: '#c62828' },
+    { id: 'plain', name: 'Простая линия с подписью', kind: 'plain', w: 0.3 }
+  ]}
+];
+
+const POINTS = Object.fromEntries(POINT_GROUPS.flatMap(g => g.items).map(s => [s.id, s]));
+const LINES = Object.fromEntries(LINE_GROUPS.flatMap(g => g.items).map(s => [s.id, s]));
+const PICKET_STEP_M = 100;     // пикет — каждые 100 м
+const MM = 4;                  // экранных пикселей на 1 «мм» знака
+
+/* ───────────── Координаты: WGS-84 → СК-42 (Гаусс-Крюгер) ───────────── */
+
+// Параметры перехода Пулково-1942 → WGS-84 по ГОСТ Р 51794-2008
+const TOWGS84 = '+towgs84=23.57,-140.95,-79.8,0,0.35,0.79,-0.22';
+function sk42(lat, lng) {
+  const zone = Math.floor(lng / 6) + 1;
+  const gk = `+proj=tmerc +lat_0=0 +lon_0=${zone * 6 - 3} +k=1 +x_0=${zone * 1e6 + 500000} +y_0=0 +ellps=krass ${TOWGS84} +units=m +no_defs`;
+  const [y, x] = proj4('WGS84', gk, [lng, lat]);
+  return { zone, x, y };       // x — на север, y — на восток (с номером зоны впереди), как принято в геодезии
+}
+const f2 = v => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const f6 = v => v.toFixed(6);
+function coordText(ll) {
+  const s = sk42(ll.lat, ll.lng);
+  return { wgs: `${f6(ll.lat)}, ${f6(ll.lng)}`, sk: `X ${f2(s.x)}  Y ${f2(s.y)} (зона ${s.zone})`, s };
+}
+
+/* ───────────── Данные и хранение ───────────── */
+
+const STORE_KEY = 'tk.plan.v1';
+let data = { points: [], lines: [] };
+try { const raw = localStorage.getItem(STORE_KEY); if (raw) data = JSON.parse(raw); } catch (e) { /* хранилище недоступно — работаем без сохранения */ }
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); }
+  catch (e) { toast('Не удалось сохранить на телефоне — выгрузите KML через «Меню»'); }
+}
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+/* ───────────── Карта ───────────── */
+
+const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([55.75, 37.62], 5);
+const bases = {
+  'Схема (OSM)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© участники OpenStreetMap' }),
+  'Рельеф (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, subdomains: 'abc', attribution: '© OpenStreetMap, SRTM | © OpenTopoMap (CC-BY-SA)' })
+};
+bases['Схема (OSM)'].addTo(map);
+L.control.layers(bases, null, { position: 'topright' }).addTo(map);
+L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(map);
+
+const $ = id => document.getElementById(id);
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = 'none', 2600); }
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function updateInfo() {
+  const c = coordText(map.getCenter());
+  $('infoWgs').innerHTML = `<b>WGS-84</b> ${c.wgs}`;
+  $('infoSk').innerHTML = `<b>СК-42</b> ${c.sk}`;
+}
+map.on('move', updateInfo);
+
+/* ───────────── GPS ───────────── */
+
+let gps = null, gpsMarker = null, gpsCircle = null, follow = false;
+function startGps() {
+  if (!navigator.geolocation) { toast('В этом браузере нет GPS'); return; }
+  navigator.geolocation.watchPosition(p => {
+    gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+    const ll = [gps.lat, gps.lng];
+    if (!gpsMarker) {
+      gpsCircle = L.circle(ll, { radius: gps.acc, color: '#1e88e5', weight: 1, fillOpacity: .12, interactive: false }).addTo(map);
+      gpsMarker = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1, interactive: false }).addTo(map);
+      map.setView(ll, 18);
+    } else { gpsMarker.setLatLng(ll); gpsCircle.setLatLng(ll).setRadius(gps.acc); }
+    if (follow) map.panTo(ll);
+    $('infoGps').innerHTML = `<b>GPS</b> точность ±${Math.round(gps.acc)} м`;
+  }, err => {
+    $('infoGps').innerHTML = '<b>GPS</b> нет доступа: ' + esc(err.message);
+  }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+}
+$('btnMe').onclick = () => {
+  if (!gps) { startGps(); toast('Ищу спутники…'); return; }
+  map.setView([gps.lat, gps.lng], Math.max(map.getZoom(), 17));
+};
+
+/* ───────────── Точечные знаки ───────────── */
+
+const pointLayer = L.layerGroup().addTo(map);
+function symbolSvg(svg, px) { return `<svg viewBox="0 0 24 24" width="${px}" height="${px}" style="color:#111;display:block">${svg}</svg>`; }
+function pointLabel(p) {
+  const s = POINTS[p.type] || POINTS.mark;
+  return [s.prefix, p.name, s.suffix].filter(Boolean).join(' ');
+}
+function drawPoints() {
+  pointLayer.clearLayers();
+  for (const p of data.points) {
+    const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p);
+    const icon = L.divIcon({ className: 'sym', iconSize: [22, 22], iconAnchor: [11, 11],
+      html: symbolSvg(s.svg, 22) + (lbl ? `<span class="lbl">${esc(lbl)}</span>` : '') });
+    L.marker([p.lat, p.lng], { icon }).on('click', () => pointPopup(p)).addTo(pointLayer);
+  }
+}
+function pointPopup(p) {
+  const s = POINTS[p.type] || POINTS.mark, c = coordText(L.latLng(p.lat, p.lng));
+  const html = `<div class="pop"><div class="t">${esc(s.name)}${p.name ? ' — ' + esc(p.name) : ''}</div>
+    <div class="c">WGS-84: ${c.wgs}<br>СК-42: ${c.sk}</div>
+    <div class="btns"><button class="b" data-act="name">Подпись</button><button class="b danger" data-act="del">Удалить</button></div></div>`;
+  openPopup([p.lat, p.lng], html, {
+    name: () => { const v = prompt('Подпись у знака (номер, отметка):', p.name || ''); if (v !== null) { p.name = v.trim(); save(); drawPoints(); } },
+    del: () => { if (confirm('Удалить этот знак?')) { data.points = data.points.filter(x => x !== p); save(); drawPoints(); } }
+  });
+}
+function openPopup(ll, html, actions) {
+  const pop = L.popup({ maxWidth: 300 }).setLatLng(ll).setContent(html).openOn(map);
+  pop.getElement().addEventListener('click', e => {
+    const act = e.target.dataset && e.target.dataset.act;
+    if (act && actions[act]) { map.closePopup(); actions[act](); }
+  });
+}
+
+/* ───────────── Линии сетей: отрисовка с подписями вдоль линии ───────────── */
+
+const NS = 'http://www.w3.org/2000/svg';
+map.createPane('netPane').style.zIndex = 450;
+const netSvg = document.createElementNS(NS, 'svg');
+netSvg.classList.add('netlines');
+map.getPane('netPane').appendChild(netSvg);
+const hitLayer = L.layerGroup().addTo(map);
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function at(path, s) {
+  const total = path.getTotalLength();
+  const p = path.getPointAtLength(s);
+  const q = path.getPointAtLength(Math.min(s + 0.5, total)), r = path.getPointAtLength(Math.max(s - 0.5, 0));
+  return { x: p.x, y: p.y, a: Math.atan2(q.y - r.y, q.x - r.x) * 180 / Math.PI };
+}
+const upright = a => (a > 90 || a < -90) ? a + 180 : a;
+function segment(g, path, s0, s1, w) {
+  const pts = [];
+  for (let s = s0; s < s1; s += 3) { const p = path.getPointAtLength(s); pts.push(p.x.toFixed(1) + ',' + p.y.toFixed(1)); }
+  const p = path.getPointAtLength(s1); pts.push(p.x.toFixed(1) + ',' + p.y.toFixed(1));
+  el('polyline', { points: pts.join(' '), fill: 'none', stroke: 'currentColor', 'stroke-width': w, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);
+}
+function text(g, path, s, str, o) {
+  o = Object.assign({ dy: 0, size: 2.8 * MM, italic: true }, o);
+  const p = at(path, s), a = upright(p.a);
+  el('text', { 'font-size': o.size, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+    'font-family': 'Georgia, "Times New Roman", serif', 'font-style': o.italic ? 'italic' : 'normal', fill: 'currentColor',
+    transform: `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)}) rotate(${a.toFixed(1)}) translate(0 ${o.dy})` }, g).textContent = str;
+}
+function arrowHead(g, path, s, dir, double, w) {
+  const p = at(path, s), a = p.a * Math.PI / 180;
+  for (const off of double ? [0, 1.7 * MM] : [0]) {
+    const bx = p.x - Math.cos(a) * off * dir, by = p.y - Math.sin(a) * off * dir, len = 1.3 * MM, sp = 0.45;
+    el('polyline', { points: `${bx - Math.cos(a - sp) * len * dir},${by - Math.sin(a - sp) * len * dir} ${bx},${by} ${bx - Math.cos(a + sp) * len * dir},${by - Math.sin(a + sp) * len * dir}`,
+      fill: 'none', stroke: 'currentColor', 'stroke-width': w, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, g);
+  }
+}
+
+const DRAW = {
+  indexed(g, path, spec, line, w) {
+    const total = path.getTotalLength(), period = 9 * MM;
+    const index = (line.count > 1 ? line.count : '') + spec.index, gap = (index.length * 1.6 + 1.6) * MM;
+    for (let s = 0; s < total;) {
+      const e = Math.min(s + period, total);
+      segment(g, path, s, e, w);
+      if (e + gap < total) text(g, path, e + gap / 2, index);
+      s = e + gap;
+    }
+  },
+  cable(g, path, spec, line, w) {
+    const total = path.getTotalLength(), arrowLen = 8 * MM, plain = 9 * MM, gap = 2 * MM;
+    for (let s = 0, n = 0; s < total; n++) {
+      const a1 = Math.min(s + arrowLen, total);
+      segment(g, path, s, a1, w);
+      if (a1 - s > 3 * MM) { arrowHead(g, path, s, -1, spec.double, w); arrowHead(g, path, a1, 1, spec.double, w); }
+      if (n % 2 === 0 && a1 - s > 4 * MM) text(g, path, (s + a1) / 2, 'каб.', { dy: -2.2 * MM, size: 2.4 * MM });
+      s = a1 + gap;
+      if (s >= total) break;
+      const p1 = Math.min(s + plain, total);
+      segment(g, path, s, p1, w);
+      s = p1 + gap;
+    }
+  },
+  plain(g, path, spec, line, w) { segment(g, path, 0, path.getTotalLength(), w); },
+  route(g, path, spec, line, w, pts) {
+    const total = path.getTotalLength(), dash = 4 * MM, space = 1.5 * MM;
+    for (let s = 0; s < total;) { const e = Math.min(s + dash, total); segment(g, path, s, e, w); s = e + space; }
+    // Пикеты через каждые 100 м по местности: переводим метры в пиксели по отрезкам
+    const lls = line.latlngs.map(a => L.latLng(a));
+    let metersBefore = 0, pxBefore = 0, k = 0;
+    for (let i = 1; i < lls.length; i++) {
+      const m = lls[i - 1].distanceTo(lls[i]), px = pts[i - 1].distanceTo(pts[i]);
+      while ((k * PICKET_STEP_M) <= metersBefore + m + 1e-6) {
+        const sPx = pxBefore + (m ? (k * PICKET_STEP_M - metersBefore) / m : 0) * px, p = at(path, Math.min(sPx, total));
+        const a = (p.a + 90) * Math.PI / 180, h = 1.6 * MM;
+        el('line', { x1: p.x - Math.cos(a) * h, y1: p.y - Math.sin(a) * h, x2: p.x + Math.cos(a) * h, y2: p.y + Math.sin(a) * h, stroke: 'currentColor', 'stroke-width': w * 1.4 }, g);
+        if (line.pk0 != null && line.pk0 !== '') text(g, path, Math.min(sPx, total), 'ПК ' + (Number(line.pk0) + k * (line.pkDir || 1)), { dy: 3.4 * MM, size: 2.3 * MM, italic: false });
+        k++;
+      }
+      metersBefore += m; pxBefore += px;
+    }
+  }
+};
+
+function drawLines() {
+  const size = map.getSize();
+  L.DomUtil.setPosition(netSvg, map.containerPointToLayerPoint([0, 0]));
+  netSvg.setAttribute('width', size.x); netSvg.setAttribute('height', size.y);
+  netSvg.innerHTML = '';
+  for (const line of data.lines) {
+    const spec = LINES[line.type] || LINES.plain;
+    const pts = line.latlngs.map(a => map.latLngToContainerPoint(a));
+    if (pts.length < 2) continue;
+    const g = el('g', {}, netSvg);
+    g.style.color = spec.color || '#111';
+    const path = el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'none' }, g);
+    if (path.getTotalLength() < 6) continue;
+    DRAW[spec.kind](g, path, spec, line, spec.w * MM * 1.6, pts);
+    if (line.caption) text(g, path, path.getTotalLength() * 0.3, line.caption, { dy: -2.6 * MM, size: 2.4 * MM });
+  }
+}
+function drawHits() {
+  hitLayer.clearLayers();
+  for (const line of data.lines)
+    L.polyline(line.latlngs, { opacity: 0, weight: 22, interactive: true }).on('click', e => linePopup(line, e.latlng)).addTo(hitLayer);
+}
+map.on('moveend zoomend resize viewreset', drawLines);
+map.on('zoomstart', () => netSvg.style.opacity = 0);
+map.on('zoomend', () => netSvg.style.opacity = 1);
+
+function lineLength(line) { let m = 0; for (let i = 1; i < line.latlngs.length; i++) m += L.latLng(line.latlngs[i - 1]).distanceTo(line.latlngs[i]); return m; }
+function linePopup(line, ll) {
+  const spec = LINES[line.type] || LINES.plain;
+  const html = `<div class="pop"><div class="t">${esc(spec.name)}</div>
+    <div class="c">Длина: ${lineLength(line).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} м${line.caption ? '<br>Подпись: ' + esc(line.caption) : ''}${line.count > 1 ? '<br>Прокладок: ' + line.count : ''}</div>
+    <div class="btns"><button class="b" data-act="props">Подписи</button><button class="b danger" data-act="del">Удалить</button></div></div>`;
+  openPopup(ll, html, {
+    props: () => { askLineProps(line); save(); redrawAll(); },
+    del: () => { if (confirm('Удалить эту линию?')) { data.lines = data.lines.filter(x => x !== line); save(); redrawAll(); } }
+  });
+}
+function askLineProps(line) {
+  const spec = LINES[line.type] || LINES.plain;
+  if (spec.kind === 'route') {
+    const pk = prompt('Начальный пикет (номер ПК в начале линии), пусто — без подписей:', line.pk0 != null ? line.pk0 : '');
+    if (pk !== null) line.pk0 = pk.trim() === '' ? null : Number(pk.replace(',', '.'));
+    if (line.pk0 != null) line.pkDir = confirm('Номера пикетов по ходу линии увеличиваются?\nОК — увеличиваются (39, 40, 41…)\nОтмена — уменьшаются (39, 38, 37…)') ? 1 : -1;
+    const c = prompt('Подпись к трассе (марка кабеля и т. п.):', line.caption || '');
+    if (c !== null) line.caption = c.trim();
+    return;
+  }
+  if (spec.kind === 'indexed') {
+    const n = prompt('Сколько прокладок в траншее (1 — одна):', line.count || 1);
+    if (n !== null) line.count = Math.max(1, parseInt(n, 10) || 1);
+  }
+  const c = prompt('Подпись вдоль линии (например «гл. 1.2», «ст. 100»), можно пусто:', line.caption || '');
+  if (c !== null) line.caption = c.trim();
+}
+function redrawAll() { drawPoints(); drawLines(); drawHits(); }
+
+/* ───────────── Режимы: ставим знак / рисуем линию ───────────── */
+
+let mode = null;          // { kind: 'point'|'line', type, latlngs, temp }
+function setMode(m) {
+  if (mode && mode.temp) map.removeLayer(mode.temp);
+  mode = m;
+  const box = $('mode');
+  if (!mode) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const name = mode.kind === 'point' ? POINTS[mode.type].name : LINES[mode.type].name;
+  $('modeTitle').textContent = (mode.kind === 'point' ? 'Ставим: ' : 'Рисуем: ') + name + (mode.kind === 'line' ? ` · точек: ${mode.latlngs.length}` : '');
+  const btns = [['center', 'В перекрестье'], ['gps', 'По GPS']];
+  if (mode.kind === 'line') btns.push(['undo', 'Шаг назад']);
+  btns.push(['done', 'Готово', 'primary']);
+  if (mode.kind === 'line') btns.push(['cancel', 'Отмена', 'danger']);
+  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="b ${c || ''}" data-act="${a}">${t}</button>`).join('');
+}
+$('modeBtns').addEventListener('click', e => {
+  const act = e.target.dataset.act;
+  if (!act || !mode) return;
+  if (act === 'center') addAt(map.getCenter());
+  if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng)); else { startGps(); toast('Ищу спутники, нажмите ещё раз через пару секунд'); } }
+  if (act === 'undo') { mode.latlngs.pop(); refreshTemp(); setMode(mode); }
+  if (act === 'cancel') setMode(null);
+  if (act === 'done') finishMode();
+});
+map.on('click', e => { if (mode) addAt(e.latlng); });
+
+function addAt(ll) {
+  if (mode.kind === 'point') {
+    data.points.push({ id: uid(), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' });
+    save(); drawPoints();
+    toast('Знак поставлен');
+  } else {
+    mode.latlngs.push([ll.lat, ll.lng]);
+    refreshTemp(); setMode(mode);
+  }
+}
+function refreshTemp() {
+  if (mode.temp) map.removeLayer(mode.temp);
+  mode.temp = L.layerGroup([
+    L.polyline(mode.latlngs, { color: '#1e88e5', weight: 3, dashArray: '6 6', interactive: false }),
+    ...mode.latlngs.map(a => L.circleMarker(a, { radius: 5, color: '#1e88e5', fillColor: '#fff', fillOpacity: 1, weight: 2, interactive: false }))
+  ]).addTo(map);
+}
+function finishMode() {
+  if (mode.kind === 'line') {
+    if (mode.latlngs.length < 2) { toast('Нужно хотя бы две точки'); return; }
+    const line = { id: uid(), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: 1 };
+    askLineProps(line);
+    data.lines.push(line);
+    save();
+  }
+  setMode(null);
+  redrawAll();
+}
+
+/* ───────────── Нижние листы: выбор знака / линии / меню ───────────── */
+
+function openSheet(html, onPick) {
+  $('sheetPanel').innerHTML = '<button class="b close" data-pick="__close">Закрыть</button>' + html;
+  $('sheet').style.display = 'block';
+  $('sheet').onclick = e => {
+    if (e.target === $('sheet')) { closeSheet(); return; }
+    const it = e.target.closest('[data-pick]');
+    if (!it) return;
+    closeSheet();
+    if (it.dataset.pick !== '__close') onPick(it.dataset.pick);
+  };
+}
+function closeSheet() { $('sheet').style.display = 'none'; }
+
+function linePreview(spec) {
+  const c = spec.color || '#111';
+  if (spec.kind === 'cable') return `<svg width="46" height="22" viewBox="0 0 46 22" style="color:${c}"><path d="M4 11H42" stroke="currentColor" stroke-width="1.2"/><path d="M8 7L4 11L8 15M38 7L42 11L38 15" fill="none" stroke="currentColor" stroke-width="1.2"/>${spec.double ? '<path d="M12 7L8 11L12 15M34 7L38 11L34 15" fill="none" stroke="currentColor" stroke-width="1.2"/>' : ''}</svg>`;
+  if (spec.kind === 'route') return `<svg width="46" height="22" viewBox="0 0 46 22" style="color:${c}"><path d="M2 11H44" stroke="currentColor" stroke-width="2" stroke-dasharray="7 3"/><path d="M14 6V16M32 6V16" stroke="currentColor" stroke-width="2"/></svg>`;
+  if (spec.kind === 'plain') return `<svg width="46" height="22" viewBox="0 0 46 22"><path d="M2 11H44" stroke="#111" stroke-width="1.6"/></svg>`;
+  return `<svg width="46" height="22" viewBox="0 0 46 22"><path d="M2 11H14M32 11H44" stroke="#111" stroke-width="1.6"/><text x="23" y="15" font-size="12" text-anchor="middle" font-style="italic" font-family="Georgia, serif">${spec.index}</text></svg>`;
+}
+$('btnPoint').onclick = () => openSheet(POINT_GROUPS.map(g => `<h3>${g.title}</h3>` +
+  g.items.map(s => `<div class="item" data-pick="${s.id}">${symbolSvg(s.svg, 26)}<div>${esc(s.name)}</div></div>`).join('')).join(''),
+  id => { setMode({ kind: 'point', type: id }); toast('Нажмите на карту или «В перекрестье»'); });
+$('btnLine').onclick = () => openSheet(LINE_GROUPS.map(g => `<h3>${g.title}</h3>` +
+  g.items.map(s => `<div class="item" data-pick="${s.id}">${linePreview(s)}<div>${esc(s.name)}</div></div>`).join('')).join(''),
+  id => { setMode({ kind: 'line', type: id, latlngs: [] }); toast('Ставьте точки линии касанием карты'); });
+$('btnMenu').onclick = () => openSheet(`<h3>Файлы</h3>
+  <div class="item" data-pick="kml">⬇ Выгрузить всё в KML</div>
+  <div class="item" data-pick="csv">⬇ Выгрузить точки в CSV (WGS-84 и СК-42)</div>
+  <div class="item" data-pick="import">⬆ Загрузить KML</div>
+  <h3>Прочее</h3>
+  <div class="item" data-pick="fit">⤢ Показать все объекты</div>
+  <div class="item" data-pick="clear">🗑 Удалить всё с карты</div>
+  <div class="item" data-pick="about">ℹ О программе</div>`, act => MENU[act]());
+
+const MENU = {
+  kml: () => download(`plan_${today()}.kml`, toKml(), 'application/vnd.google-earth.kml+xml'),
+  csv: () => download(`points_${today()}.csv`, toCsv(), 'text/csv;charset=utf-8'),
+  import: () => $('fileIn').click(),
+  fit: () => {
+    const all = data.points.map(p => [p.lat, p.lng]).concat(...data.lines.map(l => l.latlngs));
+    if (all.length) map.fitBounds(all, { padding: [40, 40], maxZoom: 18 }); else toast('На карте пока ничего нет');
+  },
+  clear: () => { if (confirm('Удалить ВСЕ знаки и линии? Сначала лучше выгрузить KML.')) { data = { points: [], lines: [] }; save(); redrawAll(); } },
+  about: () => alert('Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nСК-42: пересчёт по ГОСТ Р 51794-2008, точность — около метра; для работ сверяйте с пунктами.')
+};
+const today = () => new Date().toISOString().slice(0, 10);
+function download(name, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+/* ───────────── KML и CSV ───────────── */
+
+const xml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
+function toKml() {
+  const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
+  const pts = data.points.map(p => {
+    const s = POINTS[p.type] || POINTS.mark;
+    return `<Placemark><name>${xml(p.name || s.name)}</name>${ext({ tk_type: p.type, tk_name: p.name })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
+  });
+  const lns = data.lines.map(l => {
+    const s = LINES[l.type] || LINES.plain;
+    const color = (s.color || '#111111').replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
+    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir })}` +
+      `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
+      `<LineString><tessellate>1</tessellate><coordinates>${l.latlngs.map(a => a[1] + ',' + a[0] + ',0').join(' ')}</coordinates></LineString></Placemark>`;
+  });
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Полевой план ${today()}</name>\n${pts.concat(lns).join('\n')}\n</Document></kml>`;
+}
+function toCsv() {
+  const rows = [['Знак', 'Подпись', 'Широта WGS-84', 'Долгота WGS-84', 'X СК-42', 'Y СК-42', 'Зона']];
+  for (const p of data.points) {
+    const s = sk42(p.lat, p.lng);
+    rows.push([(POINTS[p.type] || POINTS.mark).name, p.name || '', f6(p.lat), f6(p.lng), s.x.toFixed(2), s.y.toFixed(2), s.zone]);
+  }
+  return '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+}
+$('fileIn').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const doc = new DOMParser().parseFromString(await f.text(), 'application/xml');
+    if (doc.querySelector('parsererror')) throw new Error('это не KML');
+    let np = 0, nl = 0;
+    for (const pm of doc.getElementsByTagName('Placemark')) {
+      const ext = {};
+      for (const d of pm.getElementsByTagName('Data')) ext[d.getAttribute('name')] = (d.getElementsByTagName('value')[0] || {}).textContent;
+      const name = (pm.getElementsByTagName('name')[0] || {}).textContent || '';
+      const pt = pm.getElementsByTagName('Point')[0], ls = pm.getElementsByTagName('LineString')[0];
+      const coords = el => (el.getElementsByTagName('coordinates')[0] || {}).textContent.trim().split(/\s+/).map(c => c.split(',').map(Number)).filter(c => c.length >= 2 && !isNaN(c[0]));
+      if (pt) {
+        const [lng, lat] = coords(pt)[0];
+        const type = POINTS[ext.tk_type] ? ext.tk_type : 'mark';
+        data.points.push({ id: uid(), type, lat, lng, name: ext.tk_type ? (ext.tk_name || '') : name }); np++;
+      } else if (ls) {
+        const type = LINES[ext.tk_type] ? ext.tk_type : 'plain';
+        data.lines.push({ id: uid(), type, latlngs: coords(ls).map(c => [c[1], c[0]]), caption: ext.tk_type ? (ext.tk_caption || '') : name,
+          count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1 }); nl++;
+      }
+    }
+    save(); redrawAll(); MENU.fit();
+    toast(`Загружено: знаков ${np}, линий ${nl}`);
+  } catch (err) { alert('Не удалось загрузить файл: ' + err.message); }
+};
+
+/* ───────────── Старт ───────────── */
+
+redrawAll();
+updateInfo();
+if (data.points.length || data.lines.length) MENU.fit();
+</script>
+</body>
+</html>
