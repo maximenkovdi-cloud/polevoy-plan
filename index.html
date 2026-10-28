@@ -41,9 +41,12 @@
   .pop .btns { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
   .gridlbl { background:none; border:0; pointer-events:none; }
   .gridlbl .glw { position:absolute; left:0; top:0; transform-origin:0 0; }
-  .gridlbl .gl { position:absolute; top:0; transform:translateY(-50%); white-space:nowrap; line-height:1.25; color:#7b1fa2;
+  .gridlbl .gx, .gridlbl .gy { position:absolute; white-space:nowrap; line-height:1; color:#1b5e20; font-weight:600;
     font-family: system-ui, "Segoe UI", Roboto, sans-serif; font-variant-numeric: tabular-nums;
     text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff, 0 0 4px #fff; }
+  .gridlbl .gx { top:-3px; transform:translateY(-100%); }               /* над горизонтальной чертой, справа */
+  .gridlbl .gyw { position:absolute; left:0; top:0; transform:rotate(-90deg); transform-origin:0 0; }
+  .gridlbl .gy { top:3px; }                                              /* после поворота — справа от вертикальной черты */
   .netlines { overflow:visible; pointer-events:none; }
   .netlines text { paint-order: stroke; stroke:#fff; stroke-width:3px; stroke-linejoin:round; }
   .leaflet-top { top:52px; }
@@ -592,16 +595,21 @@ $('fileIn').onchange = async e => {
 const GRID_STEPS = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
 const GRID_MIN_PX = 120;         // кресты не чаще, чем через 120 пикселей — чтобы поместились подписи
 const GRID_ARM = 0.1;            // половина креста — 10 % шага сетки, кресты растут вместе с картой
-const GRID_COLOR = '#7b1fa2';
+const GRID_COLOR = '#2e7d32';    // кресты — зелёные
+const GRID_LINE_COLOR = '#66bb6a';
+const GRID_KEY = 'tk.grid';
+const GRID_MAX_CROSSES = 400;    // предохранитель: больше крестов на экране не рисуем
 const GridLayer = L.Layer.extend({
   onAdd(m) {
     this._group = L.layerGroup().addTo(m);
     m.on('moveend zoomend resize', this._draw, this);
     this._draw();
+    try { localStorage.setItem(GRID_KEY, '1'); } catch (e) { /* не критично */ }
   },
   onRemove(m) {
     m.off('moveend zoomend resize', this._draw, this);
     m.removeLayer(this._group);
+    try { localStorage.setItem(GRID_KEY, '0'); } catch (e) { /* не критично */ }
   },
   _draw() {
     const m = this._map, size = m.getSize(), group = this._group;
@@ -612,29 +620,42 @@ const GridLayer = L.Layer.extend({
     const minX = Math.min(...corners.map(c => c.x)), maxX = Math.max(...corners.map(c => c.x));
     const minY = Math.min(...corners.map(c => c.y)), maxY = Math.max(...corners.map(c => c.y));
     const mPerPx = (maxY - minY) / size.x;
-    const step = GRID_STEPS.find(s => s / mPerPx >= GRID_MIN_PX) || GRID_STEPS[GRID_STEPS.length - 1];
+    const step = GRID_STEPS.find(s => s / mPerPx >= GRID_MIN_PX);
+    if (!step) return;                                                   // мельче ~1:300 000 сетку не рисуем (и проекция зоны там уже неточна)
+    if (((maxX - minX) / step + 2) * ((maxY - minY) / step + 2) > GRID_MAX_CROSSES) return;
     const spacingPx = step / mPerPx, arm = step * GRID_ARM, armPx = arm / mPerPx;
     const fontPx = Math.max(11, Math.min(16, spacingPx * 0.09));        // текст тоже растёт с масштабом, но в разумных пределах
     const fmt = v => Math.round(v).toLocaleString('ru-RU');
     const ll = (x, y) => { const p = fromSk42(x, y, zone); return [p.lat, p.lng]; };
-    const segs = [];
+    const x0 = Math.floor(minX / step) * step, y0 = Math.floor(minY / step) * step;
+    const x1 = Math.ceil(maxX / step) * step, y1 = Math.ceil(maxY / step) * step;
+    const SAMPLES = 8, gridLines = [], segs = [];
+    for (let x = x0; x <= x1; x += step) { const l = []; for (let i = 0; i <= SAMPLES; i++) l.push(ll(x, y0 + (y1 - y0) * i / SAMPLES)); gridLines.push(l); }
+    for (let y = y0; y <= y1; y += step) { const l = []; for (let i = 0; i <= SAMPLES; i++) l.push(ll(x0 + (x1 - x0) * i / SAMPLES, y)); gridLines.push(l); }
+    const gap = (armPx + 4).toFixed(0), fs = fontPx.toFixed(1);
     for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {
       for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {
         segs.push([ll(x, y - arm), ll(x, y + arm)], [ll(x - arm, y), ll(x + arm, y)]);
-        // наклон креста на экране (сближение меридианов) — чтобы подпись шла параллельно его горизонтальной черте
+        // наклон креста на экране (сближение меридианов) — подписи идут параллельно его чертам
         const a = m.latLngToContainerPoint(ll(x, y - arm)), b = m.latLngToContainerPoint(ll(x, y + arm));
         const deg = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
-        const html = `<div class="glw" style="transform:rotate(${deg.toFixed(2)}deg)"><div class="gl" style="left:${(armPx + 4).toFixed(0)}px;font-size:${fontPx.toFixed(1)}px">` +
-          `X ${fmt(x)}<br>Y ${fmt(y)}</div></div>`;
+        // X — горизонтально над правой чертой креста; Y — вертикально справа от верхней черты (читается снизу вверх)
+        const html = `<div class="glw" style="transform:rotate(${deg.toFixed(2)}deg);font-size:${fs}px">` +
+          `<div class="gx" style="left:${gap}px">X ${fmt(x)}</div>` +
+          `<div class="gyw"><div class="gy" style="left:${gap}px">Y ${fmt(y)}</div></div></div>`;
         L.marker(ll(x, y), { icon: L.divIcon({ className: 'gridlbl', html, iconSize: [0, 0], iconAnchor: [0, 0] }), interactive: false, keyboard: false }).addTo(group);
       }
     }
-    // кресты — обычная векторная линия Leaflet: при приближении пальцами она растёт вместе с картой
-    L.polyline(segs, { color: GRID_COLOR, weight: 1.6, opacity: 0.9, interactive: false }).addTo(group);
+    // линии и кресты — обычные векторные линии Leaflet: при приближении пальцами они растут вместе с картой
+    L.polyline(gridLines, { color: GRID_LINE_COLOR, weight: 0.8, opacity: 0.55, interactive: false }).addTo(group);
+    L.polyline(segs, { color: GRID_COLOR, weight: 2.2, opacity: 1, interactive: false }).addTo(group);
   }
 });
 const gridLayer = new GridLayer();
 layersControl.addOverlay(gridLayer, 'Сетка СК-42');
+let gridWanted = true;           // сетка включена сразу, пока её не выключили
+try { gridWanted = localStorage.getItem(GRID_KEY) !== '0'; } catch (e) { /* по умолчанию — включена */ }
+if (gridWanted) gridLayer.addTo(map);
 
 /* ───────────── Свои растры: план, ортофото, скан (по углам в СК-42) ───────────── */
 
