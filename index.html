@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#1f5fbf">
 <title>Полевой план</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:ital,wght@0,400;0,500;1,400;1,500&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
 <style>
@@ -14,6 +16,8 @@
   body.sun   { --bg:#ffffff; --panel:#ffffff; --ink:#000000; --muted:#222222; --line:#000000; --accent:#0039a6; --accentInk:#fff; --red:#b00000; --sym:#000000; --symBg:#ffffff; --halo:#ffffff; --shadow:0 0 0 2px #000; --fs:15.5px; }
   body.night { --bg:#1c2127; --panel:#262c33; --ink:#e9edf1; --muted:#9aa5b1; --line:#38414b; --accent:#5aa2ff; --accentInk:#0d1117; --red:#ff6b6b; --sym:#e9edf1; --symBg:#1c2127; --halo:#1c2127; --shadow:0 1px 8px rgba(0,0,0,.5); --fs:14px; }
   /* традиционные цвета сетей («Правила начертания…», п. 6 — по дополнительным требованиям) */
+  /* чертёжный шрифт подписей на плане: узкий наклонный, как по ГОСТ 2.304 */
+  body { --draft:"Roboto Condensed","Arial Narrow",Arial,sans-serif; }
   body { --c-water:#1b8a3a; --c-sewer:#8d5524; --c-heat:#1f4fbf; --c-gas:#1aa3d9; --c-el:#d32f2f; --c-own:#7b1fa2; }
   body.night { --c-water:#4caf50; --c-sewer:#c49a6c; --c-heat:#6f9cff; --c-gas:#4fc3f7; --c-el:#ff6b6b; --c-own:#ce93d8; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -119,10 +123,11 @@
   /* ── знаки и подписи на карте ── */
   .sym { background:none; border:0; color:var(--sym); }
   svg [fill="#fff"] { fill:var(--symBg); }                              /* белая заливка знаков — ночью тёмная, чтобы светлые черты были видны */
-  .sym .lbl { position:absolute; left:24px; top:-2px; white-space:nowrap; font:italic 12px Georgia, "Times New Roman", serif; color:var(--sym);
+  .sym .lbl { position:absolute; left:24px; top:-2px; white-space:nowrap; font:italic 12.5px/1 var(--draft); color:var(--sym); letter-spacing:.01em;
     text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo), 0 0 3px var(--halo); }
+  .sym .lbl.off { display:none; }                                        /* места нет — подпись появится при приближении */
   .sym.sel svg { filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 3px var(--accent)); }
-  .gtxt { pointer-events:none; fill:#1b5e20; font-weight:600; font-family: system-ui, "Segoe UI", Roboto, sans-serif; font-variant-numeric: tabular-nums;
+  .gtxt { pointer-events:none; fill:#1b5e20; font-weight:400; font-style:italic; font-family:var(--draft); font-variant-numeric: tabular-nums;
     paint-order: stroke; stroke:var(--halo); stroke-width:3.5px; stroke-linejoin:round; }
   body.night .gtxt { fill:#a5d6a7; }
   .gridlbl { background:none; border:0; pointer-events:none; }
@@ -135,7 +140,7 @@
   .gridlbl .gyw { position:absolute; left:0; top:0; transform:rotate(-90deg); transform-origin:0 0; }
   .gridlbl .gy { top:-3px; transform:translateY(-100%); }               /* после поворота — над вертикальной чертой (слева от неё) */
   .netlines { overflow:visible; pointer-events:none; }
-  .netlines text { paint-order: stroke; stroke:var(--halo); stroke-width:3px; stroke-linejoin:round; }
+  .netlines text { font-family:var(--draft); paint-order: stroke; stroke:var(--halo); stroke-width:2.6px; stroke-linejoin:round; }
 
   /* ── Leaflet: свой список слоёв и масштаб, кнопки +/− под плашкой ── */
   .leaflet-control-layers, .leaflet-control-scale { display:none !important; }
@@ -469,14 +474,52 @@ function pointLabel(p) {
   const s = POINTS[p.type] || POINTS.mark;
   return [s.prefix, p.name, s.suffix].filter(Boolean).join(' ');
 }
+let pointMarkers = [];
 function drawPoints() {
   pointLayer.clearLayers();
+  pointMarkers = [];
   for (const p of data.points) {
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [22, 22], iconAnchor: [11, 11],
       html: symbolSvg(s.svg, 22, netColor(p.type)) + (lbl ? `<span class="lbl">${esc(lbl)}</span>` : '') });
-    L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (!mode) showCard('point', p); }).addTo(pointLayer);
+    const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (!mode) showCard('point', p); }).addTo(pointLayer);
+    pointMarkers.push({ p, marker, lbl });
   }
+}
+// Номер у знака — справа, слева, сверху, снизу или по диагонали: первое место, где он ни с чем не пересекается
+const LBL_PX = 12.5, SYM_R = 11;
+function placePointLabels() {
+  for (const { p, marker, lbl } of pointMarkers) {
+    const span = marker.getElement() && marker.getElement().querySelector('.lbl');
+    if (!span) continue;
+    const c = map.latLngToContainerPoint([p.lat, p.lng]), w = textWidth(lbl, LBL_PX, true) + 4, h = LBL_PX + 3, g = 2;
+    const tries = [
+      { x: c.x + SYM_R + g, y: c.y - h / 2 }, { x: c.x - SYM_R - g - w, y: c.y - h / 2 },
+      { x: c.x - w / 2, y: c.y - SYM_R - g - h }, { x: c.x - w / 2, y: c.y + SYM_R + g },
+      { x: c.x + SYM_R - 2, y: c.y - SYM_R - h + 2 }, { x: c.x + SYM_R - 2, y: c.y + SYM_R - 2 },
+      { x: c.x - SYM_R + 2 - w, y: c.y - SYM_R - h + 2 }, { x: c.x - SYM_R + 2 - w, y: c.y + SYM_R - 2 }
+    ];
+    const box = tries.map(t => ({ x: t.x, y: t.y, w, h })).find(b => !hits(b, null));
+    span.classList.toggle('off', !box);
+    if (!box) continue;
+    span.style.left = (box.x - (c.x - SYM_R) + 2) + 'px';             // координаты — от левого верхнего угла значка 22×22
+    span.style.top = (box.y - (c.y - SYM_R) + 1.5) + 'px';
+    reserve(box, 'lbl:' + p.id);
+  }
+}
+// Кадр отрисовки: сначала занимаем места знаками и линиями, потом расставляем надписи
+function frame() {
+  occupied = [];
+  for (const { p } of pointMarkers) { const c = map.latLngToContainerPoint([p.lat, p.lng]); reserve({ x: c.x - SYM_R, y: c.y - SYM_R, w: 2 * SYM_R, h: 2 * SYM_R }, p.id); }
+  for (const line of data.lines) {                                    // сама линия — препятствие для чужих надписей
+    const pts = line.latlngs.map(a => map.latLngToContainerPoint(a));
+    for (let i = 1; i < pts.length; i++) {
+      const d = pts[i - 1].distanceTo(pts[i]), n = Math.max(1, Math.ceil(d / 6));
+      for (let k = 0; k <= n; k++) { const x = pts[i - 1].x + (pts[i].x - pts[i - 1].x) * k / n, y = pts[i - 1].y + (pts[i].y - pts[i - 1].y) * k / n; reserve({ x: x - 1.5, y: y - 1.5, w: 3, h: 3 }, line.id); }
+    }
+  }
+  placePointLabels();
+  drawLines();
 }
 
 /* ───────────── Линии сетей: отрисовка с подписями вдоль линии ───────────── */
@@ -514,6 +557,30 @@ function text(g, path, s, str, o) {
     'font-family': 'Georgia, "Times New Roman", serif', 'font-style': o.italic ? 'italic' : 'normal', fill: 'currentColor',
     transform: `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)}) rotate(${a.toFixed(1)}) translate(0 ${o.dy})` }, g).textContent = str;
 }
+/* ── Расстановка надписей без пересечений: занятые места на экране (знаки, линии, надписи) ── */
+let occupied = [], curOwner = null;
+const measureCtx = document.createElement('canvas').getContext('2d');
+function textWidth(str, px, italic) {
+  measureCtx.font = `${italic ? 'italic ' : ''}${px}px "Roboto Condensed", "Arial Narrow", Arial, sans-serif`;
+  return measureCtx.measureText(str).width;
+}
+function hits(r, owner) { return occupied.some(o => (owner == null || o.owner !== owner) && r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y); }
+function reserve(r, owner) { occupied.push(Object.assign({ owner }, r)); }
+// Прямоугольник надписи шириной w и высотой h с центром в p, повёрнутой на deg и сдвинутой поперёк на dy
+function textBox(p, deg, dy, w, h) {
+  const a = deg * Math.PI / 180, cx = p.x - Math.sin(a) * dy, cy = p.y + Math.cos(a) * dy;
+  const hw = Math.abs(Math.cos(a)) * w / 2 + Math.abs(Math.sin(a)) * h / 2, hh = Math.abs(Math.sin(a)) * w / 2 + Math.abs(Math.cos(a)) * h / 2;
+  return { x: cx - hw, y: cy - hh, w: 2 * hw, h: 2 * hh };
+}
+// Ставит надпись вдоль линии, только если место свободно; возвращает, поставлена ли она
+function placeText(g, path, s, str, o) {
+  o = Object.assign({ dy: 0, size: 2.8 * MM, italic: true }, o);
+  const p = at(path, s), box = textBox(p, upright(p.a), o.dy, textWidth(str, o.size, o.italic) + 4, o.size + 3);
+  if (hits(box, curOwner)) return false;                              // своя линия не мешает, всё остальное — мешает
+  text(g, path, s, str, o);
+  reserve(box, 'txt');                                                // а поставленная надпись мешает всем, в том числе надписям своей линии
+  return true;
+}
 function arrowHead(g, path, s, dir, double, w) {
   const p = at(path, s), a = p.a * Math.PI / 180;
   for (const off of double ? [0, 1.7 * MM] : [0]) {
@@ -526,11 +593,12 @@ function arrowHead(g, path, s, dir, double, w) {
 const DRAW = {
   indexed(g, path, spec, line, w) {
     const total = path.getTotalLength(), period = 9 * MM;
-    const index = (line.count > 1 ? line.count : '') + spec.index, gap = (index.length * 1.6 + 1.6) * MM;
+    const index = (line.count > 1 ? line.count : '') + spec.index, size = 3 * MM;
+    const gap = textWidth(index, size, true) + 1.6 * MM;                 // разрыв точно по ширине индекса и с полями
     for (let s = 0; s < total;) {
       const e = Math.min(s + period, total);
       segment(g, path, s, e, w);
-      if (e + gap < total) text(g, path, e + gap / 2, index);
+      if (e + gap < total && !placeText(g, path, e + gap / 2, index, { size })) segment(g, path, e, e + gap, w);   // место занято — линия без разрыва
       s = e + gap;
     }
   },
@@ -540,7 +608,7 @@ const DRAW = {
       const a1 = Math.min(s + arrowLen, total);
       segment(g, path, s, a1, w);
       if (a1 - s > 3 * MM) { arrowHead(g, path, s, -1, spec.double, w); arrowHead(g, path, a1, 1, spec.double, w); }
-      if (n % 2 === 0 && a1 - s > 4 * MM) text(g, path, (s + a1) / 2, 'каб.', { dy: -2.2 * MM, size: 2.4 * MM });
+      if (n % 2 === 0 && a1 - s > 4 * MM) placeText(g, path, (s + a1) / 2, 'каб.', { dy: -2.8 * MM, size: 2.8 * MM });
       s = a1 + gap;
       if (s >= total) break;
       const p1 = Math.min(s + plain, total);
@@ -561,7 +629,10 @@ const DRAW = {
         const sPx = pxBefore + (m ? (k * PICKET_STEP_M - metersBefore) / m : 0) * px, p = at(path, Math.min(sPx, total));
         const a = (p.a + 90) * Math.PI / 180, h = 1.6 * MM;
         el('line', { x1: p.x - Math.cos(a) * h, y1: p.y - Math.sin(a) * h, x2: p.x + Math.cos(a) * h, y2: p.y + Math.sin(a) * h, stroke: 'currentColor', 'stroke-width': w * 1.4 }, g);
-        if (line.pk0 != null && line.pk0 !== '') text(g, path, Math.min(sPx, total), 'ПК ' + (Number(line.pk0) + k * (line.pkDir || 1)), { dy: 3.4 * MM, size: 2.3 * MM, italic: false });
+        if (line.pk0 != null && line.pk0 !== '') {
+          const pk = 'ПК ' + (Number(line.pk0) + k * (line.pkDir || 1)), at_ = Math.min(sPx, total);
+          placeText(g, path, at_, pk, { dy: 3.8 * MM, size: 2.8 * MM, italic: false }) || placeText(g, path, at_, pk, { dy: -3.8 * MM, size: 2.8 * MM, italic: false });
+        }
         k++;
       }
       metersBefore += m; pxBefore += px;
@@ -583,31 +654,33 @@ function drawLines() {
     g.style.color = isSel ? 'var(--accent)' : netColor(line.type, spec.color || 'var(--sym)');
     const path = el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'none' }, g);
     if (path.getTotalLength() < 6) continue;
-    DRAW[spec.kind](g, path, spec, line, spec.w * MM * 1.6 * (isSel ? 1.6 : 1), pts);
+    curOwner = line.id;                                                // надписи своей линии не мешают ей самой
+    DRAW[spec.kind](g, path, spec, line, Math.max(1, spec.w * MM) * (isSel ? 1.8 : 1), pts);   // тонкая ровная линия, как пером
     if (line.caption) captionAlong(g, path, pts, line.caption);
+    curOwner = null;
   }
 }
-// Подпись линии — над серединой самого длинного участка; если не помещается в линию, не рисуем (появится при приближении)
+// Подпись линии — над (или под) серединой участка, где она помещается и ни с чем не пересекается; иначе появится при приближении
 function captionAlong(g, path, pts, str) {
-  let best = 0, bestMid = path.getTotalLength() / 2, run = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const d = pts[i - 1].distanceTo(pts[i]);
-    if (d > best) { best = d; bestMid = run + d / 2; }
-    run += d;
+  const size = 2.9 * MM, need = textWidth(str, size, true) + 2 * MM, segs = [];
+  let run = 0;
+  for (let i = 1; i < pts.length; i++) { const d = pts[i - 1].distanceTo(pts[i]); segs.push({ d, mid: run + d / 2 }); run += d; }
+  segs.sort((a, b) => b.d - a.d);                                     // сначала самые длинные участки
+  for (const sg of segs) {
+    if (sg.d < need) break;
+    for (const dy of [-3.2 * MM, 3.2 * MM])
+      for (const shift of [0, -0.25, 0.25]) if (placeText(g, path, sg.mid + shift * (sg.d - need), str, { dy, size })) return;
   }
-  text(g, path, bestMid, str, { dy: -2.6 * MM, size: 2.4 * MM });
-  const t = g.lastChild;
-  if (t.getComputedTextLength() > best - 2 * MM) t.remove();
 }
 function drawHits() {
   hitLayer.clearLayers();
   for (const line of data.lines)
     L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true }).on('click', e => { L.DomEvent.stop(e); if (!mode) showCard('line', line); }).addTo(hitLayer);
 }
-map.on('moveend zoomend resize viewreset', drawLines);
+map.on('moveend zoomend resize viewreset', frame);
 map.on('zoomstart', () => netSvg.style.opacity = 0);
 map.on('zoomend', () => netSvg.style.opacity = 1);
-function redrawAll() { drawPoints(); drawLines(); drawHits(); }
+function redrawAll() { drawPoints(); drawHits(); frame(); }
 function lineLength(line) { let m = 0; for (let i = 1; i < line.latlngs.length; i++) m += L.latLng(line.latlngs[i - 1]).distanceTo(line.latlngs[i]); return m; }
 
 /* ───────────── Карточка объекта (внизу экрана) ───────────── */
@@ -1021,7 +1094,7 @@ const GridLayer = L.Layer.extend({
     if (!step) return;                                                   // мельче ~1:300 000 сетку не рисуем (и проекция зоны там уже неточна)
     if (((maxX - minX) / step + 2) * ((maxY - minY) / step + 2) > GRID_MAX_CROSSES) return;
     const spacingPx = step / mPerPx, arm = step * GRID_ARM, armPx = arm / mPerPx;
-    const fontPx = Math.max(11, Math.min(16, spacingPx * 0.09));        // текст тоже растёт с масштабом, но в разумных пределах
+    const fontPx = Math.max(10.5, Math.min(13, spacingPx * 0.075));     // текст тоже растёт с масштабом, но остаётся «чертёжным»
     const fmt = v => Math.round(v).toLocaleString('ru-RU');
     const ll = (x, y) => { const p = fromSk42(x, y, zone); return [p.lat, p.lng]; };
     const x0 = Math.floor(minX / step) * step, y0 = Math.floor(minY / step) * step;
@@ -1045,10 +1118,14 @@ const GridLayer = L.Layer.extend({
     // X — горизонтально над правой чертой креста; Y — вертикально над верхней чертой (читается снизу вверх, текст над линией)
     const g = this._labels = el('g', { class: 'gtxt', 'font-size': fontPx.toFixed(1) }, r._rootGroup);
     const t = (tr, str) => { el('text', { transform: tr, x: gap.toFixed(1), y: -3 }, g).textContent = str; };
+    // подписи сетки — последними и только на свободные места: знаки, линии и их надписи важнее
+    const fh = fontPx + 2;
     for (const { c, deg, x, y } of labels) {
-      const at = `translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(`;
-      t(at + deg.toFixed(2) + ')', 'X – ' + fmt(x));
-      t(at + (deg - 90).toFixed(2) + ')', 'Y – ' + fmt(y));
+      const at = `translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(`, cc = m.layerPointToContainerPoint(c);
+      const sx = 'X – ' + fmt(x), sy = 'Y – ' + fmt(y), wx = textWidth(sx, fontPx, true) + 2, wy = textWidth(sy, fontPx, true) + 2;
+      const bx = { x: cc.x + gap, y: cc.y - 3 - fh, w: wx, h: fh }, by = { x: cc.x - 3 - fh, y: cc.y - gap - wy, w: fh, h: wy };
+      if (!hits(bx, null)) t(at + deg.toFixed(2) + ')', sx);
+      if (!hits(by, null)) t(at + (deg - 90).toFixed(2) + ')', sy);
     }
   }
 });
