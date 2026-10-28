@@ -143,11 +143,15 @@ const MM = 4;                  // экранных пикселей на 1 «м�
 
 // Параметры перехода Пулково-1942 → WGS-84 по ГОСТ Р 51794-2008
 const TOWGS84 = '+towgs84=23.57,-140.95,-79.8,0,0.35,0.79,-0.22';
+const gkDef = zone => `+proj=tmerc +lat_0=0 +lon_0=${zone * 6 - 3} +k=1 +x_0=${zone * 1e6 + 500000} +y_0=0 +ellps=krass ${TOWGS84} +units=m +no_defs`;
 function sk42(lat, lng) {
   const zone = Math.floor(lng / 6) + 1;
-  const gk = `+proj=tmerc +lat_0=0 +lon_0=${zone * 6 - 3} +k=1 +x_0=${zone * 1e6 + 500000} +y_0=0 +ellps=krass ${TOWGS84} +units=m +no_defs`;
-  const [y, x] = proj4('WGS84', gk, [lng, lat]);
+  const [y, x] = proj4('WGS84', gkDef(zone), [lng, lat]);
   return { zone, x, y };       // x — на север, y — на восток (с номером зоны впереди), как принято в геодезии
+}
+function fromSk42(x, y, zone) {   // обратный пересчёт СК-42 → WGS-84 (L.LatLng)
+  const [lng, lat] = proj4(gkDef(zone), 'WGS84', [y, x]);
+  return L.latLng(lat, lng);
 }
 const f2 = v => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const f6 = v => v.toFixed(6);
@@ -171,12 +175,21 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 
 const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([55.75, 37.62], 5);
 map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');   // без флажка, только ссылка на библиотеку
+const OSM = '© участники OpenStreetMap';
 const bases = {
-  'Схема (OSM)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© участники OpenStreetMap' }),
-  'Рельеф (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, subdomains: 'abc', attribution: '© OpenStreetMap, SRTM | © OpenTopoMap (CC-BY-SA)' })
+  'Схема (OSM)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 19, attribution: OSM }),
+  'Схема контрастная (HOT)': L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 19, subdomains: 'abc', attribution: OSM + ', стиль HOT / OSM France' }),
+  'Тропы и грунтовки (CyclOSM)': L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20, subdomains: 'abc', attribution: OSM + ', CyclOSM' }),
+  'Рельеф (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 17, subdomains: 'abc', attribution: OSM + ', SRTM | © OpenTopoMap (CC-BY-SA)' }),
+  'Спутник подробный (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20, maxNativeZoom: 18, attribution: 'Снимки © Esri, Maxar, Earthstar Geographics' }),
+  'Спутник обзорный (Sentinel-2)': L.tileLayer('https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg', { maxZoom: 20, maxNativeZoom: 14, attribution: 'Sentinel-2 cloudless — s2maps.eu, EOX IT Services GmbH (модиф. данные Copernicus Sentinel 2023), CC BY-NC-SA 4.0' })
 };
-bases['Схема (OSM)'].addTo(map);
-L.control.layers(bases, null, { position: 'topright' }).addTo(map);
+const BASE_KEY = 'tk.base';
+let baseName = 'Схема (OSM)';
+try { const b = localStorage.getItem(BASE_KEY); if (bases[b]) baseName = b; } catch (e) { /* без хранилища — схема по умолчанию */ }
+bases[baseName].addTo(map);
+map.on('baselayerchange', e => { try { localStorage.setItem(BASE_KEY, e.name); } catch (err) { /* не критично */ } });
+const layersControl = L.control.layers(bases, null, { position: 'topright' }).addTo(map);
 L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(map);
 
 const $ = id => document.getElementById(id);
@@ -484,6 +497,10 @@ $('btnMenu').onclick = () => openSheet(`<h3>Файлы</h3>
   <div class="item" data-pick="kml">⬇ Выгрузить всё в KML</div>
   <div class="item" data-pick="csv">⬇ Выгрузить точки в CSV (WGS-84 и СК-42)</div>
   <div class="item" data-pick="import">⬆ Загрузить KML</div>
+  <h3>Карта</h3>
+  <div class="item" data-pick="grid">▦ Сетка СК-42: включить / выключить</div>
+  <div class="item" data-pick="raster">🖼 Наложить свой растр (план, ортофото, скан)</div>
+  <div class="item" data-pick="rasters">◐ Свои растры: прозрачность, удаление</div>
   <h3>Прочее</h3>
   <div class="item" data-pick="fit">⤢ Показать все объекты</div>
   <div class="item" data-pick="clear">🗑 Удалить всё с карты</div>
@@ -493,6 +510,9 @@ const MENU = {
   kml: () => download(`plan_${today()}.kml`, toKml(), 'application/vnd.google-earth.kml+xml'),
   csv: () => download(`points_${today()}.csv`, toCsv(), 'text/csv;charset=utf-8'),
   import: () => $('fileIn').click(),
+  grid: () => { if (map.hasLayer(gridLayer)) map.removeLayer(gridLayer); else gridLayer.addTo(map); },
+  raster: () => rasterInput.click(),
+  rasters: () => rasterMenu(),
   fit: () => {
     const all = data.points.map(p => [p.lat, p.lng]).concat(...data.lines.map(l => l.latlngs));
     if (all.length) map.fitBounds(all, { padding: [40, 40], maxZoom: 18 }); else toast('На карте пока ничего нет');
@@ -562,10 +582,184 @@ $('fileIn').onchange = async e => {
   } catch (err) { alert('Не удалось загрузить файл: ' + err.message); }
 };
 
+/* ───────────── Слой: сетка СК-42 ───────────── */
+
+const GRID_STEPS = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
+const GRID_MIN_PX = 90;          // линии сетки не чаще, чем через 90 пикселей
+map.createPane('gridPane').style.zIndex = 420;
+const GridLayer = L.Layer.extend({
+  onAdd(m) {
+    this._svg = document.createElementNS(NS, 'svg');
+    this._svg.classList.add('netlines');
+    m.getPane('gridPane').appendChild(this._svg);
+    m.on('moveend zoomend resize viewreset', this._draw, this);
+    m.on('zoomstart', this._hide, this);
+    this._draw();
+  },
+  onRemove(m) {
+    m.off('moveend zoomend resize viewreset', this._draw, this);
+    m.off('zoomstart', this._hide, this);
+    this._svg.remove();
+  },
+  _hide() { this._svg.style.opacity = 0; },
+  _draw() {
+    const m = this._map, svg = this._svg, size = m.getSize();
+    svg.style.opacity = 1;
+    L.DomUtil.setPosition(svg, m.containerPointToLayerPoint([0, 0]));
+    svg.setAttribute('width', size.x); svg.setAttribute('height', size.y);
+    svg.innerHTML = '';
+    const zone = Math.floor(m.getCenter().lng / 6) + 1;
+    const corners = [[0, 0], [size.x, 0], [0, size.y], [size.x, size.y], [size.x / 2, 0], [size.x / 2, size.y], [0, size.y / 2], [size.x, size.y / 2]]
+      .map(p => { const ll = m.containerPointToLatLng(p); const [y, x] = proj4('WGS84', gkDef(zone), [ll.lng, ll.lat]); return { x, y }; });
+    const minX = Math.min(...corners.map(c => c.x)), maxX = Math.max(...corners.map(c => c.x));
+    const minY = Math.min(...corners.map(c => c.y)), maxY = Math.max(...corners.map(c => c.y));
+    const mPerPx = (maxY - minY) / size.x;
+    const step = GRID_STEPS.find(s => s / mPerPx >= GRID_MIN_PX) || GRID_STEPS[GRID_STEPS.length - 1];
+    const g = el('g', { stroke: '#7b1fa2', 'stroke-width': 1, fill: 'none', opacity: 0.75 }, svg);
+    const lbl = el('g', { fill: '#7b1fa2', 'font-size': 11, 'font-family': 'system-ui, sans-serif' }, svg);
+    const fmt = v => Math.round(v).toLocaleString('ru-RU');
+    const line = (pts, label, at) => {
+      const cp = pts.map(([x, y]) => m.latLngToContainerPoint(fromSk42(x, y, zone)));
+      el('polyline', { points: cp.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ') }, g);
+      const p = at(cp);
+      if (p) el('text', { x: p.x, y: p.y }, lbl).textContent = label;
+    };
+    const SAMPLES = 12;
+    for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {        // линии постоянного X (горизонтальные)
+      const pts = []; for (let i = 0; i <= SAMPLES; i++) pts.push([x, minY + (maxY - minY) * i / SAMPLES]);
+      line(pts, 'X ' + fmt(x), cp => { const p = cp.find(q => q.x >= 2); return p && { x: 4, y: p.y - 3 }; });
+    }
+    for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {        // линии постоянного Y (вертикальные)
+      const pts = []; for (let i = 0; i <= SAMPLES; i++) pts.push([minX + (maxX - minX) * i / SAMPLES, y]);
+      line(pts, 'Y ' + fmt(y), cp => { const p = cp.reduce((a, b) => Math.abs(b.y - 72) < Math.abs(a.y - 72) ? b : a); return { x: p.x + 3, y: 82 }; });
+    }
+  }
+});
+const gridLayer = new GridLayer();
+layersControl.addOverlay(gridLayer, 'Сетка СК-42');
+
+/* ───────────── Свои растры: план, ортофото, скан (по углам в СК-42) ───────────── */
+
+map.createPane('rasterPane').style.zIndex = 300;
+const RASTER_OPACITY = 0.7;
+const RasterLayer = L.Layer.extend({
+  initialize(r) { this.r = r; },                      // r: { id, name, blob, tl, tr, bl: [lat, lng], opacity }
+  onAdd(m) {
+    const img = this._img = document.createElement('img');
+    img.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;';
+    img.style.opacity = this.r.opacity || RASTER_OPACITY;
+    img.onload = () => this._place();
+    img.src = this._url = URL.createObjectURL(this.r.blob);
+    m.getPane('rasterPane').appendChild(img);
+    m.on('zoomend viewreset resize', this._place, this);
+    m.on('zoomstart', this._hide, this);
+  },
+  onRemove(m) {
+    m.off('zoomend viewreset resize', this._place, this);
+    m.off('zoomstart', this._hide, this);
+    this._img.remove(); URL.revokeObjectURL(this._url);
+  },
+  setOpacity(o) { this.r.opacity = o; if (this._img) this._img.style.opacity = o; },
+  _hide() { this._img.style.visibility = 'hidden'; },
+  _place() {
+    const img = this._img, m = this._map, w = img.naturalWidth, h = img.naturalHeight;
+    if (!w || !h) return;
+    const p0 = m.latLngToLayerPoint(this.r.tl), p1 = m.latLngToLayerPoint(this.r.tr), p2 = m.latLngToLayerPoint(this.r.bl);
+    // аффинное преобразование: угол (0,0) → TL, (w,0) → TR, (0,h) → BL — учитывает поворот сетки СК-42 к меридиану
+    img.style.transform = `matrix(${(p1.x - p0.x) / w},${(p1.y - p0.y) / w},${(p2.x - p0.x) / h},${(p2.y - p0.y) / h},${p0.x},${p0.y})`;
+    img.style.visibility = 'visible';
+  }
+});
+
+// Хранение растров в IndexedDB (картинки слишком велики для localStorage)
+const rasterDb = new Promise(resolve => {
+  try {
+    const req = indexedDB.open('tk-rasters', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('rasters', { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  } catch (e) { resolve(null); }
+});
+async function rasterStore(mode, fn) {
+  const db = await rasterDb;
+  if (!db) return null;
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('rasters', mode), req = fn(tx.objectStore('rasters'));
+    tx.oncomplete = () => resolve(req && req.result);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+const rasterLayers = {};
+function showRaster(r) {
+  const layer = rasterLayers[r.id] = new RasterLayer(r);
+  layer.addTo(map);
+  layersControl.addOverlay(layer, 'Растр: ' + esc(r.name));
+}
+async function loadRasters() {
+  try { const all = await rasterStore('readonly', s => s.getAll()); (all || []).forEach(showRaster); }
+  catch (e) { toast('Не удалось открыть сохранённые растры'); }
+}
+const parseNum = s => Number(String(s).replace(/\s/g, '').replace(',', '.'));
+function askXY(question, def) {
+  const v = prompt(question, def || '');
+  if (v === null) return null;
+  // «5892500 6662500» или «5 892 500; 6 662 500» (пробелы внутри числа — только с точкой с запятой между X и Y)
+  const parts = v.includes(';') ? v.split(';') : v.trim().split(/\s+/);
+  const nums = parts.filter(s => s.trim() !== '').map(parseNum);
+  if (nums.length !== 2 || nums.some(isNaN)) { alert('Нужно два числа: X и Y.\nНапример: 5892500 6662500\nили: 5 892 500; 6 662 500'); return null; }
+  return nums;
+}
+const rasterInput = document.createElement('input');
+rasterInput.type = 'file'; rasterInput.accept = 'image/png,image/jpeg,image/webp'; rasterInput.style.display = 'none';
+document.body.appendChild(rasterInput);
+rasterInput.onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  const c = sk42(map.getCenter().lat, map.getCenter().lng);
+  alert('Укажите координаты СК-42 углов картинки:\nлевого ВЕРХНЕГО и правого НИЖНЕГО.\nКартинка должна быть выровнена по сетке СК-42 (север вверху).');
+  const tl = askXY('Левый верхний угол — X Y (в метрах):', `${Math.round(c.x)} ${Math.round(c.y)}`);
+  if (!tl) return;
+  const br = askXY('Правый нижний угол — X Y (в метрах):', `${Math.round(c.x) - 500} ${Math.round(c.y) + 500}`);
+  if (!br) return;
+  const z = prompt('Номер зоны СК-42:', String(Math.floor(br[1] / 1e6) || c.zone));
+  if (z === null) return;
+  const zone = parseInt(z, 10);
+  if (!(tl[0] > br[0] && br[1] > tl[1])) { alert('Проверьте углы: у левого верхнего X больше, а Y меньше, чем у правого нижнего.'); return; }
+  const ll = (x, y) => { const p = fromSk42(x, y, zone); return [p.lat, p.lng]; };
+  const r = { id: uid(), name: f.name, blob: f, tl: ll(tl[0], tl[1]), tr: ll(tl[0], br[1]), bl: ll(br[0], tl[1]), opacity: RASTER_OPACITY };
+  try { await rasterStore('readwrite', s => s.put(r)); } catch (err) { toast('Растр показан, но не сохранён на телефоне'); }
+  showRaster(r);
+  map.fitBounds([r.tl, r.tr, r.bl], { padding: [30, 30] });
+  toast('Растр наложен. Включать и выключать — в списке слоёв справа вверху');
+};
+async function rasterMenu() {
+  const ids = Object.keys(rasterLayers);
+  if (!ids.length) { toast('Своих растров пока нет'); return; }
+  openSheet('<h3>Свои растры</h3>' + ids.map(id => {
+    const r = rasterLayers[id].r;
+    return `<div class="item" data-pick="op:${id}">◐ ${esc(r.name)} — прозрачность ${Math.round((1 - (r.opacity || RASTER_OPACITY)) * 100)} %</div>` +
+      `<div class="item" data-pick="del:${id}">🗑 Удалить «${esc(r.name)}»</div>`;
+  }).join(''), async pick => {
+    const [act, id] = pick.split(':'), layer = rasterLayers[id];
+    if (!layer) return;
+    if (act === 'op') {
+      const o = { 0.5: 0.7, 0.7: 0.9, 0.9: 1, 1: 0.5 }[layer.r.opacity || RASTER_OPACITY] || RASTER_OPACITY;
+      layer.setOpacity(o);
+      try { await rasterStore('readwrite', s => s.put(layer.r)); } catch (e) { /* не критично */ }
+      toast('Прозрачность ' + Math.round((1 - o) * 100) + ' %');
+    }
+    if (act === 'del' && confirm('Удалить растр «' + layer.r.name + '»?')) {
+      map.removeLayer(layer); layersControl.removeLayer(layer); delete rasterLayers[id];
+      try { await rasterStore('readwrite', s => s.delete(id)); } catch (e) { /* уже убран с карты */ }
+    }
+  });
+}
+
 /* ───────────── Старт ───────────── */
 
 redrawAll();
 updateInfo();
+loadRasters();
 if (data.points.length || data.lines.length) MENU.fit();
 </script>
 </body>
