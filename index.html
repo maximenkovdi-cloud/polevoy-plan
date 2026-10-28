@@ -117,6 +117,9 @@
   .sym .lbl { position:absolute; left:24px; top:-2px; white-space:nowrap; font:italic 12px Georgia, "Times New Roman", serif; color:var(--sym);
     text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo), 0 0 3px var(--halo); }
   .sym.sel svg { filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 3px var(--accent)); }
+  .gtxt { pointer-events:none; fill:#1b5e20; font-weight:600; font-family: system-ui, "Segoe UI", Roboto, sans-serif; font-variant-numeric: tabular-nums;
+    paint-order: stroke; stroke:var(--halo); stroke-width:3.5px; stroke-linejoin:round; }
+  body.night .gtxt { fill:#a5d6a7; }
   .gridlbl { background:none; border:0; pointer-events:none; }
   .gridlbl .glw { position:absolute; left:0; top:0; transform-origin:0 0; }
   .gridlbl .gx, .gridlbl .gy { position:absolute; white-space:nowrap; line-height:1; color:#1b5e20; font-weight:600;
@@ -900,6 +903,8 @@ const GRID_MAX_CROSSES = 400;    // предохранитель: больше �
 const GridLayer = L.Layer.extend({
   onAdd(m) {
     this._group = L.layerGroup().addTo(m);
+    // свой SVG-слой: Leaflet растягивает его при приближении пальцами — вместе с ним растут и кресты, и подписи
+    this._renderer = this._renderer || L.svg({ padding: 0.5 });
     m.on('moveend zoomend resize', this._draw, this);
     this._draw();
     try { localStorage.setItem(GRID_KEY, '1'); } catch (e) { /* не критично */ }
@@ -907,11 +912,13 @@ const GridLayer = L.Layer.extend({
   onRemove(m) {
     m.off('moveend zoomend resize', this._draw, this);
     m.removeLayer(this._group);
+    if (this._labels) { this._labels.remove(); this._labels = null; }
     try { localStorage.setItem(GRID_KEY, '0'); } catch (e) { /* не критично */ }
   },
   _draw() {
     const m = this._map, size = m.getSize(), group = this._group;
     group.clearLayers();
+    if (this._labels) { this._labels.remove(); this._labels = null; }
     const zone = Math.floor(m.getCenter().lng / 6) + 1;
     const toGk = p => { const ll = m.containerPointToLatLng(p); const [y, x] = proj4('WGS84', gkDef(zone), [ll.lng, ll.lat]); return { x, y }; };
     const corners = [[0, 0], [size.x, 0], [0, size.y], [size.x, size.y]].map(toGk);
@@ -930,24 +937,27 @@ const GridLayer = L.Layer.extend({
     const SAMPLES = 8, gridLines = [], segs = [];
     for (let x = x0; x <= x1; x += step) { const l = []; for (let i = 0; i <= SAMPLES; i++) l.push(ll(x, y0 + (y1 - y0) * i / SAMPLES)); gridLines.push(l); }
     for (let y = y0; y <= y1; y += step) { const l = []; for (let i = 0; i <= SAMPLES; i++) l.push(ll(x0 + (x1 - x0) * i / SAMPLES, y)); gridLines.push(l); }
-    const gap = (armPx + 4).toFixed(0), fs = fontPx.toFixed(1);
+    const gap = armPx + 4, labels = [];
     for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {
       for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {
         segs.push([ll(x, y - arm), ll(x, y + arm)], [ll(x - arm, y), ll(x + arm, y)]);
-        // наклон креста на экране (сближение меридианов) — подписи идут параллельно его чертам
-        const a = m.latLngToContainerPoint(ll(x, y - arm)), b = m.latLngToContainerPoint(ll(x, y + arm));
-        const deg = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
-        // X — горизонтально над правой чертой креста; Y — вертикально над верхней чертой (читается снизу вверх, текст над линией)
-        const html = `<div class="glw" style="transform:rotate(${deg.toFixed(2)}deg);font-size:${fs}px">` +
-          `<div class="gx" style="left:${gap}px">X – ${fmt(x)}</div>` +
-          `<div class="gyw"><div class="gy" style="left:${gap}px">Y – ${fmt(y)}</div></div></div>`;
-        L.marker(ll(x, y), { icon: L.divIcon({ className: 'gridlbl', html, iconSize: [0, 0], iconAnchor: [0, 0] }), interactive: false, keyboard: false }).addTo(group);
+        // точка креста в координатах слоя и наклон креста (сближение меридианов) — подписи идут параллельно его чертам
+        const c = m.latLngToLayerPoint(ll(x, y)), a = m.latLngToLayerPoint(ll(x, y - arm)), b = m.latLngToLayerPoint(ll(x, y + arm));
+        labels.push({ c, deg: Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI, x, y });
       }
     }
-    // линии и кресты — обычные векторные линии Leaflet: при приближении пальцами они растут вместе с картой
-    const night = document.body.classList.contains('night');
-    L.polyline(gridLines, { color: night ? '#4caf50' : GRID_LINE_COLOR, weight: 0.8, opacity: 0.55, interactive: false }).addTo(group);
-    L.polyline(segs, { color: night ? '#81c784' : GRID_COLOR, weight: 2.2, opacity: 1, interactive: false }).addTo(group);
+    // линии и кресты — векторные линии в том же SVG-слое, что и подписи
+    const night = document.body.classList.contains('night'), r = this._renderer;
+    L.polyline(gridLines, { renderer: r, color: night ? '#4caf50' : GRID_LINE_COLOR, weight: 0.8, opacity: 0.55, interactive: false }).addTo(group);
+    L.polyline(segs, { renderer: r, color: night ? '#81c784' : GRID_COLOR, weight: 2.2, opacity: 1, interactive: false }).addTo(group);
+    // X — горизонтально над правой чертой креста; Y — вертикально над верхней чертой (читается снизу вверх, текст над линией)
+    const g = this._labels = el('g', { class: 'gtxt', 'font-size': fontPx.toFixed(1) }, r._rootGroup);
+    const t = (tr, str) => { el('text', { transform: tr, x: gap.toFixed(1), y: -3 }, g).textContent = str; };
+    for (const { c, deg, x, y } of labels) {
+      const at = `translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(`;
+      t(at + deg.toFixed(2) + ')', 'X – ' + fmt(x));
+      t(at + (deg - 90).toFixed(2) + ')', 'Y – ' + fmt(y));
+    }
   }
 });
 const gridLayer = new GridLayer();
