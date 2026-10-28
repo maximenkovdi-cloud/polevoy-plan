@@ -135,6 +135,7 @@
   /* ── Leaflet: свой список слоёв и масштаб, кнопки +/− под плашкой ── */
   .leaflet-control-layers, .leaflet-control-scale { display:none !important; }
   .leaflet-top.leaflet-left { top:var(--topH, 92px); }
+  .leaflet-top.leaflet-left .leaflet-control { margin-top:0; }          /* отступ уже учтён в --topH */
   .leaflet-control-zoom a { width:40px !important; height:40px !important; line-height:40px !important; font-size:20px !important; background:var(--panel) !important; color:var(--ink) !important; border-color:var(--line) !important; }
   .leaflet-bottom { bottom:var(--barH, 70px); }
   .leaflet-control-attribution { background:color-mix(in srgb, var(--panel) 80%, transparent) !important; color:var(--muted) !important; }
@@ -1122,10 +1123,12 @@ function rasterMenu() {
 /* ───────────── Старт ───────────── */
 
 ready = true;
-layout();
-window.addEventListener('resize', layout);
 redrawAll();
 updateInfo();
+layout();                                            // после updateInfo: плашка уже с координатами и своей настоящей высотой
+window.addEventListener('resize', layout);
+// плашка меняет высоту (WGS / СК-42 / оба, длинная строка GPS) — кнопки и подсказки сдвигаются следом
+if (window.ResizeObserver) new ResizeObserver(layout).observe($('top'));
 loadRasters();
 if (data.points.length || data.lines.length) MENU.fit();
 </script>
