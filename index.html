@@ -39,6 +39,11 @@
   .pop .t { font-weight:600; margin-bottom:4px; }
   .pop .c { font-size:12.5px; color:#444; font-variant-numeric: tabular-nums; }
   .pop .btns { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .gridlbl { background:none; border:0; pointer-events:none; }
+  .gridlbl .glw { position:absolute; left:0; top:0; transform-origin:0 0; }
+  .gridlbl .gl { position:absolute; top:0; transform:translateY(-50%); white-space:nowrap; line-height:1.25; color:#7b1fa2;
+    font-family: system-ui, "Segoe UI", Roboto, sans-serif; font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff, 0 0 4px #fff; }
   .netlines { overflow:visible; pointer-events:none; }
   .netlines text { paint-order: stroke; stroke:#fff; stroke-width:3px; stroke-linejoin:round; }
   .leaflet-top { top:52px; }
@@ -582,77 +587,50 @@ $('fileIn').onchange = async e => {
   } catch (err) { alert('Не удалось загрузить файл: ' + err.message); }
 };
 
-/* ───────────── Слой: сетка СК-42 ───────────── */
+/* ───────────── Слой: сетка СК-42 (кресты, как на планшете) ───────────── */
 
 const GRID_STEPS = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
-const GRID_MIN_PX = 90;          // линии сетки не чаще, чем через 90 пикселей
-map.createPane('gridPane').style.zIndex = 420;
+const GRID_MIN_PX = 120;         // кресты не чаще, чем через 120 пикселей — чтобы поместились подписи
+const GRID_ARM = 0.1;            // половина креста — 10 % шага сетки, кресты растут вместе с картой
+const GRID_COLOR = '#7b1fa2';
 const GridLayer = L.Layer.extend({
   onAdd(m) {
-    this._svg = document.createElementNS(NS, 'svg');
-    this._svg.classList.add('netlines');
-    m.getPane('gridPane').appendChild(this._svg);
-    m.on('moveend zoomend resize viewreset', this._draw, this);
-    m.on('zoomstart', this._hide, this);
+    this._group = L.layerGroup().addTo(m);
+    m.on('moveend zoomend resize', this._draw, this);
     this._draw();
   },
   onRemove(m) {
-    m.off('moveend zoomend resize viewreset', this._draw, this);
-    m.off('zoomstart', this._hide, this);
-    this._svg.remove();
+    m.off('moveend zoomend resize', this._draw, this);
+    m.removeLayer(this._group);
   },
-  _hide() { this._svg.style.opacity = 0; },
   _draw() {
-    const m = this._map, svg = this._svg, size = m.getSize();
-    svg.style.opacity = 1;
-    L.DomUtil.setPosition(svg, m.containerPointToLayerPoint([0, 0]));
-    svg.setAttribute('width', size.x); svg.setAttribute('height', size.y);
-    svg.innerHTML = '';
+    const m = this._map, size = m.getSize(), group = this._group;
+    group.clearLayers();
     const zone = Math.floor(m.getCenter().lng / 6) + 1;
-    const corners = [[0, 0], [size.x, 0], [0, size.y], [size.x, size.y], [size.x / 2, 0], [size.x / 2, size.y], [0, size.y / 2], [size.x, size.y / 2]]
-      .map(p => { const ll = m.containerPointToLatLng(p); const [y, x] = proj4('WGS84', gkDef(zone), [ll.lng, ll.lat]); return { x, y }; });
+    const toGk = p => { const ll = m.containerPointToLatLng(p); const [y, x] = proj4('WGS84', gkDef(zone), [ll.lng, ll.lat]); return { x, y }; };
+    const corners = [[0, 0], [size.x, 0], [0, size.y], [size.x, size.y]].map(toGk);
     const minX = Math.min(...corners.map(c => c.x)), maxX = Math.max(...corners.map(c => c.x));
     const minY = Math.min(...corners.map(c => c.y)), maxY = Math.max(...corners.map(c => c.y));
     const mPerPx = (maxY - minY) / size.x;
     const step = GRID_STEPS.find(s => s / mPerPx >= GRID_MIN_PX) || GRID_STEPS[GRID_STEPS.length - 1];
-    const g = el('g', { stroke: '#7b1fa2', 'stroke-width': 1, fill: 'none', opacity: 0.75 }, svg);
-    const lbl = el('g', { fill: '#7b1fa2', 'font-size': 11, 'font-family': 'system-ui, sans-serif' }, svg);
+    const spacingPx = step / mPerPx, arm = step * GRID_ARM, armPx = arm / mPerPx;
+    const fontPx = Math.max(11, Math.min(16, spacingPx * 0.09));        // текст тоже растёт с масштабом, но в разумных пределах
     const fmt = v => Math.round(v).toLocaleString('ru-RU');
-    // Точка, где ломаная пересекает вертикаль screenX (или горизонталь screenY), и угол линии там
-    const cross = (cp, axis, v) => {
-      for (let i = 0; i + 1 < cp.length; i++) {
-        const a = cp[i], b = cp[i + 1];
-        if ((a[axis] - v) * (b[axis] - v) > 0 || a[axis] === b[axis]) continue;
-        const t = (v - a[axis]) / (b[axis] - a[axis]), first = cp[0], last = cp[cp.length - 1];
-        // угол — по всей линии на экране: в пределах экрана она почти прямая, и подписи получаются ровными
-        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, dx: last.x - first.x, dy: last.y - first.y };
-      }
-      return null;
-    };
-    const label = (p, deg, str, anchor) => el('text', {
-      'text-anchor': anchor, transform: `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)}) rotate(${deg.toFixed(2)}) translate(0 -4)`
-    }, lbl).textContent = str;
-    const project = pts => pts.map(([x, y]) => m.latLngToContainerPoint(fromSk42(x, y, zone)));
-    const draw = cp => el('polyline', { points: cp.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ') }, g);
-    const SAMPLES = 12, EDGE = 8, LABEL_Y = size.y - 92;   // Y-подписи над нижней панелью кнопок
-    for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {        // линии постоянного X (почти горизонтальные)
-      const pts = []; for (let i = 0; i <= SAMPLES; i++) pts.push([x, minY + (maxY - minY) * i / SAMPLES]);
-      const cp = project(pts); draw(cp);
-      const p = cross(cp, 'x', size.x - EDGE);                                   // у правого края, вдоль линии
-      if (p && p.y > 125 && p.y < size.y - 70) {                                // не под кнопкой слоёв справа вверху
-        const dir = p.dx < 0 ? -1 : 1;                                           // угол «слева направо», чтобы текст не был вверх ногами
-        label(p, Math.atan2(p.dy * dir, p.dx * dir) * 180 / Math.PI, 'X ' + fmt(x), 'end');
+    const ll = (x, y) => { const p = fromSk42(x, y, zone); return [p.lat, p.lng]; };
+    const segs = [];
+    for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {
+      for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {
+        segs.push([ll(x, y - arm), ll(x, y + arm)], [ll(x - arm, y), ll(x + arm, y)]);
+        // наклон креста на экране (сближение меридианов) — чтобы подпись шла параллельно его горизонтальной черте
+        const a = m.latLngToContainerPoint(ll(x, y - arm)), b = m.latLngToContainerPoint(ll(x, y + arm));
+        const deg = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+        const html = `<div class="glw" style="transform:rotate(${deg.toFixed(2)}deg)"><div class="gl" style="left:${(armPx + 4).toFixed(0)}px;font-size:${fontPx.toFixed(1)}px">` +
+          `X ${fmt(x)}<br>Y ${fmt(y)}</div></div>`;
+        L.marker(ll(x, y), { icon: L.divIcon({ className: 'gridlbl', html, iconSize: [0, 0], iconAnchor: [0, 0] }), interactive: false, keyboard: false }).addTo(group);
       }
     }
-    for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {        // линии постоянного Y (почти вертикальные)
-      const pts = []; for (let i = 0; i <= SAMPLES; i++) pts.push([minX + (maxX - minX) * i / SAMPLES, y]);
-      const cp = project(pts); draw(cp);
-      const p = cross(cp, 'y', LABEL_Y);
-      if (p && p.x > 20 && p.x < size.x - 20) {
-        const dir = p.dy > 0 ? -1 : 1;                                           // угол «снизу вверх» — читается, наклонив голову влево
-        label(p, Math.atan2(p.dy * dir, p.dx * dir) * 180 / Math.PI, 'Y ' + fmt(y), 'start');
-      }
-    }
+    // кресты — обычная векторная линия Leaflet: при приближении пальцами она растёт вместе с картой
+    L.polyline(segs, { color: GRID_COLOR, weight: 1.6, opacity: 0.9, interactive: false }).addTo(group);
   }
 });
 const gridLayer = new GridLayer();
