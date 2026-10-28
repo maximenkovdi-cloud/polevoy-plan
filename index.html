@@ -82,7 +82,9 @@
   .tabs button.on { background:var(--accent); color:var(--accentInk); border-color:var(--accent); font-weight:700; }
   .h { font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:12px 2px 6px; }
   .tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(78px, 1fr)); gap:7px; }
-  .tile { border:1px solid var(--line); background:none; color:var(--ink); border-radius:13px; padding:9px 4px 7px; display:flex; flex-direction:column; align-items:center; gap:5px; text-align:center; font-size:11.5px; line-height:1.15; min-height:84px; }
+  .tile { border:1px solid var(--line); background:none; color:var(--ink); border-radius:13px; padding:9px 3px 7px; display:flex; flex-direction:column; align-items:center; gap:5px; text-align:center; font-size:11px; line-height:1.15; min-height:84px; min-width:0; }
+  .tile span { max-width:100%; hyphens:manual; -webkit-hyphens:manual; }   /* длинные слова переносятся по мягким переносам из tileName() */
+  #modeTitle span, #card .name, #card .sub { overflow-wrap:anywhere; hyphens:auto; -webkit-hyphens:auto; }
   body.sun .tile { border:2px solid #000; }
   .tile:active { background:color-mix(in srgb, var(--accent) 15%, transparent); }
   .tile svg { flex:none; }
@@ -563,8 +565,20 @@ function drawLines() {
     const path = el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'none' }, g);
     if (path.getTotalLength() < 6) continue;
     DRAW[spec.kind](g, path, spec, line, spec.w * MM * 1.6 * (isSel ? 1.6 : 1), pts);
-    if (line.caption) text(g, path, path.getTotalLength() * 0.3, line.caption, { dy: -2.6 * MM, size: 2.4 * MM });
+    if (line.caption) captionAlong(g, path, pts, line.caption);
   }
+}
+// Подпись линии — над серединой самого длинного участка; если не помещается в линию, не рисуем (появится при приближении)
+function captionAlong(g, path, pts, str) {
+  let best = 0, bestMid = path.getTotalLength() / 2, run = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const d = pts[i - 1].distanceTo(pts[i]);
+    if (d > best) { best = d; bestMid = run + d / 2; }
+    run += d;
+  }
+  text(g, path, bestMid, str, { dy: -2.6 * MM, size: 2.4 * MM });
+  const t = g.lastChild;
+  if (t.getComputedTextLength() > best - 2 * MM) t.remove();
 }
 function drawHits() {
   hitLayer.clearLayers();
@@ -773,12 +787,23 @@ function showSheet(html) {
 }
 function closeSheet() { $('sheet').style.display = 'none'; }
 
+// Мягкие переносы в длинных словах — чтобы в узкой плитке слово рвалось по слогам («нефте-провода»), а не по одной букве
+const SOFT = '­';
+function tileName(name) {
+  return esc(name)
+    .replace(/(электро|воздухо|мазуто|нефте|бензо|золо|водо|газо|трубо)(провод|кабел)/gi, '$1' + SOFT + '$2')
+    .replace(/фундаментальный/gi, 'фундамен' + SOFT + 'тальный')
+    .replace(/канализаци/gi, 'канали' + SOFT + 'заци')
+    .replace(/(съёмоч)(ной)/gi, '$1' + SOFT + '$2')
+    .replace(/(напр)(яжения)/gi, '$1' + SOFT + '$2');
+}
+
 // Выбор знака или линии: поиск, вкладки, «последние», крупные плитки
 function openPicker(kind) {
   const groups = kind === 'point' ? POINT_GROUPS : LINE_GROUPS, all = kind === 'point' ? POINTS : LINES;
   const recent = pref('recent.' + kind, []).filter(id => all[id]);
   let tab = recent.length ? 'recent' : groups[0].id, query = '';
-  const tile = s => `<button class="tile" data-pick="${s.id}">${kind === 'point' ? symbolSvg(s.svg, 32) : linePreview(s, 56, 30)}<span>${esc(s.name)}</span></button>`;
+  const tile = s => `<button class="tile" data-pick="${s.id}">${kind === 'point' ? symbolSvg(s.svg, 32) : linePreview(s, 56, 30)}<span>${tileName(s.name)}</span></button>`;
   const render = () => {
     let html = '';
     if (query) {
