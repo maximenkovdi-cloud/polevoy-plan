@@ -618,20 +618,40 @@ const GridLayer = L.Layer.extend({
     const g = el('g', { stroke: '#7b1fa2', 'stroke-width': 1, fill: 'none', opacity: 0.75 }, svg);
     const lbl = el('g', { fill: '#7b1fa2', 'font-size': 11, 'font-family': 'system-ui, sans-serif' }, svg);
     const fmt = v => Math.round(v).toLocaleString('ru-RU');
-    const line = (pts, label, at) => {
-      const cp = pts.map(([x, y]) => m.latLngToContainerPoint(fromSk42(x, y, zone)));
-      el('polyline', { points: cp.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ') }, g);
-      const p = at(cp);
-      if (p) el('text', { x: p.x, y: p.y }, lbl).textContent = label;
+    // Точка, где ломаная пересекает вертикаль screenX (или горизонталь screenY), и угол линии там
+    const cross = (cp, axis, v) => {
+      for (let i = 0; i + 1 < cp.length; i++) {
+        const a = cp[i], b = cp[i + 1];
+        if ((a[axis] - v) * (b[axis] - v) > 0 || a[axis] === b[axis]) continue;
+        const t = (v - a[axis]) / (b[axis] - a[axis]), first = cp[0], last = cp[cp.length - 1];
+        // угол — по всей линии на экране: в пределах экрана она почти прямая, и подписи получаются ровными
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, dx: last.x - first.x, dy: last.y - first.y };
+      }
+      return null;
     };
-    const SAMPLES = 12;
-    for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {        // линии постоянного X (горизонтальные)
+    const label = (p, deg, str, anchor) => el('text', {
+      'text-anchor': anchor, transform: `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)}) rotate(${deg.toFixed(2)}) translate(0 -4)`
+    }, lbl).textContent = str;
+    const project = pts => pts.map(([x, y]) => m.latLngToContainerPoint(fromSk42(x, y, zone)));
+    const draw = cp => el('polyline', { points: cp.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ') }, g);
+    const SAMPLES = 12, EDGE = 8, LABEL_Y = size.y - 92;   // Y-подписи над нижней панелью кнопок
+    for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {        // линии постоянного X (почти горизонтальные)
       const pts = []; for (let i = 0; i <= SAMPLES; i++) pts.push([x, minY + (maxY - minY) * i / SAMPLES]);
-      line(pts, 'X ' + fmt(x), cp => { const p = cp.find(q => q.x >= 2); return p && { x: 4, y: p.y - 3 }; });
+      const cp = project(pts); draw(cp);
+      const p = cross(cp, 'x', size.x - EDGE);                                   // у правого края, вдоль линии
+      if (p && p.y > 125 && p.y < size.y - 70) {                                // не под кнопкой слоёв справа вверху
+        const dir = p.dx < 0 ? -1 : 1;                                           // угол «слева направо», чтобы текст не был вверх ногами
+        label(p, Math.atan2(p.dy * dir, p.dx * dir) * 180 / Math.PI, 'X ' + fmt(x), 'end');
+      }
     }
-    for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {        // линии постоянного Y (вертикальные)
+    for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {        // линии постоянного Y (почти вертикальные)
       const pts = []; for (let i = 0; i <= SAMPLES; i++) pts.push([minX + (maxX - minX) * i / SAMPLES, y]);
-      line(pts, 'Y ' + fmt(y), cp => { const p = cp.reduce((a, b) => Math.abs(b.y - 72) < Math.abs(a.y - 72) ? b : a); return { x: p.x + 3, y: 82 }; });
+      const cp = project(pts); draw(cp);
+      const p = cross(cp, 'y', LABEL_Y);
+      if (p && p.x > 20 && p.x < size.x - 20) {
+        const dir = p.dy > 0 ? -1 : 1;                                           // угол «снизу вверх» — читается, наклонив голову влево
+        label(p, Math.atan2(p.dy * dir, p.dx * dir) * 180 / Math.PI, 'Y ' + fmt(y), 'start');
+      }
     }
   }
 });
