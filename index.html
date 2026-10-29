@@ -618,7 +618,7 @@ function startGps() {
   $('gpsText').textContent = 'Ищу спутники…'; $('gpsDot').className = 'dot mid';
   gpsWatch = navigator.geolocation.watchPosition(p => {
     const first = !gps;
-    gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, at: Date.now() };
+    gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, at: Date.now() };
     if (measuring) measuring.onFix(p);
     const ll = [gps.lat, gps.lng];
     if (!gpsMarker) {
@@ -631,13 +631,114 @@ function startGps() {
     const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
     const rtk = acc <= RTK_FIX_M ? ' · RTK (похоже на FIX)' : acc < 1 ? ' · RTK (похоже на FLOAT)' : '';
     $('gpsDot').className = 'dot ' + (acc <= 5 ? 'ok' : acc <= 15 ? 'mid' : 'bad');
-    $('gpsText').textContent = `GPS ±${accText} м${rtk}` + (acc > 15 ? ' — подождите на открытом месте' : '');
+    const H = normalHeight(gps.lat, gps.lng, gps.alt);
+    $('gpsText').textContent = `GPS ±${accText} м${rtk}` + (H != null ? ` · H ${H.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} м` : '') +
+      (acc > 15 ? ' — подождите на открытом месте' : '');
     $('fabMe').classList.add('on');
   }, err => {
     gpsWatch = null;
     $('gpsDot').className = 'dot bad';
     $('gpsText').textContent = 'GPS: нет доступа — ' + err.message;
   }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+  loadGeoid().catch(() => { /* без модели геоида отметки не считаем — координаты работают */ });
+}
+
+/* ───────────── Отметки: высота над эллипсоидом (ГНСС) → нормальная высота ───────────── */
+
+// ГНСС даёт высоту h над эллипсоидом WGS-84; отметка H = h − N, где N — высота геоида EGM2008 (NGA, общественное достояние;
+// сетка 5′ из GeographicLib, вырезана Россия 35–82° с. ш., 18–190° в. д., Int16 в сантиметрах, от 82° с. ш. на юг).
+// Балтийская система опирается на квазигеоид ГАО-2012, он отличается от EGM2008 на сантиметры–дециметры, поэтому есть поправка по реперу.
+const GEOID = { url: 'lib/geoid-ru.bin', lat0: 82, lon0: 18, step: 12, rows: 565, cols: 2065 };
+const HEIGHT_REF_KM = 10;          // дальше от репера поправка по нему уже ненадёжна
+const HEIGHT_DH_SUSPECT = 5;       // поправка больше 5 м — приёмник, скорее всего, отдаёт уже отметку, а не высоту над эллипсоидом
+let geoidGrid = null, geoidLoading = null;
+let hgt = pref('hgt', { src: 'ell', dh: 0, ref: null });   // src: 'ell' — высота над эллипсоидом, 'normal' — приёмник уже даёт отметку
+function loadGeoid() {
+  if (!geoidLoading) geoidLoading = fetch(GEOID.url)
+    .then(r => { if (!r.ok) throw new Error('нет файла модели геоида'); return r.arrayBuffer(); })
+    .then(b => { if (b.byteLength !== GEOID.rows * GEOID.cols * 2) throw new Error('файл модели геоида повреждён'); geoidGrid = new Int16Array(b); })
+    .catch(e => { geoidLoading = null; throw e; });
+  return geoidLoading;
+}
+// высота геоида N в метрах, билинейная интерполяция; null — вне России или модель не загружена
+function geoidN(lat, lng) {
+  if (!geoidGrid) return null;
+  const G = GEOID, lon = lng < 0 ? lng + 360 : lng;
+  const y = (G.lat0 - lat) * G.step, x = (lon - G.lon0) * G.step;
+  if (!(y >= 0 && x >= 0 && y <= G.rows - 1 && x <= G.cols - 1)) return null;
+  const r = Math.floor(y), c = Math.floor(x), fy = y - r, fx = x - c;
+  const r1 = Math.min(r + 1, G.rows - 1), c1 = Math.min(c + 1, G.cols - 1), v = (i, j) => geoidGrid[i * G.cols + j];
+  return ((v(r, c) * (1 - fx) + v(r, c1) * fx) * (1 - fy) + (v(r1, c) * (1 - fx) + v(r1, c1) * fx) * fy) / 100;
+}
+// отметка без поправки по реперу
+function rawHeight(lat, lng, hEll) {
+  if (hEll == null || isNaN(hEll)) return null;
+  if (hgt.src === 'normal') return hEll;
+  const N = geoidN(lat, lng);
+  return N == null ? null : hEll - N;
+}
+function normalHeight(lat, lng, hEll) {
+  const H = rawHeight(lat, lng, hEll);
+  return H == null ? null : H + (hgt.dh || 0);
+}
+function refDistanceKm(lat, lng) {
+  const r = hgt.ref;
+  if (!r) return null;
+  const k = Math.cos(lat * Math.PI / 180);
+  return Math.hypot((lat - r.lat) * M_PER_DEG, (lng - r.lng) * M_PER_DEG * k) / 1000;
+}
+function mText(v, digits) { return v.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits }); }
+
+function heightsMenu() {
+  const r = hgt.ref, here = gps ? refDistanceKm(gps.lat, gps.lng) : null;
+  const N = gps ? geoidN(gps.lat, gps.lng) : null;
+  const refText = r
+    ? `Привязка: ${esc(r.name || 'репер')}, отметка ${mText(r.H, 3)} м, поправка ${hgt.dh >= 0 ? '+' : ''}${mText(hgt.dh, 3)} м` +
+      (here != null ? ` — до репера ${mText(here, 1)} км${here > HEIGHT_REF_KM ? ' — далеко, привяжитесь к ближнему реперу' : ''}` : '')
+    : (hgt.dh ? `Поправка введена вручную: ${hgt.dh >= 0 ? '+' : ''}${mText(hgt.dh, 3)} м` : 'Привязки к реперу нет — отметки по одной модели EGM2008, ошибка до нескольких дециметров.');
+  showSheet(`<div class="sh-head"><b>Отметки</b><button class="x" data-close>×</button></div><div id="hgtBox">
+    <div class="meas-row"><span>Высота от приёмника</span><div class="seg" id="hgtSrc">
+      <button data-v="ell" class="${hgt.src === 'ell' ? 'on' : ''}">над эллипсоидом</button><button data-v="normal" class="${hgt.src === 'normal' ? 'on' : ''}">уже отметка</button></div></div>
+    <div class="hint" style="color:var(--muted);font-size:12.5px">Телефон и большинство приёмников дают высоту над эллипсоидом — из неё вычитается геоид EGM2008${N != null ? ` (здесь ${mText(N, 2)} м)` : ''}.
+      Если программа приёмника (eField) уже пересчитывает в Балтийскую систему, выберите «уже отметка».</div>
+    <div class="meas-verdict ${r || hgt.dh ? 'ok' : 'mid'}" style="font-weight:500">${refText}</div>
+    <div class="hint" style="color:var(--muted);font-size:12.5px">Привязка: встаньте на репер или пункт с известной отметкой, нажмите «Привязать» и введите его отметку.
+      Для плана с сечением рельефа 0,5 м средняя ошибка отметок — не больше 12 см (¼ сечения, СП 47.13330, п. 5.1.19).</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">
+      <button class="btn" id="hgtManual">Поправка вручную</button><button class="btn primary" id="hgtRef">Привязать к реперу</button>
+      ${r || hgt.dh ? '<button class="btn danger" id="hgtReset" style="grid-column:span 2">Сбросить поправку</button>' : ''}</div></div>`);
+  $('hgtSrc').onclick = e => {
+    const b = e.target.closest('button[data-v]');
+    if (!b) return;
+    hgt = { ...hgt, src: b.dataset.v, dh: 0, ref: null };          // поправка от другого источника высот не годится
+    setPref('hgt', hgt); heightsMenu();
+  };
+  $('hgtRef').onclick = () => openMeasure((ll, meas) => bindToBenchmark(ll, meas));
+  $('hgtManual').onclick = () => openForm('Поправка к отметкам', [
+    { key: 'dh', label: 'Поправка, м', type: 'number', value: hgt.dh || 0, hint: 'Прибавляется к каждой отметке. Например, −0.23.' }
+  ], v => {
+    const dh = parseNum(v.dh || '0');
+    if (isNaN(dh)) { toast('Поправка — это число'); return false; }
+    hgt = { ...hgt, dh, ref: null }; setPref('hgt', hgt); toast('Поправка сохранена');
+  });
+  if ($('hgtReset')) $('hgtReset').onclick = () => { hgt = { ...hgt, dh: 0, ref: null }; setPref('hgt', hgt); heightsMenu(); };
+}
+function bindToBenchmark(ll, meas) {
+  const H0 = rawHeight(ll.lat, ll.lng, meas.hEll);
+  if (H0 == null) { toast(meas.hEll == null ? 'Приёмник не дал высоту — привязка невозможна' : 'Модель геоида не загрузилась — проверьте интернет и повторите'); return; }
+  openForm('Привязка к реперу', [
+    { key: 'name', label: 'Репер или пункт', placeholder: 'например Рп 1234' },
+    { key: 'H', label: 'Отметка репера, м', type: 'number', placeholder: 'например 145.312', hint: `Измерено без поправки: ${mText(H0, 3)} м (±${cmText(meas.hm)}).` }
+  ], v => {
+    const H = parseNum(v.H);
+    if (v.H === '' || isNaN(H)) { toast('Введите отметку репера, например 145.312'); return false; }
+    const dh = H - H0;
+    hgt = { ...hgt, dh, ref: { name: v.name || '', lat: ll.lat, lng: ll.lng, H, at: new Date().toISOString() } };
+    setPref('hgt', hgt);
+    toast(Math.abs(dh) > HEIGHT_DH_SUSPECT
+      ? `Поправка ${mText(dh, 2)} м — слишком большая: похоже, приёмник даёт уже отметку. Проверьте «Высота от приёмника».`
+      : `Привязано: поправка ${dh >= 0 ? '+' : ''}${mText(dh, 3)} м`);
+  });
 }
 /* ───────────── Измерение точки с усреднением и проверкой допуска ───────────── */
 
@@ -665,7 +766,16 @@ function measStats(fixes) {
   const mn = mean(pts.map(p => p.n)), me = mean(pts.map(p => p.e));
   const dev = fixes.length > 1 ? Math.sqrt(pts.reduce((s, p) => s + (p.n - mn) ** 2 + (p.e - me) ** 2, 0) / (fixes.length - 1)) : 0;
   const acc = mean(fixes.map(f => f.acc));
-  return { lat: lat0 + mn / M_PER_DEG, lng: lng0 + me / (M_PER_DEG * k), dev, acc, m: Math.max(dev, acc), n: fixes.length };
+  const res = { lat: lat0 + mn / M_PER_DEG, lng: lng0 + me / (M_PER_DEG * k), dev, acc, m: Math.max(dev, acc), n: fixes.length, hEll: null, hm: null };
+  const alts = fixes.filter(f => f.alt != null && !isNaN(f.alt));
+  if (alts.length) {                                                  // высота — так же: среднее, оценка — большее из разброса и точности приёмника
+    const ha = mean(alts.map(f => f.alt));
+    const hdev = alts.length > 1 ? Math.sqrt(alts.reduce((s, f) => s + (f.alt - ha) ** 2, 0) / (alts.length - 1)) : 0;
+    const vacc = alts.filter(f => f.altAcc != null);
+    res.hEll = ha;
+    res.hm = Math.max(hdev, vacc.length ? mean(vacc.map(f => f.altAcc)) : 0);
+  }
+  return res;
 }
 function measVerdict(m, tol, scale) {
   if (m <= tol) return ['ok', `Годится для 1:${scale} — ошибка в пределах допуска ${cmText(tol)}`];
@@ -700,6 +810,7 @@ function openMeasure(onAccept) {
 
 function runMeasure(o, onAccept) {
   startGps();
+  loadGeoid().catch(() => toast('Модель геоида не загрузилась — отметки не посчитаются'));
   const fixes = [], t0 = Date.now(), tol = measTol(o);
   let lastTs = 0, timer = null, hdops = [];
   const stop = () => { clearInterval(timer); measuring = null; };
@@ -709,7 +820,9 @@ function runMeasure(o, onAccept) {
     if (!fixes.length) { $('measLive').textContent = `Жду координаты… ${sec} с`; }
     else {
       const s = measStats(fixes), [cls, text] = measVerdict(s.m, tol, o.scale), d = sats && sats.dop;
+      const H = normalHeight(s.lat, s.lng, s.hEll);
       $('measLive').innerHTML = `<div class="meas-big">±${cmText(s.m)}</div>
+        ${H != null ? `<div>Отметка ${mText(H, 2)} м ±${cmText(s.hm)}${hgt.ref || hgt.dh ? '' : ' — без привязки к реперу'}</div>` : ''}
         <div>Отсчётов ${s.n} · ${sec} из ${o.sec} с · разброс ±${cmText(s.dev)} · по приёмнику ±${cmText(s.acc)}${d ? ' · HDOP ' + d.h.toFixed(1) : ''}</div>
         <div class="meas-verdict ${cls}">${text}</div>` + (d && d.h > 5 ? '<div>Плохая геометрия спутников (HDOP больше 5) — лучше подождать.</div>' : '');
     }
@@ -721,7 +834,7 @@ function runMeasure(o, onAccept) {
     const s = measStats(fixes), [cls] = measVerdict(s.m, tol, o.scale);
     const hd = hdops.length ? hdops.reduce((a, b) => a + b, 0) / hdops.length : null;
     const meas = { sec: Math.round((Date.now() - t0) / 1000), n: s.n, m: +s.m.toFixed(3), dev: +s.dev.toFixed(3), acc: +s.acc.toFixed(3),
-      hdop: hd == null ? null : +hd.toFixed(1), kind: o.kind, scale: o.scale, tol: +tol.toFixed(3), ok: cls, at: new Date().toISOString() };
+      hdop: hd == null ? null : +hd.toFixed(1), hEll: s.hEll == null ? null : +s.hEll.toFixed(3), hm: s.hm == null ? null : +s.hm.toFixed(3), kind: o.kind, scale: o.scale, tol: +tol.toFixed(3), ok: cls, at: new Date().toISOString() };
     const go = $('measGo');
     go.textContent = 'Принять'; go.disabled = false;
     go.onclick = () => { closeSheet(); onAccept(L.latLng(s.lat, s.lng), meas); };
@@ -733,7 +846,7 @@ function runMeasure(o, onAccept) {
   measuring = { onFix(p) {
     if (p.timestamp === lastTs) return;                                // тот же отсчёт повторно
     lastTs = p.timestamp;
-    fixes.push({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy });
+    fixes.push({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, altAcc: p.coords.altitudeAccuracy });
     if (sats && sats.dop) hdops.push(sats.dop.h);
   } };
   const go = $('measGo');
@@ -1192,7 +1305,8 @@ function showCard(kind, obj) {
     icon = symbolSvg(s.svg, 34, netColor(obj.type)); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
-    if (obj.h != null && obj.h !== '') kv.push(['Отметка', esc(obj.h) + ' м']);
+    if (obj.h != null && obj.h !== '') kv.push(['Отметка', esc(obj.h) + ' м' +
+      (obj.hSrc === 'gnss' && obj.meas && obj.meas.hm != null ? ` <span style="color:var(--muted)">по ГНСС ±${cmText(obj.meas.hm)}</span>` : '')]);
     if (obj.meas) {
       const m = obj.meas, mark = { ok: '✓ годится', mid: '≈ на пределе', bad: '✗ не годится' }[m.ok] || '';
       kv.push(['Измерение', `±${cmText(m.m)} за ${m.sec} с, отсчётов ${m.n}${m.hdop != null ? ', HDOP ' + m.hdop : ''}<br>${mark} для 1:${m.scale} (допуск ${cmText(m.tol)})`]);
@@ -1268,8 +1382,10 @@ function editPoint(p) {
     { key: 'note', label: 'Примечание', value: p.note, placeholder: 'необязательно' }
   ], v => {
     p.name = v.name; p.note = v.note;
-    p.h = v.h === '' ? null : parseNum(v.h);
-    if (v.h !== '' && isNaN(p.h)) { toast('Отметка — это число, например 245.51'); return false; }
+    const h = v.h === '' ? null : parseNum(v.h);
+    if (v.h !== '' && isNaN(h)) { toast('Отметка — это число, например 245.51'); return false; }
+    if (h !== p.h) delete p.hSrc;                                     // отметку исправили вручную — она уже не из ГНСС
+    p.h = h;
     save(); showCard('point', p);
   });
 }
@@ -1338,7 +1454,11 @@ map.on('click', e => { if (mode) addAt(e.latlng); });
 function addAt(ll, meas) {
   if (mode.kind === 'point') {
     const pt = { id: uid(), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' };
-    if (meas) pt.meas = meas;
+    if (meas) {
+      pt.meas = meas;
+      const H = normalHeight(ll.lat, ll.lng, meas.hEll);
+      if (H != null) { pt.h = +H.toFixed(2); pt.hSrc = 'gnss'; }
+    }
     data.points.push(pt);
     save(); drawPoints();
     toast(meas ? `Знак поставлен, ±${cmText(meas.m)}` : 'Знак поставлен');
@@ -1462,6 +1582,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'import', icon: '⬆', text: 'Загрузить KML' },
   { header: 'Карта' },
   { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() },
+  { id: 'heights', icon: '⛰', text: 'Отметки: геоид EGM2008' + (hgt.ref ? ', привязка к реперу' : hgt.dh ? ', с поправкой' : '') },
   { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
   { id: 'netcolors', icon: '🎨', text: netColors ? 'Цвета сетей: традиционные' : 'Цвета сетей: чёрные (по «Правилам»)', on: netColors, check: true },
   { id: 'raster', icon: '🖼', text: 'Наложить свой растр (план, ортофото, скан)' },
@@ -1483,6 +1604,7 @@ const MENU = {
   grid: () => { if (map.hasLayer(gridLayer)) map.removeLayer(gridLayer); else gridLayer.addTo(map); },
   raster: () => rasterInput.click(),
   rasters: () => rasterMenu(),
+  heights: () => heightsMenu(),
   offline: () => saveArea(),
   offlineinfo: () => offlineInfo(),
   theme: () => $('fabTheme').click(),
@@ -1624,10 +1746,11 @@ function toKml() {
 }
 function toCsv() {
   const rows = [['Знак', 'Подпись', 'Отметка', 'Примечание', 'Широта WGS-84', 'Долгота WGS-84', 'X ' + planeName(), 'Y ' + planeName(), 'Зона',
-    'СКО, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб']];
+    'Отметка из', 'СКО, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб']];
   for (const p of data.points) {
     const s = sk42(p.lat, p.lng), m = p.meas;
     rows.push([(POINTS[p.type] || POINTS.mark).name, p.name || '', p.h == null ? '' : p.h, p.note || '', f6(p.lat), f6(p.lng), s.x.toFixed(2), s.y.toFixed(2), s.zone,
+      p.h == null ? '' : p.hSrc === 'gnss' ? 'ГНСС' : 'вручную',
       ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', ''])]);
   }
   return '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
