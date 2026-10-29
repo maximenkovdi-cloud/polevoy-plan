@@ -21,6 +21,8 @@
   body { --draft:"Roboto Condensed","Arial Narrow",Arial,sans-serif; }
   body { --c-water:#1b8a3a; --c-sewer:#8d5524; --c-heat:#1f4fbf; --c-gas:#1aa3d9; --c-el:#d32f2f; --c-own:#7b1fa2; }
   body.night { --c-water:#4caf50; --c-sewer:#c49a6c; --c-heat:#6f9cff; --c-gas:#4fc3f7; --c-el:#ff6b6b; --c-own:#ce93d8; }
+  /* рельеф по ГКИНП — коричневым (горизонтали, откосы, обрывы); ночью светлее, на солнце темнее */
+  body { --rel:#8a4b1c; } body.sun { --rel:#5e2e0c; } body.night { --rel:#d6a06e; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { height:100%; margin:0; background:var(--bg); font:var(--fs)/1.35 system-ui, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
   #map { position:absolute; inset:0; background:var(--bg); }
@@ -230,6 +232,7 @@ const BENCHMARK = '<circle cx="12" cy="12" r="8" fill="currentColor"/><rect x="5
 const BOLT = '<path d="M15.2 3.2 8.4 12.8h6.4l-4.5 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="miter" stroke-miterlimit="6"/><path d="M9.2 21.4 12.4 20.1 8.7 17.6Z" fill="currentColor"/>';
 const BOXK = t => `<rect x="2.5" y="5" width="19" height="14" fill="#fff" stroke="currentColor" stroke-width="1.6"/><text x="12" y="16.3" font-size="10.5" text-anchor="middle" font-style="italic" font-family="Roboto Condensed, Arial Narrow, Arial, sans-serif" fill="currentColor">${t}</text>`;
 
+const REL = 'var(--rel)', REL_HEX = '#8a4b1c';                    // цвет рельефа (в KML — как на светлой теме)
 // Крыльца и входы: стена здания — справа (x = 21), выход — влево; при постановке знак поворачивается к стене
 const P_S = 'stroke="currentColor" stroke-width="1.2" fill="none"';
 const P_WALL = '<path d="M21 1V23" stroke="currentColor" stroke-width="2"/>';
@@ -310,6 +313,15 @@ const POINT_GROUPS = [
     { id: 'under_closed', name: 'Вход закрытый в подземную часть', wall: true, svg: P_WALL + `<rect x="5" y="6" width="16" height="12" ${P_S}/><path d="M5 6L21 12L5 18" ${P_S}/><path d="M6 12H14" ${P_S}/><path d="M16 12l-3 -1.8v3.6Z" fill="currentColor"/>` },
     { id: 'metro', name: 'Вход в метро (М)', svg: '<text x="12" y="17" font-size="15" font-weight="700" text-anchor="middle" font-family="Arial, sans-serif" fill="currentColor">М</text>' },
     { id: 'arch', name: 'Въезд под арку', wall: true, svg: '<path d="M2 4H22M2 20H22" stroke="currentColor" stroke-width="1.4"/><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="1.1" stroke-dasharray="2.2 1.6"/>' }
+  ]},
+  // Рельеф — ГКИНП, табл. 77–79 (зн. 330, 342–344, 346): отметка высоты — точка 0,6 мм и отметка; у ямы, бугра, камня — глубина или высота
+  { id: 'reliefpt', title: 'Рельеф', items: [
+    { id: 'spot', name: 'Отметка высоты', color: REL, spot: true, svg: '<circle cx="12" cy="12" r="1.7" fill="currentColor"/>' },
+    { id: 'pit', name: 'Яма', color: REL, nameLabel: 'Глубина, м', svg: '<circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
+      [0, 60, 120, 180, 240, 300].map(d => { const r = d * Math.PI / 180; return `<path d="M${(12 + 6 * Math.cos(r)).toFixed(2)} ${(12 + 6 * Math.sin(r)).toFixed(2)}L${(12 + 3 * Math.cos(r)).toFixed(2)} ${(12 + 3 * Math.sin(r)).toFixed(2)}" stroke="currentColor" stroke-width="1.1"/>`; }).join('') },
+    { id: 'mound', name: 'Бугор, курган (малый)', color: REL, nameLabel: 'Высота, м', svg: '<circle cx="12" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.2"/>' +
+      [0, 45, 90, 135, 180, 225, 270, 315].map(d => { const r = d * Math.PI / 180; return `<path d="M${(12 + 2.2 * Math.cos(r)).toFixed(2)} ${(12 + 2.2 * Math.sin(r)).toFixed(2)}L${(12 + 7 * Math.cos(r)).toFixed(2)} ${(12 + 7 * Math.sin(r)).toFixed(2)}" stroke="currentColor" stroke-width="1.2"/>`; }).join('') },
+    { id: 'stone', name: 'Камень отдельный', nameLabel: 'Высота, м', svg: '<path d="M7 17L9.5 8.5L14.5 6.5L17 17Z" fill="currentColor"/>' }
   ]},
   { id: 'other', title: 'Прочее', items: [
     { id: 'mark', name: 'Метка (просто точка)', svg: '<circle cx="12" cy="12" r="6" fill="#c62828" stroke="#fff" stroke-width="2"/>' }
@@ -425,6 +437,22 @@ const LINE_GROUPS = [
     { id: 'r_change', name: 'Граница смены покрытия', kind: 'road', w: 0.15, dots: true },
     { id: 'r_stairs', name: 'Непроезжая улица, ступени (по оси)', kind: 'road', w: 0.15, stairs: true },
     { id: 'r_ramp', name: 'Въезд на второй этаж (к зданию)', kind: 'road', w: 0.15, ramp: true }
+  ]},
+  // Рельеф — ГКИНП, табл. 18, 61, 77–80 (зн. 84–85, 280–281, 329–351): коричневым; стенки — чёрным. Штрихи — на сторону понижения
+  { id: 'relief', title: 'Рельеф', items: [
+    { id: 'h_main', name: 'Горизонталь основная', kind: 'relief', style: 'contour', w: 0.13, color: REL },
+    { id: 'h_thick', name: 'Горизонталь утолщённая', kind: 'relief', style: 'contour', w: 0.23, color: REL },
+    { id: 'h_half', name: 'Полугоризонталь', kind: 'relief', style: 'contour', w: 0.13, dash: [5.5, 1], color: REL },
+    { id: 'h_aux', name: 'Горизонталь вспомогательная', kind: 'relief', style: 'contour', w: 0.13, dash: [2, 1], color: REL },
+    { id: 'sl_low', name: 'Откос неукреплённый низкий', kind: 'relief', style: 'slope', w: 0.15, color: REL },
+    { id: 'sl_high', name: 'Откос неукреплённый высокий', kind: 'relief', style: 'slope', high: true, w: 0.15, color: REL },
+    { id: 'sl_strong', name: 'Откос укреплённый', kind: 'relief', style: 'slope', high: true, strong: true, w: 0.15, color: REL },
+    { id: 'wall_v', name: 'Стенка подпорная каменная отвесная', kind: 'relief', style: 'wall', w: 0.6 },
+    { id: 'wall_inc', name: 'Стенка подпорная каменная наклонная', kind: 'relief', style: 'wall', incl: true, w: 0.6 },
+    { id: 'wall_wood', name: 'Стенка подпорная деревянная', kind: 'relief', style: 'wallWood', w: 0.2 },
+    { id: 'cliff', name: 'Обрыв земляной', kind: 'relief', style: 'cliff', w: 0.15, color: REL },
+    { id: 'gully', name: 'Овраг, промоина узкая (по дну)', kind: 'relief', style: 'gully', w: 0.25, color: REL },
+    { id: 'ledge', name: 'Уступ задернованный (бровка)', kind: 'relief', style: 'ledge', w: 0.14, color: REL }
   ]},
   { id: 'own', title: 'Своё', items: [
     { id: 'route', name: 'Трасса демонтажа (пикеты)', kind: 'route', w: 0.3, color: '#c62828' },
@@ -755,6 +783,8 @@ function refDistanceKm(lat, lng) {
   const k = Math.cos(lat * Math.PI / 180);
   return Math.hypot((lat - r.lat) * M_PER_DEG, (lng - r.lng) * M_PER_DEG * k) / 1000;
 }
+// число на плане — с точкой, как в ГКИНП (142.37); в карточках и формах — с запятой (mText)
+function planNum(v, digits) { return Number(v).toFixed(digits); }
 function mText(v, digits) { return v.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits }); }
 
 function heightsMenu() {
@@ -1073,6 +1103,7 @@ function symbolSvg(svg, px, color) { return `<svg viewBox="0 0 24 24" width="${p
 function pointLabel(p) {
   const s = POINTS[p.type] || POINTS.mark;
   if (s.frac) { const [t, b] = fracParts(p); return t || b ? `${t}/${b}` : ''; }
+  if (s.spot) return p.h == null || p.h === '' ? '' : planNum(p.h, 2);            // отметка высоты — сама отметка, два знака (1:500)
   return [s.prefix, p.name, s.suffix].filter(Boolean).join(' ');
 }
 // рисунок знака: у надписи покрытия — своя буква, у крылец — поворот стеной к зданию
@@ -1081,7 +1112,7 @@ function pointSvg(p) {
   return p.rot ? `<g transform="rotate(${Number(p.rot).toFixed(1)} 12 12)">${svg}</g>` : svg;
 }
 // дробь отметок у бортового камня: на камне / рядом с камнем (п. 268)
-const fracParts = p => { const a = p.attr || {}, f = v => v === undefined || v === '' ? '' : mText(Number(v), 2); return [f(a.top), f(a.bot)]; };
+const fracParts = p => { const a = p.attr || {}, f = v => v === undefined || v === '' ? '' : planNum(v, 2); return [f(a.top), f(a.bot)]; };
 function fracHtml(p) { const [t, b] = fracParts(p); return `<i class="t">${t}</i><i class="b">${b}</i>`; }
 // угол, на который надо повернуть знак, чтобы его правая сторона («стена») смотрела на ближайшую сторону строения в пределах 6 м
 const WALL_SNAP_M = 6;
@@ -1106,7 +1137,7 @@ function drawPoints() {
   for (const p of data.points) {
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [22, 22], iconAnchor: [11, 11],
-      html: symbolSvg(pointSvg(p), 22, netColor(p.type)) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}">${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
+      html: symbolSvg(pointSvg(p), 22, netColor(p.type, s.color)) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}">${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
     const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (!mode) showCard('point', p); }).addTo(pointLayer);
     pointMarkers.push({ p, marker, lbl });
   }
@@ -1359,10 +1390,56 @@ const DRAW = {
     if (spec.ramp) {                                                  // стрелка к зданию в конце, отметки низа и верха у концов (п. 78)
       const q = at(path, total);
       el('polygon', { points: `0,0 ${-2.4 * MM},${-0.9 * MM} ${-2.4 * MM},${0.9 * MM}`, fill: 'currentColor', transform: `translate(${q.x} ${q.y}) rotate(${q.a})` }, g);
-      const mark = (s, v) => { if (v === undefined || v === '') return; const str = mText(Number(v), 2); placeText(g, path, s, str, { dy: 3 * MM, size: 2.4 * MM }) || placeText(g, path, s, str, { dy: -3 * MM, size: 2.4 * MM }); };
-      const lw = v => v === undefined || v === '' ? 0 : textWidth(mText(Number(v), 2), 2.4 * MM, true) / 2 + 2;
+      const mark = (s, v) => { if (v === undefined || v === '') return; const str = planNum(v, 2); placeText(g, path, s, str, { dy: 3 * MM, size: 2.4 * MM }) || placeText(g, path, s, str, { dy: -3 * MM, size: 2.4 * MM }); };
+      const lw = v => v === undefined || v === '' ? 0 : textWidth(planNum(v, 2), 2.4 * MM, true) / 2 + 2;
       mark(Math.min(total / 2, lw(a.hLow)), a.hLow); mark(Math.max(total / 2, total - lw(a.hHigh) - 2.4 * MM), a.hHigh);
     }
+  },
+  // Рельеф: горизонтали с подписью высоты и бергштрихами, откосы со штрихами на заложение, подпорные стенки, обрывы, овраги, уступы
+  relief(g, path, spec, line, w) {
+    const total = path.getTotalLength(), a = line.attr || {}, sg = a.flip ? -1 : 1, thin = Math.max(0.8, 0.12 * MM);
+    const dash = spec.dash ? spec.dash.map(d => d * MM).join(' ') : null;
+    const each = (step, start, f) => { let i = 0; for (let s = start * MM; s < total - 1; s += step * MM) f(s, i++); };
+    const hatch = (s, from, to, ww) => { const p = sidePt(path, s, from * sg), q = sidePt(path, s, to * sg); el('line', { x1: p.x, y1: p.y, x2: q.x, y2: q.y, stroke: 'currentColor', 'stroke-width': ww || thin, 'stroke-linecap': 'round' }, g); };
+    const wedge = (s, half, len, fill) => { const p = sidePt(path, s - half * MM, 0.3 * sg), q = sidePt(path, s + half * MM, 0.3 * sg), r = sidePt(path, s, len * sg);
+      el('polygon', { points: `${p.x},${p.y} ${q.x},${q.y} ${r.x},${r.y}`, fill: fill ? 'currentColor' : 'var(--symBg)', stroke: 'currentColor', 'stroke-width': fill ? 0 : thin }, g); };
+    const mark = (s, str, dy) => placeText(g, path, s, str, { dy: -dy * MM * sg, size: 2.5 * MM }) || placeText(g, path, s, str, { dy: dy * MM * sg, size: 2.5 * MM });
+    if (spec.style === 'contour') {
+      const lab = a.h !== undefined && a.h !== '' ? String(a.h) : '';
+      if (lab && total > 30 * MM) {                                   // подпись — в разрыве горизонтали (зн. 329.7)
+        const s0 = total * 0.45, gap = textWidth(lab, 2.4 * MM, true) + 1.6 * MM;
+        segment(g, path, 0, s0 - gap / 2, w, 0, dash);
+        if (!placeText(g, path, s0, lab, { size: 2.4 * MM })) segment(g, path, s0 - gap / 2, s0 + gap / 2, w, 0, dash);
+        segment(g, path, s0 + gap / 2, total, w, 0, dash);
+      } else segment(g, path, 0, total, w, 0, dash);
+      if (a.berg) for (const k of [0.2, 0.8]) if (total > 12 * MM) hatch(total * k, 0, 1);   // бергштрихи вниз по скату
+      return;
+    }
+    if (spec.style === 'slope') {                                     // бровка; штрихи — на заложение (м) или 1,2 мм у низкого
+      const ll0 = L.latLng(line.latlngs[0]), c0 = map.latLngToContainerPoint(ll0);
+      const pxPerM = 10 / Math.max(1e-6, ll0.distanceTo(map.containerPointToLatLng([c0.x + 10, c0.y])));
+      const len = spec.high ? Math.max(2.4, (Number(a.width) || 3) * pxPerM / MM) : 1.2;
+      segment(g, path, 0, total, w);
+      if (spec.strong) segment(g, path, 0, total, thin, len * sg);   // у укреплённого — сплошная подошва и точки у бровки
+      else if (spec.high) segment(g, path, 0, total, thin, len * sg, `${0.5 * MM} ${0.6 * MM}`);
+      each(2, 1, (s, i) => hatch(s, 0, spec.high && i % 2 ? len / 2 : len));
+      if (spec.strong) each(2, 2, s => { const q = sidePt(path, s, 0.6 * sg); el('circle', { cx: q.x, cy: q.y, r: 0.18 * MM, fill: 'currentColor' }, g); });
+      if (a.hgt) mark(total * 0.5, String(a.hgt), 2.6);
+      if (spec.strong && a.method) placeText(g, path, total * 0.35, a.method, { dy: (len + 2) * MM * sg, size: 2.5 * MM });
+      return;
+    }
+    if (spec.style === 'wall' || spec.style === 'wallWood') {
+      segment(g, path, 0, total, w);
+      if (spec.style === 'wallWood') each(4, 2, s => wedge(s, 0.5, 0.9, false));
+      else if (spec.incl) { segment(g, path, 0, total, thin, 4.5 * sg); each(4, 2, s => wedge(s, 0.6, 4.4, true)); }
+      else each(4, 2, s => wedge(s, 0.5, 1.3, true));
+      const t = a.top !== undefined && a.top !== '' ? planNum(a.top, 2) : '', b = a.bot !== undefined && a.bot !== '' ? planNum(a.bot, 2) : '';
+      if (t || b) mark(total * 0.55, `${t}/${b}`, 3);                   // отметки верха и основания стенки (п. 389)
+      return;
+    }
+    if (spec.style === 'cliff') { segment(g, path, 0, total, w); each(0.8, 0.4, (s, i) => hatch(s, 0, i % 3 === 1 ? 2.4 : 1.2)); if (a.hgt) mark(total * 0.2, String(a.hgt), 2.6); return; }
+    if (spec.style === 'gully') { segment(g, path, 0, total, w); each(1.6, 1, s => { hatch(s, -0.4, -1.2); hatch(s, 0.4, 1.2); }); if (a.hgt) mark(total * 0.7, String(a.hgt), 3.2); return; }
+    if (spec.style === 'ledge') each(0.7, 0.4, s => hatch(s, 0, 0.9, w));
   },
   // Строение: тонкий контур (пунктир — строящееся, разрушенное, на колоннах) и надпись внутри вдоль длинной стороны
   building(g, path, spec, line, w, pts) {
@@ -1401,7 +1478,7 @@ function screenPts(line) {
   if ((LINES[line.type] || {}).closed && pts.length > 2) pts.push(pts[0]);
   return pts;
 }
-const NO_STATE = new Set(['building', 'fence', 'road']);
+const NO_STATE = new Set(['building', 'fence', 'road', 'relief']);
 function drawLines() {
   const size = map.getSize();
   L.DomUtil.setPosition(netSvg, map.containerPointToLayerPoint([0, 0]));
@@ -1423,7 +1500,7 @@ function drawLines() {
     if (line.state === 'project') segment(g, path, 0, total, thin, 0, `${10 * MM} ${4 * MM}`);
     else if (line.state === 'staked') { segment(g, path, 0, total, thin, 0, `${10 * MM} ${2 * MM}`); for (let s = 11 * MM; s < total; s += 12 * MM) tick(g, path, s, 2, thin); }
     else if (line.state === 'build' || line.state === 'approx') segment(g, path, 0, total, thin);
-    else if (NO_STATE.has(spec.kind)) DRAW[spec.kind](g, path, spec, line, spec.kind === 'road' && spec.w >= 0.3 ? w * 1.5 : w, pts);   // у строений, оград и дорог состояний нет; проезжая часть заметно толще краёв тротуаров
+    else if (NO_STATE.has(spec.kind)) DRAW[spec.kind](g, path, spec, line, spec.kind === 'road' && spec.w >= 0.3 ? w * 1.5 : spec.kind === 'relief' && spec.style === 'contour' && spec.w >= 0.2 ? w * 1.7 : w, pts);   // у строений, оград и дорог состояний нет; проезжая часть заметно толще краёв тротуаров
     else DRAW[spec.kind](g, path, spec, line, line.state === 'off' ? Math.max(1, C * MM) : w, pts);   // тонкая ровная линия, как пером
     if (line.state === 'off') for (let s = 5 * MM; s < total; s += 11 * MM) tick(g, path, s, 2.8, Math.max(1, C * MM) * 1.3, 60);   // косые штрихи — недействующая
     if (NO_STATE.has(spec.kind)) { curOwner = null; if (spec.kind === 'fence' && spec.tag) { curOwner = line.id; captionAlong(g, path, pts, spec.tag); curOwner = null; } continue; }
@@ -1493,13 +1570,13 @@ function buildingLabels(g, poly, spec, line) {
   if (label) for (size of [3 * MM, 2.4 * MM]) if ((placed = placeFree(g, poly, c.x, c.y, deg, label, size, { inside: true, italic: !!spec.word }))) break;
   if (a.hFloor != null && a.hFloor !== '') {                          // отметка пола первого этажа — под надписью, внутри контура
     const d = placed ? (size + 2.3 * MM) / 2 + 4 : 0;                // вплотную под надписью, но не налезая на неё
-    placeFree(g, poly, c.x + down.x * d, c.y + down.y * d, deg, mText(Number(a.hFloor), 2), 2.3 * MM, { inside: true, italic: true });
+    placeFree(g, poly, c.x + down.x * d, c.y + down.y * d, deg, planNum(a.hFloor, 2), 2.3 * MM, { inside: true, italic: true });
   }
   const corner = poly.reduce((m, p) => (p.x + p.y > m.x + m.y ? p : m), poly[0]);   // правый нижний угол на экране
   const to = { x: c.x - corner.x, y: c.y - corner.y }, len = Math.hypot(to.x, to.y) || 1;
   if (a.houseNo) placeFree(g, poly, corner.x + to.x / len * 4 * MM, corner.y + to.y / len * 4 * MM, deg, String(a.houseNo), 2.4 * MM, { inside: true, italic: true });
   if (a.hBlind != null && a.hBlind !== '') {                          // отметка отмостки — снаружи у угла: по диагонали, ниже или правее
-    const str = mText(Number(a.hBlind), 2), half = textWidth(str, 2.3 * MM, true) / 2 + 3;
+    const str = planNum(a.hBlind, 2), half = textWidth(str, 2.3 * MM, true) / 2 + 3;
     [[-to.x / len * 4.5 * MM, -to.y / len * 4.5 * MM], [0, 3.2 * MM], [half + 2, 0], [0, -3.2 * MM], [-half - 2, 3.2 * MM]]
       .some(([dx, dy]) => placeFree(g, poly, corner.x + dx, corner.y + dy, 0, str, 2.3 * MM, { italic: true }));
   }
@@ -1547,6 +1624,17 @@ function linePreview(spec, w, h) {
   else if (spec.kind === 'indexed' && spec.numberedIndex) body = `<path d="M2 ${m}H${w * 0.36}M${w * 0.64} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.2"/><text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.defCount}</text>`;
   else if (spec.kind === 'route') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="2.2" stroke-dasharray="7 3"/><path d="M${w * 0.3} ${m - 5}V${m + 5}M${w * 0.7} ${m - 5}V${m + 5}" stroke="currentColor" stroke-width="2"/>`;
   else if (spec.kind === 'plain') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="1.8"/>`;
+  else if (spec.kind === 'relief') {
+    const st = spec.style, y = m - 3, ticks = (len, step, k) => Array.from({ length: Math.floor((w - 8) / step) }, (_, i) => `M${5 + i * step} ${y}v${(k && i % 2) ? len / 2 : len}`).join('');
+    const wave = `M2 ${m}C${w * 0.3} ${m - 6} ${w * 0.6} ${m + 6} ${w - 2} ${m}`;
+    if (st === 'contour') body = `<path d="${wave}" fill="none" stroke="currentColor" stroke-width="${spec.w >= 0.2 ? 2 : 1.1}"${spec.dash ? ` stroke-dasharray="${spec.dash[0] * 2.5} ${spec.dash[1] * 2.5}"` : ''}/>`;
+    else if (st === 'slope') body = `<path d="M2 ${y}H${w - 2}" stroke="currentColor" stroke-width="1.2"/><path d="${ticks(spec.high ? 11 : 5, 4, spec.high)}" stroke="currentColor" stroke-width="0.9"/>` + (spec.strong ? `<path d="M2 ${y + 11}H${w - 2}" stroke="currentColor"/>` : '');
+    else if (st === 'wall' || st === 'wallWood') body = `<path d="M2 ${y}H${w - 2}" stroke="currentColor" stroke-width="${st === 'wall' ? 2.4 : 1.1}"/>` +
+      [0.25, 0.5, 0.75].map(k => `<path d="M${w * k - 2.5} ${y}L${w * k + 2.5} ${y}L${w * k} ${y + (spec.incl ? 12 : 5)}Z" fill="${st === 'wall' ? 'currentColor' : 'var(--symBg)'}" stroke="currentColor" stroke-width="${st === 'wall' ? 0 : 1}"/>`).join('');
+    else if (st === 'cliff') body = `<path d="M2 ${y}H${w - 2}" stroke="currentColor" stroke-width="1.2"/><path d="${ticks(5, 2.4)}" stroke="currentColor" stroke-width="0.8"/>`;
+    else if (st === 'gully') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="1.6"/><path d="${Array.from({ length: Math.floor((w - 8) / 5) }, (_, i) => `M${5 + i * 5} ${m - 2}v-4M${5 + i * 5} ${m + 2}v4`).join('')}" stroke="currentColor" stroke-width="0.9"/>`;
+    else body = `<path d="${Array.from({ length: Math.floor((w - 6) / 2.6) }, (_, i) => `M${4 + i * 2.6} ${m - 2}v4`).join('')}" stroke="currentColor" stroke-width="1"/>`;
+  }
   else if (spec.kind === 'road') {
     const sw = spec.w >= 0.3 ? 2.2 : 1.1, da = spec.dash ? ` stroke-dasharray="${spec.dash[0] * 3} ${spec.dash[1] * 3}"` : '';
     if (spec.dots) body = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map(k => `<circle cx="${w * k}" cy="${m}" r="1.2" fill="currentColor"/>`).join('');
@@ -1581,7 +1669,7 @@ function showCard(kind, obj) {
   let icon, name, sub, kv, ll;
   if (kind === 'point') {
     const s = POINTS[obj.type] || POINTS.mark, c = coordText(L.latLng(obj.lat, obj.lng));
-    icon = symbolSvg(pointSvg(obj), 34, netColor(obj.type)); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
+    icon = symbolSvg(pointSvg(obj), 34, netColor(obj.type, s.color)); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
     if (s.frac) name = s.name + (pointLabel(obj) ? ' — ' + esc(pointLabel(obj)) : '');
     if (s.svgFor) name = s.name.replace(/ \(.*\)$/, '') + ' — ' + esc(((COVERS.find(c => c[0] === (obj.attr || {}).cover) || COVERS[0])[1]));
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
@@ -1681,11 +1769,11 @@ function editPoint(p) {
     save(); drawPoints(); frame(); showCard('point', p);
   });
   openForm(s.name, [
-    { key: 'name', label: 'Подпись у знака (номер)', value: p.name, placeholder: 'например 12' },
+    ...(s.spot ? [] : [{ key: 'name', label: s.nameLabel || 'Подпись у знака (номер)', value: p.name, placeholder: s.nameLabel ? 'например 1.6' : 'например 12' }]),
     { key: 'h', label: 'Отметка, м', type: 'number', value: p.h, placeholder: 'например 245.51' },
     { key: 'note', label: 'Примечание', value: p.note, placeholder: 'необязательно' }
   ], v => {
-    p.name = v.name; p.note = v.note;
+    p.name = v.name || ''; p.note = v.note;
     const h = v.h === '' ? null : parseNum(v.h);
     if (v.h !== '' && isNaN(h)) { toast('Отметка — это число, например 245.51'); return false; }
     if (h !== p.h) delete p.hSrc;                                     // отметку исправили вручную — она уже не из ГНСС
@@ -1736,6 +1824,40 @@ function editBuilding(line, isNew) {
     save(); showCard('line', line);
   }, isNew ? 'Готово' : 'Сохранить');
 }
+function editRelief(line, isNew) {
+  const spec = LINES[line.type], a = line.attr || {}, st = spec.style, fields = [];
+  const side = { key: 'flip', label: st === 'contour' ? 'Бергштрихи (вниз по скату)' : 'Штрихи — в сторону понижения', type: 'select', value: a.flip ? 1 : 0, half: true,
+    options: [[0, 'справа по ходу рисования'], [1, 'слева по ходу рисования']] };
+  if (st === 'contour') fields.push({ key: 'h', label: 'Высота горизонтали, м', type: 'number', value: a.h, placeholder: '121', half: true,
+    hint: 'Подпись встанет в разрыв, если линия достаточно длинная. Утолщённые — каждая пятая.' },
+    { key: 'berg', label: 'Бергштрихи', type: 'select', value: a.berg ? 1 : 0, options: [[0, 'нет'], [1, 'есть']], half: true }, side);
+  else if (st === 'ledge') fields.push(side);
+  else {
+    fields.push(side);
+    if (spec.high) fields.push({ key: 'width', label: 'Ширина откоса (заложение), м', type: 'number', value: a.width || 3, half: true, hint: 'Рисуйте по бровке — штрихи дойдут до подошвы.' });
+    if (st === 'slope' || st === 'cliff' || st === 'gully') fields.push({ key: 'hgt', label: st === 'gully' ? 'Ширина / глубина, м' : st === 'cliff' ? 'Глубина, м' : 'Высота откоса, м', value: a.hgt, placeholder: st === 'gully' ? '0.3/0.5' : '1.1', half: true });
+    if (spec.strong) fields.push({ key: 'method', label: 'Способ укрепления', value: a.method || 'дерн.', placeholder: 'дерн., бет., асф., камен.' });
+    if (st === 'wall' || st === 'wallWood') fields.push({ key: 'top', label: 'Отметка верха, м', type: 'number', value: a.top, placeholder: '119.6', half: true },
+      { key: 'bot', label: 'Отметка основания, м', type: 'number', value: a.bot, placeholder: '117.4', half: true });
+  }
+  fields.push({ key: 'caption', label: 'Примечание', value: line.caption, placeholder: 'необязательно, в карточке' });
+  openForm(spec.name, fields, v => {
+    const next = { ...a };
+    for (const k of ['h', 'width', 'top', 'bot']) {
+      if (!(k in v)) continue;
+      const n = v[k] === '' ? '' : parseNum(v[k]);
+      if (n !== '' && isNaN(n)) { toast('Нужно число, например 117.4'); return false; }
+      next[k] = n;
+    }
+    if ('flip' in v) next.flip = v.flip === '1';
+    if ('berg' in v) next.berg = v.berg === '1';
+    if ('hgt' in v) next.hgt = v.hgt;
+    if ('method' in v) next.method = v.method;
+    line.attr = next; line.caption = v.caption || '';
+    if (isNew) data.lines.push(line);
+    save(); showCard('line', line);
+  }, isNew ? 'Готово' : 'Сохранить');
+}
 function editRoad(line, isNew) {
   const spec = LINES[line.type], a = line.attr || {}, fields = [];
   if (spec.stairs) fields.push({ key: 'width', label: 'Ширина улицы, м', type: 'number', value: a.width || 6, hint: 'Рисуйте ось улицы — штрихи ступеней встанут поперёк через 2 мм.' });
@@ -1776,6 +1898,7 @@ function editLine(line, isNew) {
   if (spec.kind === 'building') return editBuilding(line, isNew);
   if (spec.kind === 'fence') return editFence(line, isNew);
   if (spec.kind === 'road') return editRoad(line, isNew);
+  if (spec.kind === 'relief') return editRelief(line, isNew);
   const fields = [];
   if (spec.kind === 'route') {
     fields.push({ key: 'pk0', label: 'Начальный ПК', type: 'number', value: line.pk0, placeholder: 'например 39', half: true },
@@ -1819,7 +1942,7 @@ function setMode(m) {
   if (selected) hideCard();
   box.style.display = 'block';
   const isPt = mode.kind === 'point', spec = isPt ? POINTS[mode.type] : LINES[mode.type];
-  $('modeTitle').innerHTML = (isPt ? symbolSvg(spec.svg, 26) : linePreview(spec, 36, 26)) +
+  $('modeTitle').innerHTML = (isPt ? symbolSvg(spec.svg, 26, spec.color) : linePreview(spec, 36, 26)) +
     `<span>${isPt ? 'Ставим' : 'Рисуем'}: ${esc(spec.name)}${isPt ? '' : ` · точек ${mode.latlngs.length}`}</span>`;
   const btns = isPt
     ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['done', 'Готово', 'primary']]
@@ -1922,7 +2045,7 @@ function openPicker(kind) {
   const groups = kind === 'point' ? POINT_GROUPS : LINE_GROUPS, all = kind === 'point' ? POINTS : LINES;
   const recent = pref('recent.' + kind, []).filter(id => all[id]);
   let tab = recent.length ? 'recent' : groups[0].id, query = '';
-  const tile = s => `<button class="tile" data-pick="${s.id}">${kind === 'point' ? symbolSvg(s.svg, 32, netColor(s.id)) : linePreview(s, 56, 30)}<span>${tileName(s.name)}</span></button>`;
+  const tile = s => `<button class="tile" data-pick="${s.id}">${kind === 'point' ? symbolSvg(s.svg, 32, netColor(s.id, s.color)) : linePreview(s, 56, 30)}<span>${tileName(s.name)}</span></button>`;
   const render = () => {
     let html = '';
     if (query) {
@@ -2143,7 +2266,7 @@ function toKml() {
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
-    const hex = (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || s.color || '#111111';
+    const hex = (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || (s.color === REL ? REL_HEX : s.color) || '#111111';
     const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
     return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '' })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
