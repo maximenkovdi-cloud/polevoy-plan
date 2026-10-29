@@ -1199,6 +1199,39 @@ function poleMark(g, path, s, kind, w) {
   if (kind === 'circle') el('circle', { cx: p.x, cy: p.y, r, fill: 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w }, g);
   if (kind === 'rect') el('rect', { x: -r, y: -r * 0.8, width: 2 * r, height: 1.6 * r, fill: 'currentColor', transform: `translate(${p.x} ${p.y}) rotate(${p.a})` }, g);
 }
+// Стрелка от опоры a к соседней опоре b: отрезок от края знака опоры, наконечник наружу (у ЛЭП высокого напряжения — двойной)
+const POLE_ARROW = 4.5 * MM, POLE_R = 0.6 * MM;
+let polesDrawn = [];                                                  // опоры, уже нарисованные в этом кадре
+function poleArrow(g, a, b, w, double, arrows) {
+  const d = Math.hypot(b.x - a.x, b.y - a.y);
+  if (d < 2 * MM) return;
+  const ux = (b.x - a.x) / d, uy = (b.y - a.y) / d, len = Math.min(POLE_ARROW, d / 2 - 0.8 * MM);
+  if (len <= POLE_R + 0.5 * MM) return;
+  const tx = a.x + ux * len, ty = a.y + uy * len;
+  el('line', { x1: a.x + ux * POLE_R, y1: a.y + uy * POLE_R, x2: tx, y2: ty, stroke: 'currentColor', 'stroke-width': w }, g);
+  if (!arrows) return;
+  const ang = Math.atan2(uy, ux), hl = 1.3 * MM, sp = 0.45;
+  for (const back of double ? [0, 1.2 * MM] : [0]) {
+    const hx = tx - ux * back, hy = ty - uy * back;
+    el('polyline', { points: `${hx - Math.cos(ang - sp) * hl},${hy - Math.sin(ang - sp) * hl} ${hx},${hy} ${hx - Math.cos(ang + sp) * hl},${hy - Math.sin(ang + sp) * hl}`,
+      fill: 'none', stroke: 'currentColor', 'stroke-width': w, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, g);
+  }
+}
+// опоры по точкам линии; если на месте точки уже стоит знак опоры — второй не рисуем
+function poleLine(g, spec, line, w, pts, pole, arrows) {
+  const a = line.attr || {}, solid = arrows ? a.solid : true;
+  for (let i = 1; solid && i < pts.length; i++) el('line', { x1: pts[i - 1].x, y1: pts[i - 1].y, x2: pts[i].x, y2: pts[i].y, stroke: 'currentColor', 'stroke-width': w }, g);
+  const marks = pointMarkers.map(({ p }) => map.latLngToContainerPoint([p.lat, p.lng]));
+  pts.forEach((p, i) => {
+    if (!solid || arrows) for (const j of [i - 1, i + 1]) if (pts[j]) poleArrow(g, p, pts[j], w, spec.double, arrows);
+    if (marks.concat(polesDrawn).some(m => Math.hypot(m.x - p.x, m.y - p.y) < 3)) return;   // опора ответвления — одна на две линии
+    polesDrawn.push(p);
+    const r = POLE_R;
+    if (pole === 'dot') el('circle', { cx: p.x, cy: p.y, r, fill: 'currentColor' }, g);
+    else if (pole === 'rect') el('rect', { x: p.x - r, y: p.y - r * 0.8, width: 2 * r, height: 1.6 * r, fill: 'currentColor' }, g);
+    else el('circle', { cx: p.x, cy: p.y, r, fill: 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w }, g);
+  });
+}
 function text(g, path, s, str, o) {
   o = Object.assign({ dy: 0, size: 2.8 * MM, italic: true }, o);
   const p = at(path, s), a = upright(p.a);
@@ -1279,23 +1312,11 @@ const DRAW = {
       sep(p1); s = p1 + gap;
     }
   },
-  // ЛЭП: «←•→ ——— ←•→», опора в середине стрелочного отрезка; напряжение и число проводов — подписью линии
-  power(g, path, spec, line, w) {
-    const total = path.getTotalLength(), arrowLen = 9 * MM, plain = 8 * MM;
-    for (let s = 0; s < total;) {
-      const a1 = Math.min(s + arrowLen, total);
-      segment(g, path, s, a1, w);
-      if (a1 - s > 4 * MM) { arrowHead(g, path, s, -1, spec.double, w); arrowHead(g, path, a1, 1, spec.double, w); poleMark(g, path, (s + a1) / 2, spec.pole, w); }
-      s = a1; if (s >= total) break;
-      const p1 = Math.min(s + plain, total); segment(g, path, s, p1, w); s = p1;
-    }
-  },
-  // Воздушная связь: тонкая линия с кружками опор через 9 мм
-  air(g, path, spec, line, w) {
-    const total = path.getTotalLength(), step = 9 * MM;
-    segment(g, path, 0, total, w);
-    for (let s = step / 2; s < total; s += step) poleMark(g, path, s, 'circle', w);
-  },
+  // ЛЭП (ГКИНП, зн. 115, п. 175–178): каждая точка линии — опора на своём месте; от опоры стрелки смотрят на соседние опоры.
+  // В застроенной части — только стрелки у опор («с разрывом»), по выбору — сплошная линия между опорами
+  power(g, path, spec, line, w, pts) { poleLine(g, spec, line, w, pts, spec.pole, true); },
+  // Воздушная связь: опоры кружками на своих местах, тонкая линия между ними
+  air(g, path, spec, line, w, pts) { poleLine(g, spec, line, w, pts, 'circle', false); },
   plain(g, path, spec, line, w) { segment(g, path, 0, path.getTotalLength(), w); },
   // Ограждения: рисунок по ГКИНП (зн. 472–477), размеры в «мм» знака; засечки — на сторону территории (по ходу слева, «flip» — справа)
   fence(g, path, spec, line, w) {
@@ -1386,6 +1407,7 @@ function drawLines() {
   L.DomUtil.setPosition(netSvg, map.containerPointToLayerPoint([0, 0]));
   netSvg.setAttribute('width', size.x); netSvg.setAttribute('height', size.y);
   netSvg.innerHTML = '';
+  polesDrawn = [];
   for (const line of data.lines) {
     const spec = LINES[line.type] || LINES.plain;
     const pts = screenPts(line);
@@ -1763,6 +1785,8 @@ function editLine(line, isNew) {
     if (spec.kind === 'indexed' || spec.numbered)
       fields.push({ key: 'count', label: spec.numbered || spec.numberedIndex ? 'Число прокладок' : 'Прокладок в траншее', type: 'number', value: line.count || spec.defCount || 1, half: true });
     fields.push({ key: 'state', label: 'Состояние', type: 'select', value: line.state || '', options: STATES, half: true });
+    if (spec.kind === 'power') fields.push({ key: 'solid', label: 'Между опорами', type: 'select', value: (line.attr || {}).solid ? 1 : 0, half: true,
+      options: [[0, 'только стрелки у опор'], [1, 'сплошная линия']], hint: 'Каждая точка — опора; стрелки сами смотрят на соседние. Ответвление: начните новую ЛЭП с существующей опоры — точка привяжется. Застроенная территория — со стрелками, незастроенная — сплошной (ГКИНП, п. 175).' });
     fields.push({ key: 'caption', label: spec.kind === 'power' || spec.kind === 'air' ? 'Напряжение, число проводов' : 'Подпись вдоль линии',
       value: line.caption, placeholder: spec.placeholder ? 'например ' + spec.placeholder : 'например «гл. 1.2» или «ст. 100»',
       hint: spec.tag ? `«${spec.tag}» поставится само.` : '' });
@@ -1771,6 +1795,7 @@ function editLine(line, isNew) {
     if ('pk0' in v) { line.pk0 = v.pk0 === '' ? null : parseNum(v.pk0); if (line.pk0 != null && isNaN(line.pk0)) { toast('ПК — это число'); return false; } line.pkDir = Number(v.pkDir) || 1; }
     if ('count' in v) line.count = Math.max(1, parseInt(v.count, 10) || 1);
     if ('state' in v) line.state = v.state || '';
+    if ('solid' in v) line.attr = { ...(line.attr || {}), solid: v.solid === '1' };
     line.caption = v.caption || '';
     if (isNew) data.lines.push(line);
     save(); showCard('line', line);
@@ -1829,9 +1854,23 @@ function addAt(ll, meas) {
     const ps = POINTS[pt.type] || {};
     if (ps.frac || ps.svgFor) editPoint(pt);                          // у надписи покрытия и отметок — сразу спросить значения
   } else {
+    const snap = /^(power|air)$/.test((LINES[mode.type] || {}).kind) ? snapToPole(ll) : null;   // ответвление ЛЭП — от уже снятой опоры
+    if (snap) { ll = snap; toast('Привязано к опоре'); }
     mode.latlngs.push([ll.lat, ll.lng]);
     refreshTemp(); setMode(mode);
   }
+}
+// ближайшая опора в пределах пальца: точка ЛЭП/связи или знак опоры (столб, ферма)
+const SNAP_PX = 16;
+function snapToPole(ll) {
+  const c = map.latLngToContainerPoint(ll), cands = [];
+  for (const line of data.lines) if (/^(power|air)$/.test((LINES[line.type] || {}).kind)) cands.push(...line.latlngs);
+  for (const p of data.points) if (/^pole_|^tr_pole$/.test(p.type)) cands.push([p.lat, p.lng]);
+  for (const a of mode.latlngs) cands.push(a);
+  let best = null, bd = SNAP_PX;
+  const last = mode.latlngs[mode.latlngs.length - 1];               // к только что поставленной точке не липнем — иначе двойная опора
+  for (const a of cands) { if (a === last) continue; const q = map.latLngToContainerPoint(a), d = Math.hypot(q.x - c.x, q.y - c.y); if (d < bd) { bd = d; best = a; } }
+  return best ? L.latLng(best[0], best[1]) : null;
 }
 function refreshTemp() {
   if (mode.temp) map.removeLayer(mode.temp);
