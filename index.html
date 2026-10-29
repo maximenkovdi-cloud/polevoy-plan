@@ -579,6 +579,7 @@ function calibrate() {
 /* ───────────── GPS ───────────── */
 
 let gps = null, gpsMarker = null, gpsCircle = null, gpsWatch = null;
+const RTK_FIX_M = 0.05;          // точность до 5 см — почти наверняка фиксированное решение RTK
 function startGps() {
   startGnss();                                       // в Android-приложении — заодно и спутники
   if (!navigator.geolocation) { toast('В этом браузере нет GPS'); return; }
@@ -593,9 +594,12 @@ function startGps() {
       gpsMarker = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1, interactive: false }).addTo(map);
     } else { gpsMarker.setLatLng(ll); gpsCircle.setLatLng(ll).setRadius(gps.acc); }
     if (first) map.setView(ll, 18);
-    const acc = Math.round(gps.acc);
+    const acc = gps.acc;
+    // RTK-приёмник через «фиктивное местоположение» даёт сантиметры — показываем их, а не округлённые метры
+    const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
+    const rtk = acc <= RTK_FIX_M ? ' · RTK (похоже на FIX)' : acc < 1 ? ' · RTK (похоже на FLOAT)' : '';
     $('gpsDot').className = 'dot ' + (acc <= 5 ? 'ok' : acc <= 15 ? 'mid' : 'bad');
-    $('gpsText').textContent = `GPS ±${acc} м` + (acc > 15 ? ' — подождите на открытом месте' : '');
+    $('gpsText').textContent = `GPS ±${accText} м${rtk}` + (acc > 15 ? ' — подождите на открытом месте' : '');
     $('fabMe').classList.add('on');
   }, err => {
     gpsWatch = null;
