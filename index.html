@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#1f5fbf">
 <title>Полевой план</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<!-- библиотеки лежат рядом (lib/), чтобы приложение открывалось без интернета: Leaflet 1.9.4 (BSD-2), proj4 2.11.0 (MIT) -->
+<link rel="stylesheet" href="lib/leaflet.min.css">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:ital,wght@0,400;0,500;1,400;1,500&display=swap">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+<script src="lib/leaflet.min.js"></script>
+<script src="lib/proj4.js"></script>
 <style>
   /* ── темы: день / солнце / ночь ── */
   body.day   { --bg:#f4f1e8; --panel:#ffffff; --ink:#151515; --muted:#5d5d5d; --line:#d9d6cc; --accent:#1f5fbf; --accentInk:#fff; --red:#c62828; --sym:#111111; --symBg:#ffffff; --halo:#ffffff; --shadow:0 1px 6px rgba(0,0,0,.18); --fs:14px; }
@@ -447,15 +448,55 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display
 // zoomSnap: 0 — масштаб меняется плавно, без шагов «ровно вдвое»: так можно встать точно на 1:500
 const map = L.map('map', { zoomControl: true, attributionControl: true, zoomSnap: 0, zoomDelta: 1, wheelPxPerZoomLevel: 120 }).setView([55.75, 37.62], 5);
 map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');   // без флажка, только ссылка на библиотеку
+/* ── Карта без интернета: куски подложки хранятся в телефоне (IndexedDB) ── */
+const tileDb = new Promise(resolve => {
+  try {
+    const req = indexedDB.open('tk-tiles', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('t');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  } catch (e) { resolve(null); }
+});
+async function tileStore(mode, fn) {
+  const db = await tileDb;
+  if (!db) return null;
+  return new Promise(resolve => {
+    try {
+      const tx = db.transaction('t', mode), req = fn(tx.objectStore('t'));
+      tx.oncomplete = () => resolve(req && req.result);
+      tx.onerror = () => resolve(null);
+    } catch (e) { resolve(null); }
+  });
+}
+// Подложка, которая сначала берёт кусок из телефона, а скачанный из сети — запоминает (если поставщик разрешает)
+const CachedTiles = L.TileLayer.extend({
+  createTile(coords, done) {
+    const img = document.createElement('img'), url = this.getTileUrl(coords), opt = this.options;
+    const key = opt.cacheId + '/' + coords.z + '/' + coords.x + '/' + coords.y;
+    img.alt = ''; img.setAttribute('role', 'presentation');
+    const show = (src, revoke) => { img.onload = () => { if (revoke) URL.revokeObjectURL(src); done(null, img); }; img.onerror = e => done(e, img); img.src = src; };
+    if (!opt.cache) { show(url); return img; }
+    tileStore('readonly', s => s.get(key)).then(blob => {
+      if (blob) { show(URL.createObjectURL(blob), true); return; }
+      fetch(url, { mode: 'cors' })
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); })
+        .then(b => { tileStore('readwrite', s => s.put(b, key)); show(URL.createObjectURL(b), true); })
+        .catch(() => show(url));                                   // без сети и без сохранённого куска — пустое место
+    });
+    return img;
+  }
+});
+// cache — можно ли запоминать куски; prefetch — до какого уровня можно скачивать участок заранее (политики поставщиков)
+const cachedTiles = (id, url, o) => new CachedTiles(url, Object.assign({ cacheId: id, cache: true }, o));
 const OSM = '© участники OpenStreetMap';
 const MAX_ZOOM = 22;           // глубже, чем дают подложки (их снимки растягиваются), — чтобы 1:200 и 1:500 помещались на любом экране
 const bases = {
-  'Схема (OSM)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 19, attribution: OSM }),
-  'Схема контрастная (HOT)': L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 19, subdomains: 'abc', attribution: OSM + ', стиль HOT / OSM France' }),
-  'Тропы и грунтовки (CyclOSM)': L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 20, subdomains: 'abc', attribution: OSM + ', CyclOSM' }),
-  'Рельеф (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 17, subdomains: 'abc', attribution: OSM + ', SRTM | © OpenTopoMap (CC-BY-SA)' }),
-  'Спутник подробный (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: MAX_ZOOM, maxNativeZoom: 18, attribution: 'Снимки © Esri, Maxar, Earthstar Geographics' }),
-  'Спутник обзорный (Sentinel-2)': L.tileLayer('https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg', { maxZoom: MAX_ZOOM, maxNativeZoom: 14, attribution: 'Sentinel-2 cloudless — s2maps.eu, EOX IT Services GmbH (модиф. данные Copernicus Sentinel 2023), CC BY-NC-SA 4.0' })
+  'Схема (OSM)': cachedTiles('osm', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 19, attribution: OSM, prefetch: 16 }),
+  'Схема контрастная (HOT)': cachedTiles('hot','https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 19, subdomains: 'abc', attribution: OSM + ', стиль HOT / OSM France', prefetch: 16 }),
+  'Тропы и грунтовки (CyclOSM)': cachedTiles('cyclosm','https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 20, subdomains: 'abc', attribution: OSM + ', CyclOSM', prefetch: 16 }),
+  'Рельеф (OpenTopoMap)': cachedTiles('topo','https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: MAX_ZOOM, maxNativeZoom: 17, subdomains: 'abc', attribution: OSM + ', SRTM | © OpenTopoMap (CC-BY-SA)', prefetch: 16 }),
+  'Спутник подробный (Esri)': cachedTiles('esri','https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: MAX_ZOOM, maxNativeZoom: 18, attribution: 'Снимки © Esri, Maxar, Earthstar Geographics', cache: false }),   // условия Esri: без сохранения в телефон
+  'Спутник обзорный (Sentinel-2)': cachedTiles('s2','https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg', { maxZoom: MAX_ZOOM, maxNativeZoom: 14, attribution: 'Sentinel-2 cloudless — s2maps.eu, EOX IT Services GmbH (модиф. данные Copernicus Sentinel 2023), CC BY-NC-SA 4.0', prefetch: 14 })
 };
 let baseName = pref('base', 'Схема (OSM)');
 if (!bases[baseName]) baseName = 'Схема (OSM)';
@@ -1173,6 +1214,9 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'netcolors', icon: '🎨', text: netColors ? 'Цвета сетей: традиционные' : 'Цвета сетей: чёрные (по «Правилам»)', on: netColors, check: true },
   { id: 'raster', icon: '🖼', text: 'Наложить свой растр (план, ортофото, скан)' },
   { id: 'rasters', icon: '◐', text: 'Свои растры: прозрачность, удаление' },
+  { header: 'Без интернета' },
+  { id: 'offline', icon: '⬇', text: 'Сохранить видимый участок карты' },
+  { id: 'offlineinfo', icon: '💾', text: 'Карты в телефоне: сколько сохранено, очистить' },
   { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
   { header: 'Прочее' },
   { id: 'fit', icon: '⤢', text: 'Показать все объекты' },
@@ -1187,6 +1231,8 @@ const MENU = {
   grid: () => { if (map.hasLayer(gridLayer)) map.removeLayer(gridLayer); else gridLayer.addTo(map); },
   raster: () => rasterInput.click(),
   rasters: () => rasterMenu(),
+  offline: () => saveArea(),
+  offlineinfo: () => offlineInfo(),
   theme: () => $('fabTheme').click(),
   netcolors: () => {
     netColors = !netColors; setPref('netColors', netColors); redrawAll();
@@ -1200,6 +1246,60 @@ const MENU = {
   clear: () => { if (confirm('Удалить ВСЕ знаки и линии? Сначала лучше выгрузить KML.')) { data = { points: [], lines: [] }; save(); hideCard(); } },
   about: () => alert('Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nСК-42: пересчёт по ГОСТ Р 51794-2008, точность — около метра; для работ сверяйте с пунктами.')
 };
+/* ── Сохранить участок заранее (для работы без интернета) ── */
+const TILE_KB = 18;                  // средний размер куска карты — для оценки объёма
+const PREFETCH_MAX_TILES = 4000;     // больше за раз не качаем: бережём и телефон, и сервер карты
+const PREFETCH_PARALLEL = 3;         // одновременно не больше трёх запросов — так просит политика OSM
+function tileRange(b, z) {
+  const n = 2 ** z, tx = lng => Math.floor((lng + 180) / 360 * n);
+  const ty = lat => { const r = lat * Math.PI / 180; return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n); };
+  return { x0: tx(b.getWest()), x1: tx(b.getEast()), y0: ty(b.getNorth()), y1: ty(b.getSouth()) };
+}
+function tileUrl(layer, z, x, y) {
+  const sub = layer.options.subdomains, s = sub && sub.length ? sub[Math.abs(x + y) % sub.length] : '';
+  return L.Util.template(layer._url, { s, z, x, y, r: '' });
+}
+let prefetching = false;
+async function saveArea() {
+  if (prefetching) { toast('Уже сохраняю — подождите'); return; }
+  const layer = bases[baseName], o = layer.options;
+  if (!o.cache || !o.prefetch) { alert(`«${baseName}» по условиям поставщика нельзя сохранять в телефон.\nВыберите в слоях схему OSM, рельеф или Sentinel-2.`); return; }
+  const b = map.getBounds(), zMax = o.prefetch, zMin = Math.max(8, Math.min(zMax, Math.floor(map.getZoom()) - 3)), jobs = [];
+  for (let z = zMin; z <= zMax; z++) { const r = tileRange(b, z); for (let x = r.x0; x <= r.x1; x++) for (let y = r.y0; y <= r.y1; y++) jobs.push({ z, x, y }); }
+  if (jobs.length > PREFETCH_MAX_TILES) { alert(`Район слишком большой: ${jobs.length} кусков карты (можно до ${PREFETCH_MAX_TILES}).\nПриблизьте карту к своему участку и повторите.`); return; }
+  if (!confirm(`Сохранить видимый участок для работы без интернета?\n\nПодложка: ${baseName}\nКусков карты: ${jobs.length}, примерно ${Math.max(1, Math.round(jobs.length * TILE_KB / 1024))} МБ\n\nЗаранее сохраняется до масштаба около 1:8000 (так требуют правила OpenStreetMap). Крупнее — карта сохраняется сама, когда вы просматриваете участок при интернете.`)) return;
+  prefetching = true;
+  let done = 0, failed = 0;
+  const next = async () => {
+    while (jobs.length) {
+      const j = jobs.shift(), key = `${o.cacheId}/${j.z}/${j.x}/${j.y}`;
+      if (!(await tileStore('readonly', s => s.count(key)))) {
+        try {
+          const r = await fetch(tileUrl(layer, j.z, j.x, j.y), { mode: 'cors' });
+          if (!r.ok) throw new Error(r.status);
+          const blob = await r.blob();                                // сначала целиком получаем кусок, потом сохраняем
+          await tileStore('readwrite', s => s.put(blob, key));
+        }
+        catch (e) { failed++; }
+      }
+      if (++done % 40 === 0) toast(`Сохраняю карту: ${done} из ${done + jobs.length}`);
+    }
+  };
+  await Promise.all(Array.from({ length: PREFETCH_PARALLEL }, next));
+  prefetching = false;
+  toast(failed ? `Сохранено, но ${failed} кусков не скачались — проверьте интернет и повторите` : 'Участок сохранён — можно работать без интернета');
+}
+async function offlineInfo() {
+  const n = (await tileStore('readonly', s => s.count())) || 0;
+  openList('Карты в телефоне', [
+    { header: `Сохранено кусков карты: ${n} (примерно ${Math.max(n ? 1 : 0, Math.round(n * TILE_KB / 1024))} МБ)` },
+    { id: 'save', icon: '⬇', text: 'Сохранить видимый участок' },
+    { id: 'clear', icon: '🗑', text: 'Удалить все сохранённые карты' }
+  ], async pick => {
+    if (pick === 'save') saveArea();
+    if (pick === 'clear' && confirm('Удалить все сохранённые куски карты? Знаки и линии останутся.')) { await tileStore('readwrite', s => s.clear()); toast('Сохранённые карты удалены'); }
+  });
+}
 const today = () => new Date().toISOString().slice(0, 10);
 function download(name, text, type) {
   const a = document.createElement('a');
@@ -1465,6 +1565,8 @@ function rasterMenu() {
 
 ready = true;
 if (NATIVE) { startGnss(); startGps(); }             // в Android-приложении спутники и GPS включаются сразу
+// на сайте — фоновый помощник, чтобы приложение открывалось без интернета (в Android-приложении всё и так внутри)
+if (!NATIVE && 'serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { /* без него просто нужен интернет */ });
 redrawAll();
 updateInfo();
 layout();                                            // после updateInfo: плашка уже с координатами и своей настоящей высотой
