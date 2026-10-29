@@ -51,6 +51,15 @@
   .sat-tab th:first-child, .sat-tab td:first-child { text-align:left; }
   .sat-tab th { color:var(--muted); font-weight:500; font-size:12.5px; }
   .sat-tab tr.sum td { font-weight:700; }
+  .dop { display:flex; align-items:center; gap:7px; margin:2px 0 8px; font-variant-numeric:tabular-nums; }
+  .meas-big { font-size:1.6em; font-weight:700; font-variant-numeric:tabular-nums; margin:6px 0 2px; }
+  .meas-verdict { border-radius:10px; padding:8px 10px; margin:8px 0; font-weight:600; }
+  .meas-verdict.ok { background:color-mix(in srgb, #2e7d32 15%, transparent); }
+  .meas-verdict.mid { background:color-mix(in srgb, #f9a825 20%, transparent); }
+  .meas-verdict.bad { background:color-mix(in srgb, #c62828 15%, transparent); }
+  .meas-row { display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap; }
+  .meas-row > span { color:var(--muted); font-size:13px; min-width:92px; }
+  .meas-row .seg { flex-wrap:wrap; }
   .dot { width:9px; height:9px; border-radius:50%; background:#9e9e9e; flex:none; }
   .dot.ok { background:#2e7d32; } .dot.mid { background:#f9a825; } .dot.bad { background:#c62828; }
 
@@ -610,6 +619,7 @@ function startGps() {
   gpsWatch = navigator.geolocation.watchPosition(p => {
     const first = !gps;
     gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, at: Date.now() };
+    if (measuring) measuring.onFix(p);
     const ll = [gps.lat, gps.lng];
     if (!gpsMarker) {
       gpsCircle = L.circle(ll, { radius: gps.acc, color: '#1e88e5', weight: 1, fillOpacity: .12, interactive: false }).addTo(map);
@@ -629,6 +639,110 @@ function startGps() {
     $('gpsText').textContent = 'GPS: нет доступа — ' + err.message;
   }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
 }
+/* ───────────── Измерение точки с усреднением и проверкой допуска ───────────── */
+
+// Допуски — СП 47.13330.2016, п. 5.1.17–5.1.18: средние погрешности планового положения в мм масштаба плана;
+// предельные (п. 5.1.22) — вдвое больше средних.
+const MEAS_KINDS = [
+  { id: 'clear', name: 'Чёткий контур', mm: 0.5, hint: 'открытая местность, п. 5.1.17' },
+  { id: 'wood', name: 'Горы, лес', mm: 0.7, hint: 'горные и залесённые районы, п. 5.1.17' },
+  { id: 'under', name: 'Подземная сеть', mm: 0.7, hint: 'скрытые точки по трассоискателю, п. 5.1.18' }
+];
+const MEAS_SCALES = [500, 1000, 2000];
+const MEAS_SECONDS = [10, 30, 60, 120];
+const MEAS_MIN_FIXES = 5;
+const M_PER_DEG = 111320;
+let measuring = null;
+function measTol(o) { return (MEAS_KINDS.find(k => k.id === o.kind) || MEAS_KINDS[0]).mm * o.scale / 1000; }   // м на местности
+function cmText(m) { return m < 1 ? Math.round(m * 100) + ' см' : m.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' м'; }
+
+// Среднее и разброс отсчётов. Отсчёты телефона идут подряд и похожи друг на друга, поэтому разброс бывает
+// меньше настоящей ошибки — за оценку берём большее из разброса и точности, которую сообщает приёмник.
+function measStats(fixes) {
+  const lat0 = fixes[0].lat, lng0 = fixes[0].lng, k = Math.cos(lat0 * Math.PI / 180);
+  const pts = fixes.map(f => ({ n: (f.lat - lat0) * M_PER_DEG, e: (f.lng - lng0) * M_PER_DEG * k }));
+  const mean = a => a.reduce((s, x) => s + x, 0) / a.length;
+  const mn = mean(pts.map(p => p.n)), me = mean(pts.map(p => p.e));
+  const dev = fixes.length > 1 ? Math.sqrt(pts.reduce((s, p) => s + (p.n - mn) ** 2 + (p.e - me) ** 2, 0) / (fixes.length - 1)) : 0;
+  const acc = mean(fixes.map(f => f.acc));
+  return { lat: lat0 + mn / M_PER_DEG, lng: lng0 + me / (M_PER_DEG * k), dev, acc, m: Math.max(dev, acc), n: fixes.length };
+}
+function measVerdict(m, tol, scale) {
+  if (m <= tol) return ['ok', `Годится для 1:${scale} — ошибка в пределах допуска ${cmText(tol)}`];
+  if (m <= 2 * tol) return ['mid', `На пределе для 1:${scale}: больше средней (${cmText(tol)}), но меньше предельной (${cmText(2 * tol)})`];
+  return ['bad', `Не годится для 1:${scale}: допуск ${cmText(tol)}, предельная ${cmText(2 * tol)}`];
+}
+
+function openMeasure(onAccept) {
+  const o = pref('meas', { sec: 30, kind: 'clear', scale: 500 });
+  const seg = (key, items, label) => `<div class="seg" data-key="${key}">${items.map(([v, t]) =>
+    `<button data-v="${v}" class="${String(o[key]) === String(v) ? 'on' : ''}">${t}</button>`).join('')}</div>`;
+  showSheet(`<div class="sh-head"><b>Измерение точки</b><button class="x" data-close>×</button></div><div id="measBox">
+    <div class="meas-row"><span>Время</span>${seg('sec', MEAS_SECONDS.map(s => [s, s < 60 ? s + ' с' : s / 60 + ' мин']))}</div>
+    <div class="meas-row"><span>Что снимаем</span>${seg('kind', MEAS_KINDS.map(k => [k.id, k.name]))}</div>
+    <div class="meas-row"><span>Масштаб плана</span>${seg('scale', MEAS_SCALES.map(s => [s, '1:' + s]))}</div>
+    <div id="measLive" class="hint" style="color:var(--muted);font-size:12.5px"></div>
+    <div class="acts" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">
+      <button class="btn" data-close>Отмена</button><button class="btn primary" id="measGo">Начать</button></div></div>`);
+  const tolNote = () => { const k = MEAS_KINDS.find(x => x.id === o.kind); $('measLive').textContent =
+    `Допуск ${cmText(measTol(o))} (${String(k.mm).replace('.', ',')} мм на плане, ${k.hint} СП 47.13330). Стойте неподвижно, веха — по уровню.`; };
+  tolNote();
+  $('measBox').querySelectorAll('.seg').forEach(box => box.onclick = e => {
+    const b = e.target.closest('button[data-v]');
+    if (!b || measuring) return;
+    const key = box.dataset.key;
+    o[key] = key === 'kind' ? b.dataset.v : Number(b.dataset.v);
+    box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    setPref('meas', o); tolNote();
+  });
+  $('measGo').onclick = () => runMeasure(o, onAccept);
+}
+
+function runMeasure(o, onAccept) {
+  startGps();
+  const fixes = [], t0 = Date.now(), tol = measTol(o);
+  let lastTs = 0, timer = null, hdops = [];
+  const stop = () => { clearInterval(timer); measuring = null; };
+  const live = () => {
+    if (!$('measBox') || $('sheet').style.display === 'none') { stop(); return; }     // лист закрыли — измерение отменено
+    const sec = Math.min(o.sec, Math.round((Date.now() - t0) / 1000));
+    if (!fixes.length) { $('measLive').textContent = `Жду координаты… ${sec} с`; }
+    else {
+      const s = measStats(fixes), [cls, text] = measVerdict(s.m, tol, o.scale), d = sats && sats.dop;
+      $('measLive').innerHTML = `<div class="meas-big">±${cmText(s.m)}</div>
+        <div>Отсчётов ${s.n} · ${sec} из ${o.sec} с · разброс ±${cmText(s.dev)} · по приёмнику ±${cmText(s.acc)}${d ? ' · HDOP ' + d.h.toFixed(1) : ''}</div>
+        <div class="meas-verdict ${cls}">${text}</div>` + (d && d.h > 5 ? '<div>Плохая геометрия спутников (HDOP больше 5) — лучше подождать.</div>' : '');
+    }
+    if (sec >= o.sec) finish();
+  };
+  const finish = () => {
+    stop();
+    if (fixes.length < MEAS_MIN_FIXES) { $('measLive').textContent = `Мало отсчётов (${fixes.length}) — нужен хотя бы ${MEAS_MIN_FIXES}. Проверьте GPS и повторите.`; resetButtons(); return; }
+    const s = measStats(fixes), [cls] = measVerdict(s.m, tol, o.scale);
+    const hd = hdops.length ? hdops.reduce((a, b) => a + b, 0) / hdops.length : null;
+    const meas = { sec: Math.round((Date.now() - t0) / 1000), n: s.n, m: +s.m.toFixed(3), dev: +s.dev.toFixed(3), acc: +s.acc.toFixed(3),
+      hdop: hd == null ? null : +hd.toFixed(1), kind: o.kind, scale: o.scale, tol: +tol.toFixed(3), ok: cls, at: new Date().toISOString() };
+    const go = $('measGo');
+    go.textContent = 'Принять'; go.disabled = false;
+    go.onclick = () => { closeSheet(); onAccept(L.latLng(s.lat, s.lng), meas); };
+    const back = go.previousElementSibling;
+    back.removeAttribute('data-close'); back.textContent = 'Повторить';
+    back.onclick = () => openMeasure(onAccept);
+  };
+  const resetButtons = () => { const go = $('measGo'); go.textContent = 'Начать'; go.disabled = false; go.onclick = () => runMeasure(o, onAccept); };
+  measuring = { onFix(p) {
+    if (p.timestamp === lastTs) return;                                // тот же отсчёт повторно
+    lastTs = p.timestamp;
+    fixes.push({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy });
+    if (sats && sats.dop) hdops.push(sats.dop.h);
+  } };
+  const go = $('measGo');
+  go.textContent = 'Стоп — принять';
+  go.onclick = () => finish();
+  timer = setInterval(live, 500);
+  live();
+}
+
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
@@ -670,9 +784,85 @@ const SAT_SHORT = { 'GPS': 'GPS', 'ГЛОНАСС': 'ГЛН', 'Galileo': 'GAL', 
 let sats = null, gnssOn = false;
 function showSats(st) {
   sats = st;
+  sats.dop = st.sats ? computeDop(st.sats) : null;
   if (!st.total) { satMessage('Спутники: пока не видно ни одного — выйдите на открытое место'); return; }
   $('satLine').style.display = 'flex';
-  $('satText').textContent = `Спутники ${st.used}/${st.total} · ` + (st.systems || []).map(s => `${SAT_SHORT[s.name] || s.name} ${s.used}/${s.seen}`).join(' · ');
+  $('satText').textContent = `Спутники ${st.used}/${st.total} · ` + (sats.dop ? `HDOP ${sats.dop.h.toFixed(1)} · ` : '') +
+    (st.systems || []).map(s => `${SAT_SHORT[s.name] || s.name} ${s.used}/${s.seen}`).join(' · ');
+  if ($('satBody')) $('satBody').innerHTML = satSheetBody();            // лист «Спутники» открыт — обновляем вживую
+}
+
+/* DOP — геометрический фактор (ESA GNSS Data Processing, т. I, § 6.1.3.2): Q = (GᵀG)⁻¹ в системе ВСВ (восток-север-верх).
+   Строка G для спутника: [cos el·sin az, cos el·cos az, sin el, часы]. Часы приёмника для каждой системы свои —
+   у GPS, ГЛОНАСС, Galileo, BeiDou разные шкалы времени, поэтому по столбцу «часов» на каждую систему в решении. */
+const DOP_GRADES = [[1, 'отлично', 'ok'], [2, 'хорошо', 'ok'], [5, 'удовлетворительно', 'mid'], [Infinity, 'плохо — подождите', 'bad']];
+function computeDop(list) {
+  const used = list.filter(s => s.used && s.el >= 0);
+  const systems = [...new Set(used.map(s => s.sys))];
+  const n = 3 + systems.length;
+  if (used.length < n) return null;                                     // неизвестных больше, чем спутников
+  const N = Array.from({ length: n }, () => new Array(n).fill(0));
+  for (const s of used) {
+    const el = s.el * Math.PI / 180, az = s.az * Math.PI / 180;
+    const g = new Array(n).fill(0);
+    g[0] = Math.cos(el) * Math.sin(az); g[1] = Math.cos(el) * Math.cos(az); g[2] = Math.sin(el);
+    g[3 + systems.indexOf(s.sys)] = 1;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) N[i][j] += g[i] * g[j];
+  }
+  const Q = invert(N);
+  if (!Q) return null;
+  const h = Math.sqrt(Q[0][0] + Q[1][1]), v = Math.sqrt(Q[2][2]);
+  return { h, v, p: Math.sqrt(h * h + v * v), n: used.length };
+}
+function dopGrade(h) { return DOP_GRADES.find(([max]) => h <= max); }
+// обращение небольшой симметричной матрицы методом Гаусса — Жордана; null, если геометрия вырождена
+function invert(M) {
+  const n = M.length, A = M.map((row, i) => [...row, ...row.map((_, j) => (i === j ? 1 : 0))]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    if (Math.abs(A[p][c]) < 1e-9) return null;
+    [A[c], A[p]] = [A[p], A[c]];
+    const d = A[c][c];
+    A[c] = A[c].map(x => x / d);
+    for (let r = 0; r < n; r++) if (r !== c) { const k = A[r][c]; A[r] = A[r].map((x, j) => x - k * A[c][j]); }
+  }
+  return A.map(row => row.slice(n));
+}
+
+/* Карта неба: центр — зенит, край — горизонт, север вверху. Закрашен — спутник в решении, кружок — только виден.
+   Пунктир — маска 15°: спутники ниже неё сигнал дают через толщу атмосферы и отражения, им веры меньше. */
+const SKY_MASK = 15;
+const SYS_COLOR = { 'GPS': '#1e88e5', 'ГЛОНАСС': '#e53935', 'Galileo': '#43a047', 'BeiDou': '#fb8c00' };
+function skyPlot(list, size) {
+  const c = size / 2, R = c - 16, rr = el => R * (90 - el) / 90;
+  let svg = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="display:block;margin:0 auto">
+    <g fill="none" stroke="var(--muted)" stroke-width=".8">
+      <circle cx="${c}" cy="${c}" r="${R}"/><circle cx="${c}" cy="${c}" r="${rr(30)}"/><circle cx="${c}" cy="${c}" r="${rr(60)}"/>
+      <circle cx="${c}" cy="${c}" r="${rr(SKY_MASK)}" stroke-dasharray="3 3"/>
+      <path d="M${c} ${c - R}V${c + R}M${c - R} ${c}H${c + R}"/></g>
+    <g font-size="11" fill="var(--muted)" text-anchor="middle">
+      <text x="${c}" y="10">С</text><text x="${c}" y="${size - 2}">Ю</text><text x="${size - 6}" y="${c + 4}">В</text><text x="6" y="${c + 4}">З</text>
+      <text x="${c + 3}" y="${c - rr(30) + 11}" text-anchor="start" font-size="9">30°</text><text x="${c + 3}" y="${c - rr(60) + 11}" text-anchor="start" font-size="9">60°</text></g>`;
+  for (const s of list) {
+    if (!(s.el >= 0)) continue;
+    const a = s.az * Math.PI / 180, r = rr(s.el), x = c + r * Math.sin(a), y = c - r * Math.cos(a), col = SYS_COLOR[s.sys] || '#757575';
+    svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="${s.used ? col : 'var(--panel)'}" stroke="${col}" stroke-width="1.5" opacity="${s.el < SKY_MASK ? .55 : 1}"/>
+      <text x="${(x + 8).toFixed(1)}" y="${(y + 3).toFixed(1)}" font-size="9" fill="var(--ink)">${s.svid}</text>`;
+  }
+  return svg + '</svg>';
+}
+function satSheetBody() {
+  const d = sats.dop, g = d && dopGrade(d.h);
+  const rows = (sats.systems || []).map(s => `<tr><td>${SYS_COLOR[s.name] ? `<span style="color:${SYS_COLOR[s.name]}">●</span> ` : ''}${esc(s.name)}</td><td>${s.seen}</td><td>${s.used}</td><td>${s.snr}</td></tr>`).join('');
+  const dopLine = d
+    ? `<div class="dop"><span class="dot ${g[2]}"></span><b>HDOP ${d.h.toFixed(1)}</b> — ${g[1]} · PDOP ${d.p.toFixed(1)} · VDOP ${d.v.toFixed(1)}</div>`
+    : `<div class="dop"><span class="dot bad"></span>DOP: мало спутников в решении</div>`;
+  return dopLine + (sats.sats ? skyPlot(sats.sats, 240) : '') +
+    `<table class="sat-tab"><tr><th>Система</th><th>Видно</th><th>В решении</th><th>Сигнал, дБ·Гц</th></tr>${rows}
+    <tr class="sum"><td>Всего</td><td>${sats.total}</td><td>${sats.used}</td><td></td></tr></table>
+    <div class="hint" style="margin-top:10px;color:var(--muted);font-size:12.5px">HDOP — во сколько раз геометрия спутников ухудшает точность в плане: до 2 — хорошо, больше 5 — снимать не стоит.
+    Закрашенные кружки — в решении, пустые — только видны; ниже пунктира (15°) спутникам веры меньше. Сигнал выше 30 дБ·Гц — хороший, ниже 20 — слабый.</div>`;
 }
 function satMessage(msg) { $('satLine').style.display = 'flex'; $('satText').textContent = msg; }
 function startGnss() {
@@ -685,11 +875,7 @@ function startGnss() {
 }
 $('satLine').onclick = () => {
   if (!sats) return;
-  const rows = (sats.systems || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.seen}</td><td>${s.used}</td><td>${s.snr}</td></tr>`).join('');
-  showSheet(`<div class="sh-head"><b>Спутники ГНСС</b><button class="x" data-close>×</button></div>
-    <table class="sat-tab"><tr><th>Система</th><th>Видно</th><th>В решении</th><th>Сигнал, дБ·Гц</th></tr>${rows}
-    <tr class="sum"><td>Всего</td><td>${sats.total}</td><td>${sats.used}</td><td></td></tr></table>
-    <div class="hint" style="margin-top:10px;color:var(--muted);font-size:12.5px">Обновляется раз в секунду. Сигнал выше 30 дБ·Гц — хороший, ниже 20 — слабый.</div>`);
+  showSheet(`<div class="sh-head"><b>Спутники ГНСС</b><button class="x" data-close>×</button></div><div id="satBody">${satSheetBody()}</div>`);
 };
 
 $('fabMe').onclick = () => {
@@ -1007,6 +1193,10 @@ function showCard(kind, obj) {
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
     if (obj.h != null && obj.h !== '') kv.push(['Отметка', esc(obj.h) + ' м']);
+    if (obj.meas) {
+      const m = obj.meas, mark = { ok: '✓ годится', mid: '≈ на пределе', bad: '✗ не годится' }[m.ok] || '';
+      kv.push(['Измерение', `±${cmText(m.m)} за ${m.sec} с, отсчётов ${m.n}${m.hdop != null ? ', HDOP ' + m.hdop : ''}<br>${mark} для 1:${m.scale} (допуск ${cmText(m.tol)})`]);
+    }
     ll = [obj.lat, obj.lng];
   } else {
     const s = LINES[obj.type] || LINES.plain;
@@ -1128,9 +1318,9 @@ function setMode(m) {
   $('modeTitle').innerHTML = (isPt ? symbolSvg(spec.svg, 26) : linePreview(spec, 36, 26)) +
     `<span>${isPt ? 'Ставим' : 'Рисуем'}: ${esc(spec.name)}${isPt ? '' : ` · точек ${mode.latlngs.length}`}</span>`;
   const btns = isPt
-    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['done', 'Готово', 'primary']]
-    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['undo', 'Шаг назад'], ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
-  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' && !isPt ? ' style="grid-column:span 2"' : ''}>${t}</button>`).join('');
+    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['done', 'Готово', 'primary']]
+    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', 'Шаг назад'], ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
+  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' && isPt ? ' style="grid-column:span 3"' : ''}>${t}</button>`).join('');
 }
 $('modeBtns').addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
@@ -1138,17 +1328,20 @@ $('modeBtns').addEventListener('click', e => {
   const act = b.dataset.act;
   if (act === 'center') addAt(map.getCenter());
   if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng)); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
+  if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode === m) addAt(ll, meas); }); }
   if (act === 'undo') { mode.latlngs.pop(); refreshTemp(); setMode(mode); }
   if (act === 'cancel') setMode(null);
   if (act === 'done') finishMode();
 });
 map.on('click', e => { if (mode) addAt(e.latlng); });
 
-function addAt(ll) {
+function addAt(ll, meas) {
   if (mode.kind === 'point') {
-    data.points.push({ id: uid(), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' });
+    const pt = { id: uid(), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' };
+    if (meas) pt.meas = meas;
+    data.points.push(pt);
     save(); drawPoints();
-    toast('Знак поставлен');
+    toast(meas ? `Знак поставлен, ±${cmText(meas.m)}` : 'Знак поставлен');
   } else {
     mode.latlngs.push([ll.lat, ll.lng]);
     refreshTemp(); setMode(mode);
@@ -1430,10 +1623,12 @@ function toKml() {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Полевой план ${today()}</name>\n${pts.concat(lns).join('\n')}\n</Document></kml>`;
 }
 function toCsv() {
-  const rows = [['Знак', 'Подпись', 'Отметка', 'Примечание', 'Широта WGS-84', 'Долгота WGS-84', 'X ' + planeName(), 'Y ' + planeName(), 'Зона']];
+  const rows = [['Знак', 'Подпись', 'Отметка', 'Примечание', 'Широта WGS-84', 'Долгота WGS-84', 'X ' + planeName(), 'Y ' + planeName(), 'Зона',
+    'СКО, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб']];
   for (const p of data.points) {
-    const s = sk42(p.lat, p.lng);
-    rows.push([(POINTS[p.type] || POINTS.mark).name, p.name || '', p.h == null ? '' : p.h, p.note || '', f6(p.lat), f6(p.lng), s.x.toFixed(2), s.y.toFixed(2), s.zone]);
+    const s = sk42(p.lat, p.lng), m = p.meas;
+    rows.push([(POINTS[p.type] || POINTS.mark).name, p.name || '', p.h == null ? '' : p.h, p.note || '', f6(p.lat), f6(p.lng), s.x.toFixed(2), s.y.toFixed(2), s.zone,
+      ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', ''])]);
   }
   return '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
 }
