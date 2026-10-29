@@ -358,6 +358,36 @@ const LINE_GROUPS = [
     { id: 'lep_cab', name: 'ЛЭП кабельная воздушная', kind: 'power', double: true, pole: 'circle', w: 0.25, placeholder: '1 кВ 1 каб.' },
     { id: 'air_comm', name: 'Линия связи воздушная', kind: 'air', w: C, placeholder: '8 пр. телеф.' }
   ]},
+  // Строения — ГКИНП, табл. 5–7 (зн. 13–25): на 1:500 тонкий замкнутый контур, различаются надписью внутри (п. 52–55)
+  { id: 'bld', title: 'Строения', items: [
+    { id: 'b_kzh', name: 'Жилое огнестойкое (КЖ)', kind: 'building', closed: true, w: C, suffix: 'Ж', mat: true },
+    { id: 'b_kn', name: 'Нежилое огнестойкое (КН)', kind: 'building', closed: true, w: C, suffix: 'Н', mat: true },
+    { id: 'b_zh', name: 'Жилое неогнестойкое, деревянное (Ж)', kind: 'building', closed: true, w: C, suffix: 'Ж' },
+    { id: 'b_n', name: 'Нежилое неогнестойкое (Н)', kind: 'building', closed: true, w: C, suffix: 'Н' },
+    { id: 'b_smzh', name: 'Жилое смешанное (СМЖ)', kind: 'building', closed: true, w: C, suffix: 'СМЖ' },
+    { id: 'b_smn', name: 'Нежилое смешанное (СМН)', kind: 'building', closed: true, w: C, suffix: 'СМН' },
+    { id: 'b_pub', name: 'Общественное (3К маг., К адм.)', kind: 'building', closed: true, w: C, mat: true, pub: true },
+    { id: 'b_cols', name: 'Часть здания на колоннах', kind: 'building', closed: true, w: C, dash: true, cols: true },
+    { id: 'b_build', name: 'Здание строящееся (стр.)', kind: 'building', closed: true, w: C, dash: true, word: 'стр.' },
+    { id: 'b_ruin', name: 'Здание разрушенное (разв.)', kind: 'building', closed: true, w: C, dash: true, word: 'разв.' }
+  ]},
+  // Ограждения — ГКИНП, табл. 114 (зн. 472–477); засечки и столбики — внутрь огороженной территории (п. 583)
+  { id: 'fence', title: 'Ограждения', items: [
+    { id: 'f_stone', name: 'Ограда каменная, ж/б 1 м и выше', kind: 'fence', style: 'stone', w: C },
+    { id: 'f_stone_low', name: 'Ограда каменная ниже 1 м, глинобитная', kind: 'fence', style: 'stoneLow', w: C },
+    { id: 'f_metal', name: 'Ограда металлическая 1 м и выше', kind: 'fence', style: 'metal', w: C },
+    { id: 'f_metal_low', name: 'Ограда металлическая ниже 1 м', kind: 'fence', style: 'metalLow', w: C },
+    { id: 'f_metal_found', name: 'Ограда металлическая на фундаменте', kind: 'fence', style: 'metalFound', w: C },
+    { id: 'f_wood', name: 'Забор деревянный сплошной', kind: 'fence', style: 'wood', w: C },
+    { id: 'f_lattice', name: 'Забор решётчатый (штакетник)', kind: 'fence', style: 'lattice', w: C },
+    { id: 'f_wood_found', name: 'Забор деревянный на фундаменте', kind: 'fence', style: 'woodFound', w: C },
+    { id: 'f_wood_posts', name: 'Забор с капитальными опорами', kind: 'fence', style: 'woodPosts', w: C },
+    { id: 'f_barbed', name: 'Колючая проволока', kind: 'fence', style: 'barbed', w: C },
+    { id: 'f_wire', name: 'Гладкая проволока', kind: 'fence', style: 'wire', w: C, tag: 'проволока' },
+    { id: 'f_net', name: 'Проволочная сетка (вольер)', kind: 'fence', style: 'net', w: C },
+    { id: 'f_epast', name: 'Электропастух', kind: 'fence', style: 'wire', w: C, tag: 'электропастух' },
+    { id: 'f_hedge', name: 'Изгородь, плетень, трельяж', kind: 'fence', style: 'hedge', w: C }
+  ]},
   { id: 'own', title: 'Своё', items: [
     { id: 'route', name: 'Трасса демонтажа (пикеты)', kind: 'route', w: 0.3, color: '#c62828' },
     { id: 'plain', name: 'Простая линия с подписью', kind: 'plain', w: 0.3 }
@@ -1044,7 +1074,7 @@ function frame() {
   occupied = [];
   for (const { p } of pointMarkers) { const c = map.latLngToContainerPoint([p.lat, p.lng]); reserve({ x: c.x - SYM_R, y: c.y - SYM_R, w: 2 * SYM_R, h: 2 * SYM_R }, p.id); }
   for (const line of data.lines) {                                    // сама линия — препятствие для чужих надписей
-    const pts = line.latlngs.map(a => map.latLngToContainerPoint(a));
+    const pts = screenPts(line);
     for (let i = 1; i < pts.length; i++) {
       const d = pts[i - 1].distanceTo(pts[i]), n = Math.max(1, Math.ceil(d / 6));
       for (let k = 0; k <= n; k++) { const x = pts[i - 1].x + (pts[i].x - pts[i - 1].x) * k / n, y = pts[i - 1].y + (pts[i].y - pts[i - 1].y) * k / n; reserve({ x: x - 1.5, y: y - 1.5, w: 3, h: 3 }, line.id); }
@@ -1087,6 +1117,11 @@ function segment(g, path, s0, s1, w, off, dash) {
   push(s1);
   el('polyline', Object.assign({ points: pts.join(' '), fill: 'none', stroke: 'currentColor', 'stroke-width': w, 'stroke-linecap': 'butt', 'stroke-linejoin': 'round' },
     dash ? { 'stroke-dasharray': dash } : {}), g);
+}
+// Точка на линии, сдвинутая вбок на off «мм» (плюс — вправо по ходу)
+function sidePt(path, s, off) {
+  const p = at(path, Math.max(0, Math.min(s, path.getTotalLength()))), a = (p.a + 90) * Math.PI / 180;
+  return { x: p.x + Math.cos(a) * off * MM, y: p.y + Math.sin(a) * off * MM, a: p.a };
 }
 // Поперечный штрих длиной h (мм) под углом deg к линии
 function tick(g, path, s, h, w, deg) {
@@ -1198,6 +1233,39 @@ const DRAW = {
     for (let s = step / 2; s < total; s += step) poleMark(g, path, s, 'circle', w);
   },
   plain(g, path, spec, line, w) { segment(g, path, 0, path.getTotalLength(), w); },
+  // Ограждения: рисунок по ГКИНП (зн. 472–477), размеры в «мм» знака; засечки — на сторону территории (по ходу слева, «flip» — справа)
+  fence(g, path, spec, line, w) {
+    const total = path.getTotalLength(), a = line.attr || {}, sg = a.flip ? 1 : -1;
+    const each = (step, start, f) => { for (let s = start * MM; s < total - 1; s += step * MM) f(s); };
+    const post = (s, off, r, filled) => { const q = sidePt(path, s, off * sg); el('circle', { cx: q.x, cy: q.y, r: r * MM, fill: filled ? 'currentColor' : 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w }, g); };
+    const box = (s, off, size, filled) => { const q = sidePt(path, s, off * sg); el('rect', { x: -size * MM / 2, y: -size * MM / 2, width: size * MM, height: size * MM, fill: filled ? 'currentColor' : 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w, transform: `translate(${q.x} ${q.y}) rotate(${q.a})` }, g); };
+    const spur = (s, len, from, slant) => { const p = sidePt(path, s, (from || 0) * sg), q = sidePt(path, Math.min(total, s + (slant || 0) * MM), ((from || 0) + len) * sg); el('line', { x1: p.x, y1: p.y, x2: q.x, y2: q.y, stroke: 'currentColor', 'stroke-width': w }, g); };
+    const line0 = (off, dash, k) => segment(g, path, 0, total, w * (k || 1), off * sg, dash);
+    ({
+      stone() { line0(0); line0(0.6); each(8, 4, s => box(s, 0.3, 1.6)); },
+      stoneLow() { line0(0, null, .8); line0(0.5, null, .8); each(8, 3, s => box(s, 0.25, 0.8, true)); },
+      metal() { line0(0); each(8, 4, s => post(s, 0, 0.5)); },
+      metalLow() { line0(0); each(8, 4, s => post(s, 0, 0.5, true)); },
+      metalFound() { line0(-0.5); line0(0.5); line0(0, `${3 * MM} ${1 * MM}`, .7); each(8, 4, s => post(s, 0, 0.45, true)); },
+      wood() { line0(0); each(5, 2, s => spur(s, 0.8)); },
+      lattice() { line0(0, `${4 * MM} ${1 * MM}`); each(5, 2, s => spur(s, 0.8)); },
+      woodFound() { line0(0); line0(0.5); each(5, 2, s => spur(s, 0.8, 0.5)); },
+      woodPosts() { line0(0); each(5, 2, s => spur(s, 0.8)); each(15, 4.5, s => post(s, 0, 0.5, true)); },
+      barbed() { line0(0); each(5, 2.5, s => spur(s, 1, -0.5)); },
+      wire() { line0(0); each(12, 6, s => post(s, 0, 0.5)); },
+      net() { line0(0, null, .8); each(5, 2.5, s => { spur(s - 0.3 * MM, 0.6, -0.3, 0.6); spur(s + 0.3 * MM, 0.6, -0.3, -0.6); }); },
+      hedge() { line0(0, null, .8); each(5, 2, s => spur(s, 0.6, 0, 0.4)); }
+    })[spec.style]();
+    if (a.gates) for (const s of [0, total]) tick(g, path, s, 1.2, w * 1.5);   // упоры ворот на концах (п. 584)
+  },
+  // Строение: тонкий контур (пунктир — строящееся, разрушенное, на колоннах) и надпись внутри вдоль длинной стороны
+  building(g, path, spec, line, w, pts) {
+    const total = path.getTotalLength();
+    segment(g, path, 0, total, w, 0, spec.dash ? `${2 * MM} ${1 * MM}` : null);
+    const poly = pts.slice(0, -1);
+    if (spec.cols) for (const p of poly) el('circle', { cx: p.x, cy: p.y, r: 0.5 * MM, fill: 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w }, g);
+    buildingLabels(g, poly, spec, line);
+  },
   route(g, path, spec, line, w, pts) {
     const total = path.getTotalLength(), dash = 4 * MM, space = 1.5 * MM;
     for (let s = 0; s < total;) { const e = Math.min(s + dash, total); segment(g, path, s, e, w); s = e + space; }
@@ -1221,6 +1289,12 @@ const DRAW = {
   }
 };
 
+// экранные точки линии; у замкнутого контура (строения) — с возвратом в первую точку
+function screenPts(line) {
+  const pts = line.latlngs.map(a => map.latLngToContainerPoint(a));
+  if ((LINES[line.type] || {}).closed && pts.length > 2) pts.push(pts[0]);
+  return pts;
+}
 function drawLines() {
   const size = map.getSize();
   L.DomUtil.setPosition(netSvg, map.containerPointToLayerPoint([0, 0]));
@@ -1228,7 +1302,7 @@ function drawLines() {
   netSvg.innerHTML = '';
   for (const line of data.lines) {
     const spec = LINES[line.type] || LINES.plain;
-    const pts = line.latlngs.map(a => map.latLngToContainerPoint(a));
+    const pts = screenPts(line);
     if (pts.length < 2) continue;
     const g = el('g', {}, netSvg);
     const isSel = selected && selected.obj === line;
@@ -1241,8 +1315,10 @@ function drawLines() {
     if (line.state === 'project') segment(g, path, 0, total, thin, 0, `${10 * MM} ${4 * MM}`);
     else if (line.state === 'staked') { segment(g, path, 0, total, thin, 0, `${10 * MM} ${2 * MM}`); for (let s = 11 * MM; s < total; s += 12 * MM) tick(g, path, s, 2, thin); }
     else if (line.state === 'build' || line.state === 'approx') segment(g, path, 0, total, thin);
+    else if (spec.kind === 'building' || spec.kind === 'fence') DRAW[spec.kind](g, path, spec, line, w, pts);   // у строений и оград состояний нет
     else DRAW[spec.kind](g, path, spec, line, line.state === 'off' ? Math.max(1, C * MM) : w, pts);   // тонкая ровная линия, как пером
     if (line.state === 'off') for (let s = 5 * MM; s < total; s += 11 * MM) tick(g, path, s, 2.8, Math.max(1, C * MM) * 1.3, 60);   // косые штрихи — недействующая
+    if (spec.kind === 'building' || spec.kind === 'fence') { curOwner = null; if (spec.kind === 'fence' && spec.tag) { curOwner = line.id; captionAlong(g, path, pts, spec.tag); curOwner = null; } continue; }
     const tag = { build: 'стр.', approx: 'ориент.' }[line.state];
     const cap = [tag, spec.tag, line.caption].filter(Boolean).join(' ');
     if (cap) captionAlong(g, path, pts, cap);
@@ -1261,16 +1337,86 @@ function captionAlong(g, path, pts, str) {
       for (const shift of [0, -0.25, 0.25]) if (placeText(g, path, sg.mid + shift * (sg.d - need), str, { dy, size })) return;
   }
 }
+/* ── Строения: надпись «5КЖ», номер дома, отметки пола и отмостки (ГКИНП, зн. 13–25, п. 52–57, 63–65) ── */
+function buildingLabel(spec, line) {
+  const a = line.attr || {};
+  if (spec.word) return spec.word;
+  if (spec.cols) return '';
+  const f = a.floors > 1 ? String(a.floors) : '', mat = spec.mat ? (a.mat || 'К') : '';
+  return spec.pub ? (f + mat + ' ' + (a.purpose || '')).trim() : f + mat + spec.suffix;
+}
+function inPoly(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+// Надпись в точке (x, y) под углом deg; inside — целиком внутри контура. Ставится, только если ни с чем не пересекается
+function placeFree(g, poly, x, y, deg, str, size, o) {
+  o = o || {};
+  const w = textWidth(str, size, o.italic) + 4, h = size + 3, r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => ({ x: x + u * w / 2 * c - v * h / 2 * s, y: y + u * w / 2 * s + v * h / 2 * c }));
+  if (o.inside && !corners.every(p => inPoly(p.x, p.y, poly))) return false;
+  const box = textBox({ x, y }, deg, 0, w, h);
+  if (hits(box, null)) return false;
+  el('text', { x: x.toFixed(1), y: y.toFixed(1), 'font-size': size, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+    'font-family': o.italic ? 'Georgia, "Times New Roman", serif' : '"Roboto Condensed", "Arial Narrow", Arial, sans-serif',
+    'font-style': o.italic ? 'italic' : 'normal', fill: 'currentColor', transform: `rotate(${deg.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)})` }, g).textContent = str;
+  reserve(box, 'txt');
+  return true;
+}
+function buildingLabels(g, poly, spec, line) {
+  if (poly.length < 3) return;
+  const a = line.attr || {};
+  let A = 0, cx = 0, cy = 0, best = 0, deg = 0;
+  poly.forEach((p, i) => {
+    const q = poly[(i + 1) % poly.length], k = p.x * q.y - q.x * p.y;
+    A += k; cx += (p.x + q.x) * k; cy += (p.y + q.y) * k;
+    // надпись — вдоль длинной стороны (п. 57); у почти квадратных строений — по стороне, ближе к горизонтали, чтобы читалась без поворота головы
+    const ang = Math.atan2(q.y - p.y, q.x - p.x), d = Math.hypot(q.x - p.x, q.y - p.y) * (Math.abs(Math.cos(ang)) > 0.7 ? 1.25 : 1);
+    if (d > best) { best = d; deg = upright(ang * 180 / Math.PI); }
+  });
+  const c = Math.abs(A) > 1 ? { x: cx / (3 * A), y: cy / (3 * A) } : { x: poly.reduce((s, p) => s + p.x, 0) / poly.length, y: poly.reduce((s, p) => s + p.y, 0) / poly.length };
+  const r = deg * Math.PI / 180, down = { x: -Math.sin(r), y: Math.cos(r) };   // «вниз» в повёрнутой надписи
+  const label = buildingLabel(spec, line);
+  let placed = false, size = 3 * MM;
+  if (label) for (size of [3 * MM, 2.4 * MM]) if ((placed = placeFree(g, poly, c.x, c.y, deg, label, size, { inside: true, italic: !!spec.word }))) break;
+  if (a.hFloor != null && a.hFloor !== '') {                          // отметка пола первого этажа — под надписью, внутри контура
+    const d = placed ? (size + 2.3 * MM) / 2 + 4 : 0;                // вплотную под надписью, но не налезая на неё
+    placeFree(g, poly, c.x + down.x * d, c.y + down.y * d, deg, mText(Number(a.hFloor), 2), 2.3 * MM, { inside: true, italic: true });
+  }
+  const corner = poly.reduce((m, p) => (p.x + p.y > m.x + m.y ? p : m), poly[0]);   // правый нижний угол на экране
+  const to = { x: c.x - corner.x, y: c.y - corner.y }, len = Math.hypot(to.x, to.y) || 1;
+  if (a.houseNo) placeFree(g, poly, corner.x + to.x / len * 4 * MM, corner.y + to.y / len * 4 * MM, deg, String(a.houseNo), 2.4 * MM, { inside: true, italic: true });
+  if (a.hBlind != null && a.hBlind !== '') {                          // отметка отмостки — снаружи у угла: по диагонали, ниже или правее
+    const str = mText(Number(a.hBlind), 2), half = textWidth(str, 2.3 * MM, true) / 2 + 3;
+    [[-to.x / len * 4.5 * MM, -to.y / len * 4.5 * MM], [0, 3.2 * MM], [half + 2, 0], [0, -3.2 * MM], [-half - 2, 3.2 * MM]]
+      .some(([dx, dy]) => placeFree(g, poly, corner.x + dx, corner.y + dy, 0, str, 2.3 * MM, { italic: true }));
+  }
+}
+function polyArea(line) {                                             // площадь контура, м² (на малом участке — плоско)
+  const ll = line.latlngs, lat0 = ll[0][0] * Math.PI / 180, k = Math.cos(lat0);
+  const p = ll.map(([la, lo]) => [lo * M_PER_DEG * k, la * M_PER_DEG]);
+  let s = 0;
+  for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; s += p[i][0] * q[1] - q[0] * p[i][1]; }
+  return Math.abs(s) / 2;
+}
 function drawHits() {
   hitLayer.clearLayers();
   for (const line of data.lines)
-    L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true }).on('click', e => { L.DomEvent.stop(e); if (!mode) showCard('line', line); }).addTo(hitLayer);
+    ((LINES[line.type] || {}).closed ? L.polygon(line.latlngs, { opacity: 0, fillOpacity: 0, weight: 24, interactive: true })
+      : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(e.latlng); else showCard('line', line); }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
 }
 map.on('moveend zoomend resize viewreset', frame);
 map.on('zoomstart', () => netSvg.style.opacity = 0);
 map.on('zoomend', () => netSvg.style.opacity = 1);
 function redrawAll() { drawPoints(); drawHits(); frame(); }
-function lineLength(line) { let m = 0; for (let i = 1; i < line.latlngs.length; i++) m += L.latLng(line.latlngs[i - 1]).distanceTo(line.latlngs[i]); return m; }
+function lineLength(line) {
+  const ll = (LINES[line.type] || {}).closed && line.latlngs.length > 2 ? line.latlngs.concat([line.latlngs[0]]) : line.latlngs;   // у контура — периметр
+  let m = 0; for (let i = 1; i < ll.length; i++) m += L.latLng(ll[i - 1]).distanceTo(ll[i]); return m;
+}
 
 /* ───────────── Карточка объекта (внизу экрана) ───────────── */
 
@@ -1293,6 +1439,24 @@ function linePreview(spec, w, h) {
   else if (spec.kind === 'indexed' && spec.numberedIndex) body = `<path d="M2 ${m}H${w * 0.36}M${w * 0.64} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.2"/><text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.defCount}</text>`;
   else if (spec.kind === 'route') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="2.2" stroke-dasharray="7 3"/><path d="M${w * 0.3} ${m - 5}V${m + 5}M${w * 0.7} ${m - 5}V${m + 5}" stroke="currentColor" stroke-width="2"/>`;
   else if (spec.kind === 'plain') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="1.8"/>`;
+  else if (spec.kind === 'building') {
+    const lab = spec.word || (spec.cols ? '' : spec.pub ? 'К маг.' : (spec.mat ? 'К' : '') + spec.suffix);
+    body = `<rect x="3" y="3" width="${w - 6}" height="${h - 6}" fill="none" stroke="currentColor" stroke-width="1.2"${spec.dash ? ' stroke-dasharray="4 2"' : ''}/>` +
+      (spec.cols ? `<circle cx="3" cy="3" r="2" fill="var(--symBg)" stroke="currentColor"/><circle cx="${w - 3}" cy="${h - 3}" r="2" fill="var(--symBg)" stroke="currentColor"/>` : '') +
+      `<text x="${w / 2}" y="${m + 4}" font-size="${lab.length > 4 ? 9.5 : 11}" text-anchor="middle" font-family="Roboto Condensed, Arial Narrow, Arial, sans-serif" fill="currentColor"${spec.word ? ' font-style="italic"' : ''}>${lab}</text>`;
+  }
+  else if (spec.kind === 'fence') {
+    const xs = [0.2, 0.4, 0.6, 0.8].map(k => w * k), st = spec.style, y2 = m + 4;
+    const line = st === 'lattice' ? `<path d="M2 ${y2}H${w - 2}" stroke="currentColor" stroke-width="1.2" stroke-dasharray="7 2"/>`
+      : `<path d="M2 ${y2}H${w - 2}" stroke="currentColor" stroke-width="1.2"/>` + (/stone|Found/.test(st) ? `<path d="M2 ${y2 - 3}H${w - 2}" stroke="currentColor" stroke-width="1"/>` : '');
+    const mark = x => ({ stone: `<rect x="${x - 2.5}" y="${y2 - 4}" width="5" height="5" fill="var(--symBg)" stroke="currentColor"/>`, stoneLow: `<rect x="${x - 1.5}" y="${y2 - 3}" width="3" height="3" fill="currentColor"/>`,
+      metal: `<circle cx="${x}" cy="${y2}" r="2.2" fill="var(--symBg)" stroke="currentColor"/>`, wire: `<circle cx="${x}" cy="${y2}" r="2.2" fill="var(--symBg)" stroke="currentColor"/>`,
+      metalLow: `<circle cx="${x}" cy="${y2}" r="2.2" fill="currentColor"/>`, metalFound: `<circle cx="${x}" cy="${y2 - 1.5}" r="1.8" fill="currentColor"/>`,
+      barbed: `<path d="M${x} ${y2 - 3}V${y2 + 3}" stroke="currentColor" stroke-width="1.2"/>`, net: `<path d="M${x - 2} ${y2 - 2}L${x + 2} ${y2 + 2}M${x + 2} ${y2 - 2}L${x - 2} ${y2 + 2}" stroke="currentColor"/>`,
+      hedge: `<path d="M${x} ${y2}L${x + 2.5} ${y2 - 4}" stroke="currentColor" stroke-width="1.1"/>` })[st]
+      || `<path d="M${x} ${y2}V${y2 - 4}" stroke="currentColor" stroke-width="1.2"/>`;
+    body = line + xs.map(mark).join('') + (st === 'woodPosts' ? `<circle cx="${w / 2}" cy="${y2}" r="2" fill="currentColor"/>` : '');
+  }
   else body = `<path d="M2 ${m}H${w * 0.3}M${w * 0.7} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.5"/><text x="${w / 2}" y="${m + 4.5}" font-size="12.5" text-anchor="middle" ${ital}>${spec.index}</text>${spec.flow ? `<path d="M${w - 2} ${m}l-6 -2.6v5.2Z" fill="currentColor"/>` : ''}`;
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="color:${c};display:block">${body}</svg>`;
 }
@@ -1317,6 +1481,18 @@ function showCard(kind, obj) {
     icon = linePreview(s, 40, 34); name = s.name + (obj.count > 1 ? ` · прокладок ${obj.count}` : '');
     sub = [s.tag, obj.caption].filter(Boolean).map(esc).join(' ') || 'без подписи';
     kv = [['Длина', lineLength(obj).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' м'], ['Точек', obj.latlngs.length]];
+    if (s.kind === 'building') {
+      const a = obj.attr || {}, lab = buildingLabel(s, obj);
+      name = s.name; sub = [lab, a.houseNo ? '№ ' + a.houseNo : ''].filter(Boolean).map(esc).join(' · ') || 'контур';
+      kv = [['Периметр', mText(lineLength(obj), 1) + ' м'], ['Площадь', mText(polyArea(obj), 1) + ' м²'], ['Углов', obj.latlngs.length]];
+      if (a.hFloor !== undefined && a.hFloor !== '') kv.push(['Пол 1 эт.', mText(Number(a.hFloor), 2) + ' м']);
+      if (a.hBlind !== undefined && a.hBlind !== '') kv.push(['Отмостка', mText(Number(a.hBlind), 2) + ' м']);
+    }
+    if (s.kind === 'fence') {
+      const a = obj.attr || {};
+      sub = obj.caption ? esc(obj.caption) : 'ограждение';
+      kv.push(['Засечки', a.flip ? 'справа по ходу' : 'слева по ходу'], ['Концы', a.gates ? 'упоры ворот' : 'обычные']);
+    }
     if (obj.state) kv.push(['Состояние', STATE_NAME[obj.state] || obj.state]);
     if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${obj.pk0}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
   }
@@ -1389,8 +1565,49 @@ function editPoint(p) {
     save(); showCard('point', p);
   });
 }
+const BLD_MATS = [['К', 'К — кирпич, камень, бетон'], ['М', 'М — металл'], ['С-Б', 'С-Б — стеклобетон'], ['С-М', 'С-М — стеклометалл']];
+function editBuilding(line, isNew) {
+  const spec = LINES[line.type], a = line.attr || {}, fields = [];
+  if (!spec.word && !spec.cols) fields.push({ key: 'floors', label: 'Этажей', type: 'number', value: a.floors || 1, half: true });
+  if (spec.mat) fields.push({ key: 'mat', label: 'Материал', type: 'select', value: a.mat || 'К', options: BLD_MATS, half: true });
+  if (spec.pub) fields.push({ key: 'purpose', label: 'Назначение (надпись)', value: a.purpose, placeholder: 'маг., адм., шк., поликл., гараж' });
+  fields.push({ key: 'houseNo', label: 'Номер дома', value: a.houseNo, placeholder: 'например 98', half: true },
+    { key: 'hFloor', label: 'Отметка пола 1 эт., м', type: 'number', value: a.hFloor, placeholder: '16.98', half: true },
+    { key: 'hBlind', label: 'Отметка отмостки у угла, м', type: 'number', value: a.hBlind, placeholder: '16.80',
+      hint: 'Надпись внутри контура ставится сама вдоль длинной стороны; если не помещается — появится при приближении.' });
+  openForm(spec.name, fields, v => {
+    const next = { ...a, houseNo: v.houseNo || '' };
+    if ('floors' in v) { const n = parseInt(v.floors, 10); if (!(n >= 1 && n < 200)) { toast('Этажей — целое число от 1'); return false; } next.floors = n; }
+    if ('mat' in v) next.mat = v.mat;
+    if ('purpose' in v) next.purpose = v.purpose;
+    for (const k of ['hFloor', 'hBlind']) {
+      const n = v[k] === '' ? '' : parseNum(v[k]);
+      if (n !== '' && isNaN(n)) { toast('Отметка — это число, например 16.98'); return false; }
+      next[k] = n;
+    }
+    line.attr = next;
+    if (isNew) data.lines.push(line);
+    save(); showCard('line', line);
+  }, isNew ? 'Готово' : 'Сохранить');
+}
+function editFence(line, isNew) {
+  const spec = LINES[line.type], a = line.attr || {};
+  openForm(spec.name, [
+    { key: 'flip', label: 'Засечки и столбики', type: 'select', value: a.flip ? 1 : 0, options: [[0, 'слева по ходу рисования'], [1, 'справа по ходу рисования']], half: true,
+      hint: 'Ставятся внутрь огороженной территории (ГКИНП, п. 583).' },
+    { key: 'gates', label: 'Концы', type: 'select', value: a.gates ? 1 : 0, options: [[0, 'обычные'], [1, 'упоры ворот']], half: true },
+    { key: 'caption', label: 'Примечание', value: line.caption, placeholder: 'необязательно, в карточке' }
+  ], v => {
+    line.attr = { ...a, flip: v.flip === '1', gates: v.gates === '1' };
+    line.caption = v.caption || '';
+    if (isNew) data.lines.push(line);
+    save(); showCard('line', line);
+  }, isNew ? 'Готово' : 'Сохранить');
+}
 function editLine(line, isNew) {
   const spec = LINES[line.type] || LINES.plain;
+  if (spec.kind === 'building') return editBuilding(line, isNew);
+  if (spec.kind === 'fence') return editFence(line, isNew);
   const fields = [];
   if (spec.kind === 'route') {
     fields.push({ key: 'pk0', label: 'Начальный ПК', type: 'number', value: line.pk0, placeholder: 'например 39', half: true },
@@ -1470,13 +1687,15 @@ function addAt(ll, meas) {
 function refreshTemp() {
   if (mode.temp) map.removeLayer(mode.temp);
   mode.temp = L.layerGroup([
-    L.polyline(mode.latlngs, { color: '#1e88e5', weight: 3, dashArray: '6 6', interactive: false }),
+    L.polyline((LINES[mode.type] || {}).closed && mode.latlngs.length > 2 ? mode.latlngs.concat([mode.latlngs[0]]) : mode.latlngs,
+      { color: '#1e88e5', weight: 3, dashArray: '6 6', interactive: false }),
     ...mode.latlngs.map(a => L.circleMarker(a, { radius: 6, color: '#1e88e5', fillColor: '#fff', fillOpacity: 1, weight: 2, interactive: false }))
   ]).addTo(map);
 }
 function finishMode() {
   if (mode.kind === 'line') {
-    if (mode.latlngs.length < 2) { toast('Нужно хотя бы две точки'); return; }
+    const closed = (LINES[mode.type] || {}).closed;
+    if (mode.latlngs.length < (closed ? 3 : 2)) { toast(closed ? 'Контур строения — хотя бы три угла' : 'Нужно хотя бы две точки'); return; }
     const line = { id: uid(), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: (LINES[mode.type] || {}).defCount || 1, state: '' };
     setMode(null);
     editLine(line, true);
@@ -1738,9 +1957,9 @@ function toKml() {
     const s = LINES[l.type] || LINES.plain;
     const hex = (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || s.color || '#111111';
     const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
-    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state })}` +
+    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '' })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
-      `<LineString><tessellate>1</tessellate><coordinates>${l.latlngs.map(a => a[1] + ',' + a[0] + ',0').join(' ')}</coordinates></LineString></Placemark>`;
+      `<LineString><tessellate>1</tessellate><coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map(a => a[1] + ',' + a[0] + ',0').join(' ')}</coordinates></LineString></Placemark>`;
   });
   return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Полевой план ${today()}</name>\n${pts.concat(lns).join('\n')}\n</Document></kml>`;
 }
@@ -1775,9 +1994,12 @@ $('fileIn').onchange = async e => {
           h: ext.tk_h != null && ext.tk_h !== '' ? Number(ext.tk_h) : null, note: ext.tk_note || '' }); np++;
       } else if (ls) {
         const type = LINES[ext.tk_type] ? ext.tk_type : 'plain';
-        data.lines.push({ id: uid(), type, latlngs: coords(ls).map(c => [c[1], c[0]]), caption: ext.tk_type ? (ext.tk_caption || '') : name,
+        let latlngs = coords(ls).map(c => [c[1], c[0]]), attr;
+        if (LINES[type].closed && latlngs.length > 3 && latlngs[0][0] === latlngs[latlngs.length - 1][0] && latlngs[0][1] === latlngs[latlngs.length - 1][1]) latlngs = latlngs.slice(0, -1);   // контур в KML замкнут повтором первой точки
+        try { attr = ext.tk_attr ? JSON.parse(ext.tk_attr) : undefined; } catch (e) { attr = undefined; }   // повреждённые свойства — просто без них
+        data.lines.push({ id: uid(), type, latlngs, caption: ext.tk_type ? (ext.tk_caption || '') : name,
           count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1,
-          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '' }); nl++;
+          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}) }); nl++;
       }
     }
     save(); redrawAll(); MENU.fit();
