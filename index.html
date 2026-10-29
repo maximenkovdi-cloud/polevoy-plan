@@ -632,7 +632,7 @@ function startGps() {
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 3;
+const APP_BUILD = 4;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -641,10 +641,22 @@ async function checkUpdate() {
     if (!(v.build > APP_BUILD)) return;
     $('updVer').textContent = v.name || ('сборка ' + v.build);
     $('updLine').style.display = 'flex';
-    $('updBtn').onclick = () => {
-      const U = window.Capacitor.Plugins && window.Capacitor.Plugins.Updater || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Updater'));
-      if (U) U.open({ url: v.apk }).catch(() => window.open(v.apk, '_blank')); else window.open(v.apk, '_blank');
-      toast('Скачивается обновление — откройте его из уведомления и нажмите «Обновить»');
+    const U = window.Capacitor.Plugins && window.Capacitor.Plugins.Updater || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Updater'));
+    const btn = $('updBtn');
+    let busy = false;
+    btn.onclick = async () => {
+      if (busy) return;
+      if (!U || !U.install) { if (U) U.open({ url: v.apk }); else window.open(v.apk, '_blank'); return; }   // старая сборка — через браузер
+      busy = true; btn.disabled = true; btn.textContent = 'Скачиваю…';
+      const sub = await U.addListener('progress', p => { btn.textContent = p.percent >= 0 ? `Скачиваю ${p.percent}%` : 'Скачиваю…'; });
+      try {
+        const r = await U.install({ url: v.apk });
+        if (r && r.needPermission) toast('Включите «Разрешить установку» для «Полевого плана», вернитесь и нажмите «Обновить» ещё раз');
+        else btn.textContent = 'Установите в окне Android';
+      } catch (e) { toast((e && e.message) || 'Не удалось скачать обновление'); }
+      if (sub && sub.remove) sub.remove();
+      busy = false; btn.disabled = false;
+      if (btn.textContent.startsWith('Скачиваю')) btn.textContent = 'Обновить';
     };
   } catch (e) { /* нет связи с сайтом — проверим в другой раз */ }
 }
