@@ -565,19 +565,24 @@ function startGps() {
 /* ───────────── Спутники ГНСС — только в Android-приложении (браузер этих данных не даёт) ───────────── */
 
 const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-const GNSS = NATIVE && window.Capacitor.Plugins && window.Capacitor.Plugins.Gnss;
+const GNSS = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Gnss) ||
+  (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Gnss')));   // Capacitor 6: registerPlugin, запасной путь — Plugins
 const SAT_SHORT = { 'GPS': 'GPS', 'ГЛОНАСС': 'ГЛН', 'Galileo': 'GAL', 'BeiDou': 'BDS', 'QZSS': 'QZS', 'SBAS': 'SBAS', 'NavIC': 'NavIC', 'Прочие': 'проч.' };
 let sats = null, gnssOn = false;
 function showSats(st) {
   sats = st;
+  if (!st.total) { satMessage('Спутники: пока не видно ни одного — выйдите на открытое место'); return; }
   $('satLine').style.display = 'flex';
   $('satText').textContent = `Спутники ${st.used}/${st.total} · ` + (st.systems || []).map(s => `${SAT_SHORT[s.name] || s.name} ${s.used}/${s.seen}`).join(' · ');
 }
+function satMessage(msg) { $('satLine').style.display = 'flex'; $('satText').textContent = msg; }
 function startGnss() {
-  if (!GNSS || gnssOn) return;
+  if (!NATIVE || gnssOn) return;
+  if (!GNSS) { satMessage('Спутники: модуль не найден — сообщите разработчику'); return; }
   gnssOn = true;
+  satMessage('Спутники: поиск… (на открытом месте, без сим-карты — до нескольких минут)');
   GNSS.addListener('status', showSats);
-  GNSS.start().catch(e => { gnssOn = false; toast('Спутники: ' + (e && e.message || 'нет доступа')); });
+  GNSS.start().catch(e => { gnssOn = false; satMessage('Спутники: ' + (e && e.message || 'нет доступа') + ' — нажмите ◎'); });
 }
 $('satLine').onclick = () => {
   if (!sats) return;
@@ -1459,6 +1464,7 @@ function rasterMenu() {
 /* ───────────── Старт ───────────── */
 
 ready = true;
+if (NATIVE) { startGnss(); startGps(); }             // в Android-приложении спутники и GPS включаются сразу
 redrawAll();
 updateInfo();
 layout();                                            // после updateInfo: плашка уже с координатами и своей настоящей высотой
