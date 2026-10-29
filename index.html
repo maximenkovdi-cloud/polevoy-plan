@@ -168,7 +168,7 @@
 
 <div id="top">
   <div class="r1">
-    <div class="seg" id="coordSeg"><button data-c="wgs">WGS-84</button><button data-c="sk">СК-42</button><button data-c="both">оба</button></div>
+    <div class="seg" id="coordSeg"><button data-c="wgs">WGS-84</button><button data-c="sk" id="segPlane">ГСК-2011</button><button data-c="both">оба</button></div>
     <span id="zone"></span>
   </div>
   <div id="coords"></div>
@@ -376,17 +376,34 @@ const PICKET_STEP_M = 100;     // пикет — каждые 100 м
 const MM = 4;                  // экранных пикселей на 1 «мм» знака
 const RECENT_MAX = 8;          // сколько «последних» знаков помнить
 
-/* ───────────── Координаты: WGS-84 → СК-42 (Гаусс-Крюгер) ───────────── */
+/* ───────────── Координаты: WGS-84 → плоская система (ГСК-2011, СК-42 или своя МСК) ───────────── */
 
-// Параметры перехода Пулково-1942 → WGS-84 по ГОСТ Р 51794-2008
-const TOWGS84 = '+towgs84=23.57,-140.95,-79.8,0,0.35,0.79,-0.22';
-const gkDef = zone => `+proj=tmerc +lat_0=0 +lon_0=${zone * 6 - 3} +k=1 +x_0=${zone * 1e6 + 500000} +y_0=0 +ellps=krass ${TOWGS84} +units=m +no_defs`;
+// ГСК-2011 — государственная система с 2017 г. (пост. № 1463), СК-42 для новых работ — только до 01.01.2021 (пост. № 1240).
+// Переход ГСК-2011 → WGS-84: через ПЗ-90.11, параметры по ГОСТ 32453-2017 (расхождение систем — сантиметры–дециметры).
+const TOWGS84_SK42 = '+towgs84=23.57,-140.95,-79.8,0,0.35,0.79,-0.22';
+const TOWGS84_GSK = '+towgs84=-0.013,0.120,0.014,-0.002862,0.003559,-0.004263,-0.0086';
+const CRS = {
+  gsk: { name: 'ГСК-2011', zoned: true,
+    def: zone => `+proj=tmerc +lat_0=0 +lon_0=${zone * 6 - 3} +k=1 +x_0=${zone * 1e6 + 500000} +y_0=0 +a=6378136.5 +rf=298.2564151 ${TOWGS84_GSK} +units=m +no_defs` },
+  sk42: { name: 'СК-42', zoned: true,
+    def: zone => `+proj=tmerc +lat_0=0 +lon_0=${zone * 6 - 3} +k=1 +x_0=${zone * 1e6 + 500000} +y_0=0 +ellps=krass ${TOWGS84_SK42} +units=m +no_defs` }
+};
+let crsId = pref('crs', 'gsk'), msk = pref('msk', null);   // msk: { name, lon0, lat0, k, x0, y0, towgs84 } — вводит сам пользователь
+function crs() {
+  if (crsId === 'msk' && msk) return { name: msk.name || 'МСК', zoned: false,
+    def: () => `+proj=tmerc +lat_0=${msk.lat0 || 0} +lon_0=${msk.lon0} +k=${msk.k || 1} +x_0=${msk.x0 || 0} +y_0=${msk.y0 || 0} +ellps=krass +towgs84=${msk.towgs84 || TOWGS84_SK42.slice(9)} +units=m +no_defs` };
+  return CRS[crsId] || CRS.gsk;
+}
+const planeName = () => crs().name;
+const zoneOf = lng => crs().zoned ? Math.floor(lng / 6) + 1 : 0;
+const gkDef = zone => crs().def(zone);
+// Имена sk42/fromSk42 оставлены для краткости: считают в выбранной плоской системе
 function sk42(lat, lng) {
-  const zone = Math.floor(lng / 6) + 1;
+  const zone = zoneOf(lng);
   const [y, x] = proj4('WGS84', gkDef(zone), [lng, lat]);
   return { zone, x, y };       // x — на север, y — на восток (с номером зоны впереди), как принято в геодезии
 }
-function fromSk42(x, y, zone) {   // обратный пересчёт СК-42 → WGS-84 (L.LatLng)
+function fromSk42(x, y, zone) {   // обратный пересчёт плоской системы → WGS-84 (L.LatLng)
   const [lng, lat] = proj4(gkDef(zone), 'WGS84', [y, x]);
   return L.latLng(lat, lng);
 }
@@ -512,7 +529,8 @@ const layersControl = L.control.layers(bases, null, { position: 'topright' }).ad
 let coordMode = pref('coords', 'sk');
 function updateInfo() {
   const c = coordText(map.getCenter());
-  $('zone').textContent = 'зона ' + c.s.zone;
+  $('zone').textContent = crs().zoned ? planeName() + ', зона ' + c.s.zone : planeName();
+  $('segPlane').textContent = planeName();
   const sk = `<div class="xy">X ${f2(c.s.x)} <small>м</small>&nbsp; Y ${f2(c.s.y)} <small>м</small></div>`;
   const wgs = `<div class="xy">${c.wgs}</div>`;
   $('coords').innerHTML = coordMode === 'wgs' ? wgs : coordMode === 'both' ? wgs + sk : sk;
@@ -951,7 +969,7 @@ function showCard(kind, obj) {
     const s = POINTS[obj.type] || POINTS.mark, c = coordText(L.latLng(obj.lat, obj.lng));
     icon = symbolSvg(s.svg, 34, netColor(obj.type)); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
-    kv = [['СК-42', `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
+    kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
     if (obj.h != null && obj.h !== '') kv.push(['Отметка', esc(obj.h) + ' м']);
     ll = [obj.lat, obj.lng];
   } else {
@@ -1197,7 +1215,7 @@ function openList(title, items, onPick) {
 }
 $('fabLayers').onclick = () => {
   const items = [{ header: 'Подложка' }, ...Object.keys(bases).map(n => ({ id: 'base:' + n, icon: '🗺', text: n, on: n === baseName, check: true })),
-    { header: 'Поверх карты' }, { id: 'grid', icon: '▦', text: 'Сетка СК-42', on: map.hasLayer(gridLayer), check: true },
+    { header: 'Поверх карты' }, { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
     { id: 'netcolors', icon: '🎨', text: 'Цвета сетей (традиционные)', on: netColors, check: true },
     ...Object.keys(rasterLayers).map(id => ({ id: 'r:' + id, icon: '🖼', text: rasterLayers[id].r.name, on: map.hasLayer(rasterLayers[id]), check: true }))];
   openList('Слои', items, pick => {
@@ -1211,10 +1229,11 @@ $('fabLayers').onclick = () => {
 $('btnMenu').onclick = () => openList('Меню', [
   { header: 'Файлы' },
   { id: 'kml', icon: '⬇', text: 'Выгрузить всё в KML' },
-  { id: 'csv', icon: '⬇', text: 'Выгрузить точки в CSV (WGS-84 и СК-42)' },
+  { id: 'csv', icon: '⬇', text: `Выгрузить точки в CSV (WGS-84 и ${planeName()})` },
   { id: 'import', icon: '⬆', text: 'Загрузить KML' },
   { header: 'Карта' },
-  { id: 'grid', icon: '▦', text: 'Сетка СК-42', on: map.hasLayer(gridLayer), check: true },
+  { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() },
+  { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
   { id: 'netcolors', icon: '🎨', text: netColors ? 'Цвета сетей: традиционные' : 'Цвета сетей: чёрные (по «Правилам»)', on: netColors, check: true },
   { id: 'raster', icon: '🖼', text: 'Наложить свой растр (план, ортофото, скан)' },
   { id: 'rasters', icon: '◐', text: 'Свои растры: прозрачность, удаление' },
@@ -1248,7 +1267,17 @@ const MENU = {
     if (all.length) map.fitBounds(all, { padding: [60, 60], maxZoom: 18 }); else toast('На карте пока ничего нет');
   },
   clear: () => { if (confirm('Удалить ВСЕ знаки и линии? Сначала лучше выгрузить KML.')) { data = { points: [], lines: [] }; save(); hideCard(); } },
-  about: () => alert('Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nСК-42: пересчёт по ГОСТ Р 51794-2008, точность — около метра; для работ сверяйте с пунктами.')
+  about: () => alert('Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
+  crs: () => openList('Система координат', [
+    { header: 'Плоские координаты' },
+    { id: 'gsk', icon: '⌖', text: 'ГСК-2011 — государственная (по умолчанию)', on: crsId === 'gsk', check: true },
+    { id: 'sk42', icon: '⌖', text: 'СК-42 — для старых материалов (до 2021 г.)', on: crsId === 'sk42', check: true },
+    { id: 'msk', icon: '⌖', text: msk ? `${msk.name || 'МСК'} — своя местная система` : 'МСК — ввести параметры своей местной системы', on: crsId === 'msk', check: true },
+    ...(msk ? [{ id: 'mskedit', icon: '✎', text: 'Изменить параметры МСК' }] : [])
+  ], pick => {
+    if (pick === 'msk' && !msk || pick === 'mskedit') { editMsk(); return; }
+    setCrs(pick);
+  })
 };
 /* ── Сохранить участок заранее (для работы без интернета) ── */
 const TILE_KB = 18;                  // средний размер куска карты — для оценки объёма
@@ -1304,6 +1333,39 @@ async function offlineInfo() {
     if (pick === 'clear' && confirm('Удалить все сохранённые куски карты? Знаки и линии останутся.')) { await tileStore('readwrite', s => s.clear()); toast('Сохранённые карты удалены'); }
   });
 }
+/* ── Выбор плоской системы координат и ввод своей МСК ── */
+function setCrs(id) {
+  crsId = id; setPref('crs', id);
+  updateInfo();
+  if (map.hasLayer(gridLayer)) gridLayer._draw();
+  if (selected) showCard(selected.kind, selected.obj);
+  toast('Координаты: ' + planeName());
+}
+// «36.5», «36,5» или «36°30'» → градусы
+function parseDeg(s) {
+  const m = String(s).trim().replace(',', '.').match(/^(-?\d+(?:\.\d+)?)(?:\s*[°º\s]\s*(\d+(?:\.\d+)?)?\s*['′]?\s*(\d+(?:\.\d+)?)?\s*["″]?)?$/);
+  if (!m) return NaN;
+  const d = Number(m[1]), sign = d < 0 ? -1 : 1;
+  return d + sign * ((Number(m[2]) || 0) / 60 + (Number(m[3]) || 0) / 3600);
+}
+function editMsk() {
+  const m = msk || {};
+  openForm('Своя местная система (МСК)', [
+    { key: 'name', label: 'Название', value: m.name, placeholder: 'например МСК-57, зона 1' },
+    { key: 'lon0', label: 'Осевой меридиан, °', value: m.lon0, placeholder: 'например 36°30′ или 36.5', half: true },
+    { key: 'lat0', label: 'Широта начала, °', value: m.lat0 != null ? m.lat0 : 0, half: true },
+    { key: 'k', label: 'Масштаб на меридиане', type: 'number', value: m.k != null ? m.k : 1, half: true },
+    { key: 'x0', label: 'Сдвиг на восток (Y₀), м', type: 'number', value: m.x0 != null ? m.x0 : 0, half: true },
+    { key: 'y0', label: 'Сдвиг на север (X₀), м', type: 'number', value: m.y0 != null ? m.y0 : 0, half: true },
+    { key: 'towgs84', label: 'Параметры перехода к WGS-84 (7 чисел через запятую)', value: m.towgs84 || TOWGS84_SK42.slice(9),
+      hint: 'По умолчанию — как для СК-42 (эллипсоид Красовского). Параметры МСК выдаёт Росреестр — вводите из своих документов.' }
+  ], v => {
+    const r = { name: v.name || 'МСК', lon0: parseDeg(v.lon0), lat0: parseDeg(v.lat0 || '0'), k: parseNum(v.k || '1'), x0: parseNum(v.x0 || '0'), y0: parseNum(v.y0 || '0'), towgs84: v.towgs84.replace(/\s/g, '') };
+    if ([r.lon0, r.lat0, r.k, r.x0, r.y0].some(isNaN)) { toast('Проверьте числа: меридиан, широта, масштаб и сдвиги'); return false; }
+    if (r.towgs84.split(',').length !== 7 || r.towgs84.split(',').some(x => isNaN(Number(x)))) { toast('Параметры перехода — ровно 7 чисел через запятую'); return false; }
+    msk = r; setPref('msk', r); setCrs('msk');
+  }, 'Сохранить');
+}
 const today = () => new Date().toISOString().slice(0, 10);
 function download(name, text, type) {
   const a = document.createElement('a');
@@ -1332,7 +1394,7 @@ function toKml() {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Полевой план ${today()}</name>\n${pts.concat(lns).join('\n')}\n</Document></kml>`;
 }
 function toCsv() {
-  const rows = [['Знак', 'Подпись', 'Отметка', 'Примечание', 'Широта WGS-84', 'Долгота WGS-84', 'X СК-42', 'Y СК-42', 'Зона']];
+  const rows = [['Знак', 'Подпись', 'Отметка', 'Примечание', 'Широта WGS-84', 'Долгота WGS-84', 'X ' + planeName(), 'Y ' + planeName(), 'Зона']];
   for (const p of data.points) {
     const s = sk42(p.lat, p.lng);
     rows.push([(POINTS[p.type] || POINTS.mark).name, p.name || '', p.h == null ? '' : p.h, p.note || '', f6(p.lat), f6(p.lng), s.x.toFixed(2), s.y.toFixed(2), s.zone]);
@@ -1397,7 +1459,7 @@ const GridLayer = L.Layer.extend({
     const m = this._map, size = m.getSize(), group = this._group;
     group.clearLayers();
     if (this._labels) { this._labels.remove(); this._labels = null; }
-    const zone = Math.floor(m.getCenter().lng / 6) + 1;
+    const zone = zoneOf(m.getCenter().lng);
     const toGk = p => { const ll = m.containerPointToLatLng(p); const [y, x] = proj4('WGS84', gkDef(zone), [ll.lng, ll.lat]); return { x, y }; };
     const corners = [[0, 0], [size.x, 0], [0, size.y], [size.x, size.y]].map(toGk);
     const minX = Math.min(...corners.map(c => c.x)), maxX = Math.max(...corners.map(c => c.x));
@@ -1527,12 +1589,12 @@ rasterInput.onchange = e => {
   openForm('Привязка растра: ' + f.name, [
     { key: 'tl', label: 'Левый верхний угол — X Y, м', value: `${Math.round(c.x)} ${Math.round(c.y)}`, hint: 'Два числа через пробел, например 5892500 6662500' },
     { key: 'br', label: 'Правый нижний угол — X Y, м', value: `${Math.round(c.x) - 500} ${Math.round(c.y) + 500}` },
-    { key: 'zone', label: 'Зона СК-42', type: 'number', value: c.zone, hint: 'Картинка должна быть выровнена по сетке СК-42: север вверху.' }
+    { key: 'zone', label: crs().zoned ? 'Зона ' + planeName() : 'Зона (для МСК не нужна)', type: 'number', value: c.zone, hint: `Картинка должна быть выровнена по сетке ${planeName()}: север вверху.` }
   ], v => {
-    const tl = parseXY(v.tl), br = parseXY(v.br), zone = parseInt(v.zone, 10);
+    const tl = parseXY(v.tl), br = parseXY(v.br), zone = crs().zoned ? parseInt(v.zone, 10) : 0;
     if (!tl || !br) { toast('Нужно два числа: X и Y'); return false; }
     if (!(tl[0] > br[0] && br[1] > tl[1])) { toast('У левого верхнего угла X больше, а Y меньше, чем у правого нижнего'); return false; }
-    if (!(zone > 0 && zone < 61)) { toast('Зона — число от 1 до 60'); return false; }
+    if (crs().zoned && !(zone > 0 && zone < 61)) { toast('Зона — число от 1 до 60'); return false; }
     const ll = (x, y) => { const p = fromSk42(x, y, zone); return [p.lat, p.lng]; };
     const r = { id: uid(), name: f.name, blob: f, tl: ll(tl[0], tl[1]), tr: ll(tl[0], br[1]), bl: ll(br[0], tl[1]), opacity: RASTER_OPACITY };
     rasterStore('readwrite', s => s.put(r)).catch(() => toast('Растр показан, но не сохранён на телефоне'));
