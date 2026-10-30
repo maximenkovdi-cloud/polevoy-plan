@@ -96,6 +96,7 @@
   body.sun .btn { border:2px solid #000; }
   .btn.primary { background:var(--accent); color:var(--accentInk); border-color:var(--accent); }
   .btn.danger { color:var(--red); }
+  .btn.on { border-color:var(--accent); color:var(--accent); }
 
   /* ── нижние листы ── */
   #sheet { position:absolute; inset:0; z-index:2000; background:rgba(0,0,0,.38); display:none; }
@@ -1139,7 +1140,7 @@ function drawPoints() {
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [22, 22], iconAnchor: [11, 11],
       html: symbolSvg(pointSvg(p), 22, netColor(p.type, s.color)) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}">${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
-    const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (!mode) showCard('point', p); }).addTo(pointLayer);
+    const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(L.latLng(p.lat, p.lng), null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
     pointMarkers.push({ p, marker, lbl });
   }
 }
@@ -1957,11 +1958,12 @@ function setMode(m) {
   const isPt = mode.kind === 'point', spec = isPt ? POINTS[mode.type] : LINES[mode.type];
   $('modeTitle').innerHTML = (isPt ? symbolSvg(spec.svg, 26, spec.color) : linePreview(spec, 36, 26)) +
     `<span>${isPt ? 'Ставим' : 'Рисуем'}: ${esc(spec.name)}${isPt ? '' : ` · точек ${mode.latlngs.length}`}</span>`;
+  const snapBtn = ['snap', snapOn ? 'Привязка: вкл' : 'Привязка: выкл', snapOn ? 'on' : ''];
   const btns = isPt
-    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']]
-    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', 'Шаг назад'], ['sign', 'Знак…'], ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
+    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['sign', 'Знак…'], snapBtn, ['done', 'Готово', 'primary']]
+    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', 'Шаг назад'], ['sign', 'Знак…'], snapBtn, ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
   // «Знак…» — выбрать условный знак заранее; без него ставится простая точка или линия, знак выбирается потом в карточке
-  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' ? ` style="grid-column:span ${isPt ? 2 : 3}"` : ''}>${t}</button>`).join('');
+  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' && !isPt ? ' style="grid-column:span 2"' : ''}>${t}</button>`).join('');
 }
 $('modeBtns').addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
@@ -1969,6 +1971,7 @@ $('modeBtns').addEventListener('click', e => {
   const act = b.dataset.act;
   if (act === 'center') addAt(map.getCenter(), null, 'center');
   if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng), null, 'gps'); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
+  if (act === 'snap') { snapOn = !snapOn; setPref('snap', snapOn); setMode(mode); toast(snapOn ? 'Привязка к точкам, вершинам и линиям включена' : 'Привязка выключена — точка ставится ровно куда нажали'); }
   if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode === m) addAt(ll, meas); }); }
   if (act === 'undo') { mode.latlngs.pop(); if (mode.hs) mode.hs.pop(); refreshTemp(); setMode(mode); }
@@ -1980,7 +1983,7 @@ map.on('click', e => { if (mode) addAt(e.latlng); });
 // src: 'tap' (касание), 'center' (перекрестье), 'gps', 'measure'. Касание и перекрестье привязываются к соседним объектам
 function addAt(ll, meas, src) {
   src = meas ? 'measure' : src || 'tap';
-  const snap = src === 'tap' || src === 'center' ? snapTarget(ll) : null;
+  const snap = snapOn && (src === 'tap' || src === 'center') ? snapTarget(ll) : null;
   if (snap) { ll = snap.ll; toast('Привязано ' + snap.what); }
   const hz = heightFor(ll, meas, src, snap);
   if (mode.kind === 'point') {
@@ -2001,7 +2004,9 @@ function addAt(ll, meas, src) {
   }
 }
 // Привязки, как в «Тактической карте»: сначала к точкам и вершинам линий (с их отметкой), потом — на ближнюю линию
-const SNAP_PX = 16, SNAP_EDGE_PX = 10;
+// на телефоне палец толще — радиус привязки больше
+const TOUCH = matchMedia('(pointer: coarse)').matches, SNAP_PX = TOUCH ? 26 : 16, SNAP_EDGE_PX = TOUCH ? 16 : 10;
+let snapOn = pref('snap', true);
 function snapTarget(ll) {
   const c = map.latLngToContainerPoint(ll), dist = a => { const q = map.latLngToContainerPoint(a); return Math.hypot(q.x - c.x, q.y - c.y); };
   const last = mode.latlngs && mode.latlngs[mode.latlngs.length - 1];   // к только что поставленной вершине не липнем
