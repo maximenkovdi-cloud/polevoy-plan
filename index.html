@@ -200,6 +200,7 @@
 <div id="fabs">
   <button class="fab" id="fabLayers" aria-label="Слои"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5z"/><path d="m3 13 9 5 9-5"/></svg></button>
   <button class="fab" id="fabTheme" aria-label="Яркость"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></button>
+  <button class="fab" id="fabUndo" aria-label="Вернуть" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
   <button class="fab" id="fabMe" aria-label="Где я"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg></button>
 </div>
 
@@ -529,9 +530,24 @@ function coordText(ll) {
 const STORE_KEY = 'tk.plan.v1';
 let data = { points: [], lines: [] };
 try { const raw = localStorage.getItem(STORE_KEY); if (raw) data = JSON.parse(raw); } catch (e) { /* хранилище недоступно — работаем без сохранения */ }
+// История для «Вернуть»: перед каждым сохранением запоминаем прежнее состояние (до 50 шагов, до закрытия приложения)
+const UNDO_MAX = 50, undoStack = [];
+let lastSaved = JSON.stringify(data);
 function save() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); }
+  const now = JSON.stringify(data);
+  if (now !== lastSaved) { undoStack.push(lastSaved); if (undoStack.length > UNDO_MAX) undoStack.shift(); lastSaved = now; }
+  try { localStorage.setItem(STORE_KEY, now); }
   catch (e) { toast('Не удалось сохранить на телефоне — выгрузите KML через «Меню»'); }
+  showUndo();
+}
+function showUndo() { const b = document.getElementById('fabUndo'); if (b) b.style.display = undoStack.length ? 'flex' : 'none'; }
+function undo() {
+  if (!undoStack.length) return;
+  lastSaved = undoStack.pop();
+  data = JSON.parse(lastSaved);
+  try { localStorage.setItem(STORE_KEY, lastSaved); } catch (e) { /* сохранится при следующем изменении */ }
+  showUndo(); hideCard();
+  toast(undoStack.length ? `Возвращено. Можно вернуть ещё ${undoStack.length}` : 'Возвращено');
 }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 // мелкие настройки (тема, вид координат, «последние») — только для удобства, без них всё работает
@@ -1715,9 +1731,9 @@ function showCard(kind, obj) {
     if (act === 'edit') { kind === 'point' ? editPoint(obj) : editLine(obj); }
     if (act === 'copy') copyCoords(kind, obj);
     if (act === 'verts') showVertices(obj);
-    if (act === 'del' && confirm(kind === 'point' ? 'Удалить этот знак?' : 'Удалить эту линию?')) {
+    if (act === 'del') {                                              // без лишнего вопроса — случайное удаление отменяет «Вернуть»
       if (kind === 'point') data.points = data.points.filter(x => x !== obj); else data.lines = data.lines.filter(x => x !== obj);
-      save(); hideCard();
+      save(); hideCard(); toast((kind === 'point' ? 'Удалено' : 'Линия удалена') + ' — кнопка ↶ справа вернёт');
     }
   };
   if (kind === 'point' && ll) map.panInside(ll, { paddingBottomRight: [0, card.offsetHeight + 90], paddingTopLeft: [0, $('top').offsetHeight + 20] });
@@ -2156,6 +2172,7 @@ function changeType(kind, obj, id) {
   save(); showCard('line', obj);
   editLine(obj);
 }
+$('fabUndo').onclick = undo;
 $('btnMap').onclick = () => { if (mode && mode.kind === 'line' && mode.latlngs.length && !confirm('Бросить рисование линии?')) return; setMode(null); closeSheet(); };
 
 // Список с пунктами: [{ id, icon, text, on }]
