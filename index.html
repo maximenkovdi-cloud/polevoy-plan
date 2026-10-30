@@ -1181,7 +1181,7 @@ function placePointLabels() {
       { x: c.x + SYM_R - 2, y: c.y - SYM_R - h + 2 }, { x: c.x + SYM_R - 2, y: c.y + SYM_R - 2 },
       { x: c.x - SYM_R + 2 - w, y: c.y - SYM_R - h + 2 }, { x: c.x - SYM_R + 2 - w, y: c.y + SYM_R - 2 }
     ];
-    const box = tries.map(t => ({ x: t.x, y: t.y, w, h })).find(b => !hits(b, null));
+    const box = tries.map(t => ({ x: t.x, y: t.y, w, h })).find(b => labelsAll || !hits(b, null)) || (labelsAll ? { x: tries[0].x, y: tries[0].y, w, h } : null);
     span.classList.toggle('off', !box);
     if (!box) continue;
     span.style.left = (box.x - (c.x - SYM_R) + 2) + 'px';             // координаты — от левого верхнего угла значка 22×22
@@ -1297,6 +1297,7 @@ function text(g, path, s, str, o) {
 }
 /* ── Расстановка надписей без пересечений: занятые места на экране (знаки, линии, надписи) ── */
 let occupied = [], curOwner = null;
+let labelsAll = pref('labelsAll', false);                              // «Подписи: все» — ставить и с наложением (меню)
 const measureCtx = document.createElement('canvas').getContext('2d');
 function textWidth(str, px, italic) {
   measureCtx.font = `${italic ? 'italic ' : ''}${px}px "Roboto Condensed", "Arial Narrow", Arial, sans-serif`;
@@ -1314,7 +1315,7 @@ function textBox(p, deg, dy, w, h) {
 function placeText(g, path, s, str, o) {
   o = Object.assign({ dy: 0, size: 2.8 * MM, italic: true }, o);
   const p = at(path, s), box = textBox(p, upright(p.a), o.dy, textWidth(str, o.size, o.italic) + 6, o.size + 5);   // с запасом на обводку
-  if (hits(box, curOwner)) return false;                              // своя линия не мешает, всё остальное — мешает
+  if (!labelsAll && hits(box, curOwner)) return false;                             // своя линия не мешает, всё остальное — мешает
   text(g, path, s, str, o);
   reserve(box, 'txt');                                                // а поставленная надпись мешает всем, в том числе надписям своей линии
   return true;
@@ -1571,7 +1572,7 @@ function placeFree(g, poly, x, y, deg, str, size, o) {
   const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => ({ x: x + u * w / 2 * c - v * h / 2 * s, y: y + u * w / 2 * s + v * h / 2 * c }));
   if (o.inside && !corners.every(p => inPoly(p.x, p.y, poly))) return false;
   const box = textBox({ x, y }, deg, 0, w, h);
-  if (hits(box, null)) return false;
+  if (!labelsAll && hits(box, null)) return false;
   el('text', { x: x.toFixed(1), y: y.toFixed(1), 'font-size': size, 'text-anchor': 'middle', 'dominant-baseline': 'central',
     'font-family': o.italic ? 'Georgia, "Times New Roman", serif' : '"Roboto Condensed", "Arial Narrow", Arial, sans-serif',
     'font-style': o.italic ? 'italic' : 'normal', fill: 'currentColor', transform: `rotate(${deg.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)})` }, g).textContent = str;
@@ -2255,6 +2256,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() },
   { id: 'heights', icon: '⛰', text: 'Отметки: геоид EGM2008' + (hgt.ref ? ', привязка к реперу' : hgt.dh ? ', с поправкой' : '') },
   { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
+  { id: 'labels', icon: '🏷', text: labelsAll ? 'Подписи: все, даже с наложением' : 'Подписи: без наложений (лишние — при приближении)', on: labelsAll, check: true },
   { id: 'netcolors', icon: '🎨', text: netColors ? 'Цвета сетей: традиционные' : 'Цвета сетей: чёрные (по «Правилам»)', on: netColors, check: true },
   { id: 'raster', icon: '🖼', text: 'Наложить свой растр (план, ортофото, скан)' },
   { id: 'rasters', icon: '◐', text: 'Свои растры: прозрачность, удаление' },
@@ -2279,6 +2281,7 @@ const MENU = {
   offline: () => saveArea(),
   offlineinfo: () => offlineInfo(),
   theme: () => $('fabTheme').click(),
+  labels: () => { labelsAll = !labelsAll; setPref('labelsAll', labelsAll); redrawAll(); toast(labelsAll ? 'Показываю все подписи — на мелком масштабе они могут налезать' : 'Подписи без наложений: лишние появятся при приближении'); },
   netcolors: () => {
     netColors = !netColors; setPref('netColors', netColors); redrawAll();
     if (selected) showCard(selected.kind, selected.obj);
