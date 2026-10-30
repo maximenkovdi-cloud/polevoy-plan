@@ -144,6 +144,11 @@
   #card .kv { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin:10px 0; font-size:13.5px; font-variant-numeric:tabular-nums; }
   #card .kv span:nth-child(odd) { color:var(--muted); }
   #card .acts { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  #card .swatches { display:flex; align-items:center; gap:6px; margin:2px 0 10px; flex-wrap:wrap; }
+  #card .swatches > span { color:var(--muted); font-size:.9em; margin-right:4px; }
+  #card .swatches button { width:28px; height:28px; border-radius:50%; border:1px solid var(--line); background:var(--panel); padding:0; font-size:9px; color:var(--muted); }
+  #card .swatches button[data-color=""] { width:auto; border-radius:14px; padding:0 8px; }
+  #card .swatches button.on { outline:3px solid var(--accent); outline-offset:1px; }
 
   /* ── знаки и подписи на карте ── */
   .sym { background:none; border:0; color:var(--sym); }
@@ -235,6 +240,7 @@ const BENCHMARK = '<circle cx="12" cy="12" r="8" fill="currentColor"/><rect x="5
 const BOLT = '<path d="M15.2 3.2 8.4 12.8h6.4l-4.5 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="miter" stroke-miterlimit="6"/><path d="M9.2 21.4 12.4 20.1 8.7 17.6Z" fill="currentColor"/>';
 const BOXK = t => `<rect x="2.5" y="5" width="19" height="14" fill="#fff" stroke="currentColor" stroke-width="1.6"/><text x="12" y="16.3" font-size="10.5" text-anchor="middle" font-style="italic" font-family="Roboto Condensed, Arial Narrow, Arial, sans-serif" fill="currentColor">${t}</text>`;
 
+const VIS_COLOR = '#ff00b4';                                         // хорошо заметный и на схеме, и на снимке — для простых точек и линий
 const REL = 'var(--rel)', REL_HEX = '#8a4b1c';                    // цвет рельефа (в KML — как на светлой теме)
 // Крыльца и входы: стена здания — справа (x = 21), выход — влево; при постановке знак поворачивается к стене
 const P_S = 'stroke="currentColor" stroke-width="1.2" fill="none"';
@@ -327,7 +333,7 @@ const POINT_GROUPS = [
     { id: 'stone', name: 'Камень отдельный', nameLabel: 'Высота, м', svg: '<path d="M7 17L9.5 8.5L14.5 6.5L17 17Z" fill="currentColor"/>' }
   ]},
   { id: 'other', title: 'Прочее', items: [
-    { id: 'mark', name: 'Точка', svg: '<circle cx="12" cy="12" r="6" fill="#c62828" stroke="#fff" stroke-width="2"/>' }
+    { id: 'mark', name: 'Точка', color: VIS_COLOR, svg: '<circle cx="12" cy="12" r="6" fill="currentColor" stroke="#fff" stroke-width="2"/>' }
   ]}
 ];
 
@@ -459,7 +465,7 @@ const LINE_GROUPS = [
   ]},
   { id: 'own', title: 'Своё', items: [
     { id: 'route', name: 'Трасса демонтажа (пикеты)', kind: 'route', w: 0.3, color: '#c62828' },
-    { id: 'plain', name: 'Простая линия с подписью', kind: 'plain', w: 0.3 }
+    { id: 'plain', name: 'Простая линия с подписью', kind: 'plain', w: 0.5, color: VIS_COLOR }
   ]}
 ];
 
@@ -1156,7 +1162,7 @@ function drawPoints() {
   for (const p of data.points) {
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [22, 22], iconAnchor: [11, 11],
-      html: symbolSvg(pointSvg(p), 22, netColor(p.type, s.color)) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}">${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
+      html: symbolSvg(pointSvg(p), 22, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}">${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
     const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(L.latLng(p.lat, p.lng), null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
     pointMarkers.push({ p, marker, lbl });
   }
@@ -1501,6 +1507,7 @@ const NO_STATE = new Set(['building', 'fence', 'road', 'relief']);
 function drawLines() {
   const size = map.getSize();
   L.DomUtil.setPosition(netSvg, map.containerPointToLayerPoint([0, 0]));
+  drawnAt = { zoom: map.getZoom(), ll: map.containerPointToLatLng([0, 0]) };
   netSvg.setAttribute('width', size.x); netSvg.setAttribute('height', size.y);
   netSvg.innerHTML = '';
   polesDrawn = [];
@@ -1510,9 +1517,9 @@ function drawLines() {
     if (pts.length < 2) continue;
     const g = el('g', {}, netSvg);
     const isSel = selected && selected.obj === line;
-    g.style.color = isSel ? 'var(--accent)' : netColor(line.type, spec.color || 'var(--sym)');
+    g.style.color = isSel ? 'var(--accent)' : objColor(line, 'line');
     const path = el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'none' }, g);
-    if (path.getTotalLength() < 6) continue;
+    if (path.getTotalLength() < 6) { el('line', { x1: pts[0].x, y1: pts[0].y, x2: pts[pts.length - 1].x, y2: pts[pts.length - 1].y, stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round' }, g); continue; }
     curOwner = line.id;                                                // надписи своей линии не мешают ей самой
     const w = Math.max(1, spec.w * MM) * (isSel ? 1.8 : 1), thin = Math.max(0.8, 0.15 * MM) * (isSel ? 1.8 : 1), total = path.getTotalLength();
     // состояние линии: проектируемая и вынесенная в натуру — тонким пунктиром, остальные — обычным знаком с пометкой
@@ -1614,8 +1621,13 @@ function drawHits() {
       : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(e.latlng); else showCard('line', line); }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
 }
 map.on('moveend zoomend resize viewreset', frame);
-map.on('zoomstart', () => netSvg.style.opacity = 0);
-map.on('zoomend', () => netSvg.style.opacity = 1);
+// Во время приближения (кнопки, щипок) линии не прячем, а растягиваем вместе с картой; после — перерисовываем начисто
+netSvg.classList.add('leaflet-zoom-animated');
+netSvg.style.transformOrigin = '0 0';
+let drawnAt = null;                                                   // { zoom, ll } — при каком масштабе и где левый верхний угол слоя
+function stretchNet(ll0, scale, pos) { if (drawnAt) L.DomUtil.setTransform(netSvg, pos, scale); }
+map.on('zoomanim', e => { if (drawnAt) stretchNet(null, map.getZoomScale(e.zoom, drawnAt.zoom), map._latLngToNewLayerPoint(drawnAt.ll, e.zoom, e.center)); });
+map.on('zoom', () => { if (drawnAt && !map._animatingZoom) stretchNet(null, map.getZoomScale(map.getZoom(), drawnAt.zoom), map.latLngToLayerPoint(drawnAt.ll)); });
 function redrawAll() { drawPoints(); drawHits(); frame(); }
 function lineLength(line) {
   const ll = (LINES[line.type] || {}).closed && line.latlngs.length > 2 ? line.latlngs.concat([line.latlngs[0]]) : line.latlngs;   // у контура — периметр
@@ -1688,7 +1700,7 @@ function showCard(kind, obj) {
   let icon, name, sub, kv, ll;
   if (kind === 'point') {
     const s = POINTS[obj.type] || POINTS.mark, c = coordText(L.latLng(obj.lat, obj.lng));
-    icon = symbolSvg(pointSvg(obj), 34, netColor(obj.type, s.color)); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
+    icon = symbolSvg(pointSvg(obj), 34, objColor(obj, kind)); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
     if (s.frac) name = s.name + (pointLabel(obj) ? ' — ' + esc(pointLabel(obj)) : '');
     if (s.svgFor) name = s.name.replace(/ \(.*\)$/, '') + ' — ' + esc(((COVERS.find(c => c[0] === (obj.attr || {}).cover) || COVERS[0])[1]));
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
@@ -1723,11 +1735,18 @@ function showCard(kind, obj) {
   }
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
+    <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
     <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 2 : 3}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="copy">Копировать</button><button class="btn danger" data-act="del">Удалить</button></div>`;
   card.style.display = 'block';
   card.onclick = e => {
     const act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
     if (act === 'close') hideCard();
+    const sw = e.target.closest('[data-color]');
+    if (sw) {                                                         // смена цвета; выбранный цвет запоминается для новых простых точек и линий
+      const c = sw.dataset.color;
+      if (c) { obj.color = c; setPref('color', c); } else delete obj.color;
+      save(); if (kind === 'point') drawPoints(); showCard(kind, obj); return;
+    }
     if (act === 'type') openPicker(kind === 'point' ? 'point' : 'line', id => changeType(kind, obj, id));
     if (act === 'edit') { kind === 'point' ? editPoint(obj) : editLine(obj); }
     if (act === 'copy') copyCoords(kind, obj);
@@ -2006,6 +2025,7 @@ function addAt(ll, meas, src) {
   const hz = heightFor(ll, meas, src, snap);
   if (mode.kind === 'point') {
     const pt = { id: uid(), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' };
+    if (pt.type === GENERIC.point) pt.color = pref('color', VIS_COLOR);   // простая точка — заметным цветом (последним выбранным)
     if ((POINTS[mode.type] || {}).wall) { const r = wallAngle(L.latLng(ll)); if (r != null) pt.rot = r; }   // крыльцо — стеной к ближнему зданию
     if (meas) pt.meas = meas;
     if (hz) { pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from }; }
@@ -2094,6 +2114,7 @@ function finishMode() {
     const closed = (LINES[mode.type] || {}).closed;
     if (mode.latlngs.length < (closed ? 3 : 2)) { toast(closed ? 'Контур строения — хотя бы три угла' : 'Нужно хотя бы две точки'); return; }
     const line = { id: uid(), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: (LINES[mode.type] || {}).defCount || 1, state: '' };
+    if (line.type === GENERIC.line) line.color = pref('color', VIS_COLOR);
     if (mode.hs && mode.hs.some(Boolean)) line.hs = mode.hs.slice();
     setMode(null);
     if (line.type === GENERIC.line) { data.lines.push(line); save(); showCard('line', line); toast('Линия готова — выберите «Условный знак…»'); return; }
@@ -2169,6 +2190,15 @@ function openPicker(kind, onPick) {
 }
 // Как в «Тактической карте»: сначала просто точка или линия, условный знак — потом, в карточке объекта
 const GENERIC = { point: 'mark', line: 'plain' };
+// Цвета на выбор: первый — хорошо заметный и на схеме, и на снимке; «ГКИНП» — цвет условного знака по умолчанию
+
+const COLORS = [['', 'по ГКИНП'], [VIS_COLOR, 'малиновый — виден везде'], ['#ff3b00', 'оранжево-красный'], ['#ffd400', 'жёлтый'], ['#00e5ff', 'голубой'],
+  ['#00c853', 'зелёный'], ['#2962ff', 'синий'], ['#000000', 'чёрный'], ['#ffffff', 'белый']];
+function objColor(obj, kind) {
+  if (obj.color) return obj.color;
+  if (kind === 'line') { const s = LINES[obj.type] || LINES.plain; return netColor(obj.type, s.color || 'var(--sym)'); }
+  const s = POINTS[obj.type] || POINTS.mark; return netColor(obj.type, s.color);
+}
 $('btnPoint').onclick = () => { setMode({ kind: 'point', type: GENERIC.point }); toast('Ставьте точки: касание карты, «В перекрестье» или «По GPS». Знак — потом, в карточке'); };
 $('btnLine').onclick = () => { setMode({ kind: 'line', type: GENERIC.line, latlngs: [] }); toast('Ставьте точки линии. Условный знак выберете после «Готово»'); };
 // смена условного знака у готового объекта; поля, которых у нового знака нет, просто не показываются
@@ -2373,13 +2403,13 @@ function toKml() {
   const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
   const pts = data.points.map(p => {
     const s = POINTS[p.type] || POINTS.mark;
-    return `<Placemark><name>${xml(p.name || s.name)}</name>${ext({ tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
+    return `<Placemark><name>${xml(p.name || s.name)}</name>${ext({ tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
-    const hex = (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || (s.color === REL ? REL_HEX : s.color) || '#111111';
+    const hex = l.color || (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || (s.color === REL ? REL_HEX : s.color) || '#111111';
     const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
-    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '' })}` +
+    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '', tk_color: l.color })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
       `<LineString><tessellate>1</tessellate><coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map(a => a[1] + ',' + a[0] + ',0').join(' ')}</coordinates></LineString></Placemark>`;
   });
@@ -2402,6 +2432,7 @@ function readExtras(ext) {
   if (ext.tk_rot != null && ext.tk_rot !== '' && !isNaN(r)) out.rot = r;
   try { const a = ext.tk_attr ? JSON.parse(ext.tk_attr) : null; if (a && typeof a === 'object') out.attr = a; } catch (e) { /* без свойств */ }
   if (ext.tk_hsrc) out.hSrc = ext.tk_hsrc;
+  if (/^#[0-9a-f]{6}$/i.test(ext.tk_color || '')) out.color = ext.tk_color;
   Object.assign(out, readJson(ext.tk_hinfo, 'hInfo', v => v && typeof v === 'object'));
   return out;
 }
@@ -2431,7 +2462,7 @@ $('fileIn').onchange = async e => {
         try { attr = ext.tk_attr ? JSON.parse(ext.tk_attr) : undefined; } catch (e) { attr = undefined; }   // повреждённые свойства — просто без них
         data.lines.push({ id: uid(), type, latlngs, caption: ext.tk_type ? (ext.tk_caption || '') : name,
           count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1,
-          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray) }); nl++;
+          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray), ...(/^#[0-9a-f]{6}$/i.test(ext.tk_color || '') ? { color: ext.tk_color } : {}) }); nl++;
       }
     }
     save(); redrawAll(); MENU.fit();
@@ -2534,19 +2565,20 @@ const RasterLayer = L.Layer.extend({
     img.src = this._url = URL.createObjectURL(this.r.blob);
     m.getPane('rasterPane').appendChild(img);
     m.on('zoomend viewreset resize', this._place, this);
-    m.on('zoomstart', this._hide, this);
+    m.on('zoomanim', this._anim, this);
   },
   onRemove(m) {
     m.off('zoomend viewreset resize', this._place, this);
-    m.off('zoomstart', this._hide, this);
+    m.off('zoomanim', this._anim, this);
     this._img.remove(); URL.revokeObjectURL(this._url);
   },
   setOpacity(o) { this.r.opacity = o; if (this._img) this._img.style.opacity = o; },
-  _hide() { this._img.style.visibility = 'hidden'; },
-  _place() {
+  _anim(e) { this._place(ll => this._map._latLngToNewLayerPoint(ll, e.zoom, e.center)); },
+  _place(toPoint) {
     const img = this._img, m = this._map, w = img.naturalWidth, h = img.naturalHeight;
     if (!w || !h) return;
-    const p0 = m.latLngToLayerPoint(this.r.tl), p1 = m.latLngToLayerPoint(this.r.tr), p2 = m.latLngToLayerPoint(this.r.bl);
+    const pt = typeof toPoint === 'function' ? toPoint : ll => m.latLngToLayerPoint(ll);
+    const p0 = pt(this.r.tl), p1 = pt(this.r.tr), p2 = pt(this.r.bl);
     // аффинное преобразование: угол (0,0) → TL, (w,0) → TR, (0,h) → BL — учитывает поворот сетки СК-42 к меридиану
     img.style.transform = `matrix(${(p1.x - p0.x) / w},${(p1.y - p0.y) / w},${(p2.x - p0.x) / h},${(p2.y - p0.y) / h},${p0.x},${p0.y})`;
     img.style.visibility = 'visible';
