@@ -97,6 +97,7 @@
   .btn.primary { background:var(--accent); color:var(--accentInk); border-color:var(--accent); }
   .btn.danger { color:var(--red); }
   .btn.on { border-color:var(--accent); color:var(--accent); }
+  .rubber-lbl span { position:absolute; transform:translate(-50%, -130%); white-space:nowrap; font:italic 12px/1 var(--draft); color:#1e88e5; background:color-mix(in srgb, var(--panel) 75%, transparent); padding:2px 4px; border-radius:4px; }
 
   /* ── нижние листы ── */
   #sheet { position:absolute; inset:0; z-index:2000; background:rgba(0,0,0,.38); display:none; }
@@ -1966,6 +1967,7 @@ function setBarState() {
 function setMode(m) {
   if (mode && mode.temp && (!m || m !== mode)) { map.removeLayer(mode.temp); mode.temp = null; }
   mode = m;
+  if (typeof updateRubber === 'function') updateRubber();
   setBarState();
   const box = $('mode');
   if (!mode) { box.style.display = 'none'; return; }
@@ -2071,7 +2073,22 @@ function refreshTemp() {
       { color: '#1e88e5', weight: 3, dashArray: '6 6', interactive: false }),
     ...mode.latlngs.map(a => L.circleMarker(a, { radius: 6, color: '#1e88e5', fillColor: '#fff', fillOpacity: 1, weight: 2, interactive: false }))
   ]).addTo(map);
+  updateRubber();
 }
+// «Резинка»: еле видный пунктир от последней вершины до перекрестья и расстояние по нему — видно, сколько метров до следующей точки
+const rubber = L.layerGroup().addTo(map);
+function updateRubber() {
+  rubber.clearLayers();
+  if (!mode || mode.kind !== 'line' || !mode.latlngs.length) return;
+  const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = map.getCenter(), d = a.distanceTo(b);
+  if (d < 0.01) return;
+  L.polyline([a, b], { color: '#1e88e5', weight: 1.5, opacity: 0.55, dashArray: '3 5', interactive: false }).addTo(rubber);
+  const pa = map.latLngToContainerPoint(a), pb = map.latLngToContainerPoint(b);
+  if (pa.distanceTo(pb) < 40) return;                                 // совсем рядом — подпись не влезет
+  const mid = map.containerPointToLatLng([(pa.x + pb.x) / 2, (pa.y + pb.y) / 2]);
+  L.marker(mid, { interactive: false, keyboard: false, icon: L.divIcon({ className: 'rubber-lbl', iconSize: null, html: `<span>${mText(d, d < 100 ? 2 : 1)} м</span>` }) }).addTo(rubber);
+}
+map.on('move', updateRubber);
 function finishMode() {
   if (mode.kind === 'line') {
     const closed = (LINES[mode.type] || {}).closed;
