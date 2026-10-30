@@ -209,7 +209,7 @@
 
 <div id="bar">
   <button id="btnMap" class="on"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg></span>Карта</button>
-  <button id="btnPoint"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M4 12h16"/></svg></span>Знак</button>
+  <button id="btnPoint"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M4 12h16"/></svg></span>Точка</button>
   <button id="btnLine"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 18 9 9l5 5 7-9"/><circle cx="3" cy="18" r="1.4"/><circle cx="9" cy="9" r="1.4"/><circle cx="14" cy="14" r="1.4"/><circle cx="21" cy="5" r="1.4"/></svg></span>Линия</button>
   <button id="btnMenu"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span>Меню</button>
 </div>
@@ -324,7 +324,7 @@ const POINT_GROUPS = [
     { id: 'stone', name: 'Камень отдельный', nameLabel: 'Высота, м', svg: '<path d="M7 17L9.5 8.5L14.5 6.5L17 17Z" fill="currentColor"/>' }
   ]},
   { id: 'other', title: 'Прочее', items: [
-    { id: 'mark', name: 'Метка (просто точка)', svg: '<circle cx="12" cy="12" r="6" fill="#c62828" stroke="#fff" stroke-width="2"/>' }
+    { id: 'mark', name: 'Точка', svg: '<circle cx="12" cy="12" r="6" fill="#c62828" stroke="#fff" stroke-width="2"/>' }
   ]}
 ];
 
@@ -714,7 +714,7 @@ function startGps() {
   $('gpsText').textContent = 'Ищу спутники…'; $('gpsDot').className = 'dot mid';
   gpsWatch = navigator.geolocation.watchPosition(p => {
     const first = !gps;
-    gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, at: Date.now() };
+    gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, altAcc: p.coords.altitudeAccuracy, at: Date.now() };
     if (measuring) measuring.onFix(p);
     const ll = [gps.lat, gps.lng];
     if (!gpsMarker) {
@@ -1103,7 +1103,8 @@ function symbolSvg(svg, px, color) { return `<svg viewBox="0 0 24 24" width="${p
 function pointLabel(p) {
   const s = POINTS[p.type] || POINTS.mark;
   if (s.frac) { const [t, b] = fracParts(p); return t || b ? `${t}/${b}` : ''; }
-  if (s.spot) return p.h == null || p.h === '' ? '' : planNum(p.h, 2);            // отметка высоты — сама отметка, два знака (1:500)
+  if (s.spot) return p.h == null || p.h === '' ? '' : planNum(p.h, 2);
+  if (p.type === GENERIC.point && p.h != null && p.h !== '') return [p.name, planNum(p.h, 2)].filter(Boolean).join(' ');            // отметка высоты — сама отметка, два знака (1:500)
   return [s.prefix, p.name, s.suffix].filter(Boolean).join(' ');
 }
 // рисунок знака: у надписи покрытия — своя буква, у крылец — поворот стеной к зданию
@@ -1674,8 +1675,8 @@ function showCard(kind, obj) {
     if (s.svgFor) name = s.name.replace(/ \(.*\)$/, '') + ' — ' + esc(((COVERS.find(c => c[0] === (obj.attr || {}).cover) || COVERS[0])[1]));
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
-    if (obj.h != null && obj.h !== '') kv.push(['Отметка', esc(obj.h) + ' м' +
-      (obj.hSrc === 'gnss' && obj.meas && obj.meas.hm != null ? ` <span style="color:var(--muted)">по ГНСС ±${cmText(obj.meas.hm)}</span>` : '')]);
+    const hInfo = obj.hInfo || (obj.meas ? { acc: obj.meas.hm, from: 'measure' } : {});
+    kv.push(['Отметка', (obj.h != null && obj.h !== '' ? `<b>${planNum(obj.h, 2)} м</b><br>` : '') + `<span style="color:var(--muted)">${esc(heightNote(obj.h, obj.hSrc, hInfo))}</span>`]);
     if (obj.meas) {
       const m = obj.meas, mark = { ok: '✓ годится', mid: '≈ на пределе', bad: '✗ не годится' }[m.ok] || '';
       kv.push(['Измерение', `±${cmText(m.m)} за ${m.sec} с, отсчётов ${m.n}${m.hdop != null ? ', HDOP ' + m.hdop : ''}<br>${mark} для 1:${m.scale} (допуск ${cmText(m.tol)})`]);
@@ -1685,7 +1686,8 @@ function showCard(kind, obj) {
     const s = LINES[obj.type] || LINES.plain;
     icon = linePreview(s, 40, 34); name = s.name + (obj.count > 1 ? ` · прокладок ${obj.count}` : '');
     sub = [s.tag, obj.caption].filter(Boolean).map(esc).join(' ') || 'без подписи';
-    kv = [['Длина', lineLength(obj).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' м'], ['Точек', obj.latlngs.length]];
+    const withH = (obj.hs || []).filter(Boolean).length;
+    kv = [['Длина', lineLength(obj).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' м'], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
     if (s.kind === 'building') {
       const a = obj.attr || {}, lab = buildingLabel(s, obj);
       name = s.name; sub = [lab, a.houseNo ? '№ ' + a.houseNo : ''].filter(Boolean).map(esc).join(' · ') || 'контур';
@@ -1703,7 +1705,7 @@ function showCard(kind, obj) {
   }
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
-    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span 3">Условный знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="copy">Копировать</button><button class="btn danger" data-act="del">Удалить</button></div>`;
+    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 2 : 3}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="copy">Копировать</button><button class="btn danger" data-act="del">Удалить</button></div>`;
   card.style.display = 'block';
   card.onclick = e => {
     const act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
@@ -1711,6 +1713,7 @@ function showCard(kind, obj) {
     if (act === 'type') openPicker(kind === 'point' ? 'point' : 'line', id => changeType(kind, obj, id));
     if (act === 'edit') { kind === 'point' ? editPoint(obj) : editLine(obj); }
     if (act === 'copy') copyCoords(kind, obj);
+    if (act === 'verts') showVertices(obj);
     if (act === 'del' && confirm(kind === 'point' ? 'Удалить этот знак?' : 'Удалить эту линию?')) {
       if (kind === 'point') data.points = data.points.filter(x => x !== obj); else data.lines = data.lines.filter(x => x !== obj);
       save(); hideCard();
@@ -1718,6 +1721,15 @@ function showCard(kind, obj) {
   };
   if (kind === 'point' && ll) map.panInside(ll, { paddingBottomRight: [0, card.offsetHeight + 90], paddingTopLeft: [0, $('top').offsetHeight + 20] });
   redrawAll();
+}
+function showVertices(line) {
+  const rows = line.latlngs.map((a, i) => {
+    const c = sk42(a[0], a[1]), z = line.hs && line.hs[i];
+    return `<tr><td>${i + 1}</td><td>${f2(c.x)}</td><td>${f2(c.y)}</td><td>${z ? planNum(z.h, 2) : '—'}</td><td class="vsrc">${z ? esc(heightNote(z.h, z.src, z).split(',')[0]) : ''}</td></tr>`;
+  }).join('');
+  showSheet(`<div class="sh-head"><b>Вершины полилинии</b><button class="x" data-close>×</button></div>
+    <div style="overflow-x:auto"><table class="sat-tab"><tr><th>№</th><th>X</th><th>Y</th><th>H, м</th><th>откуда</th></tr>${rows}</table></div>
+    <div class="hint" style="margin-top:10px;color:var(--muted);font-size:12.5px">Координаты — ${esc(planeName())}. Отметку вершина получает, если её ставили «По GPS», «Измерить» или привязали к точке с отметкой.</div>`);
 }
 function hideCard() { $('card').style.display = 'none'; selected = null; redrawAll(); }
 map.on('click', () => { if (!mode && selected) hideCard(); });
@@ -1777,7 +1789,7 @@ function editPoint(p) {
     p.name = v.name || ''; p.note = v.note;
     const h = v.h === '' ? null : parseNum(v.h);
     if (v.h !== '' && isNaN(h)) { toast('Отметка — это число, например 245.51'); return false; }
-    if (h !== p.h) delete p.hSrc;                                     // отметку исправили вручную — она уже не из ГНСС
+    if (h !== p.h) { delete p.hSrc; delete p.hInfo; }                                   // отметку исправили вручную — она уже не из ГНСС
     p.h = h;
     save(); showCard('point', p);
   });
@@ -1955,48 +1967,81 @@ $('modeBtns').addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
   if (!b || !mode) return;
   const act = b.dataset.act;
-  if (act === 'center') addAt(map.getCenter());
-  if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng)); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
+  if (act === 'center') addAt(map.getCenter(), null, 'center');
+  if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng), null, 'gps'); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
   if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode === m) addAt(ll, meas); }); }
-  if (act === 'undo') { mode.latlngs.pop(); refreshTemp(); setMode(mode); }
+  if (act === 'undo') { mode.latlngs.pop(); if (mode.hs) mode.hs.pop(); refreshTemp(); setMode(mode); }
   if (act === 'cancel') setMode(null);
   if (act === 'done') finishMode();
 });
 map.on('click', e => { if (mode) addAt(e.latlng); });
 
-function addAt(ll, meas) {
+// src: 'tap' (касание), 'center' (перекрестье), 'gps', 'measure'. Касание и перекрестье привязываются к соседним объектам
+function addAt(ll, meas, src) {
+  src = meas ? 'measure' : src || 'tap';
+  const snap = src === 'tap' || src === 'center' ? snapTarget(ll) : null;
+  if (snap) { ll = snap.ll; toast('Привязано ' + snap.what); }
+  const hz = heightFor(ll, meas, src, snap);
   if (mode.kind === 'point') {
     const pt = { id: uid(), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' };
     if ((POINTS[mode.type] || {}).wall) { const r = wallAngle(L.latLng(ll)); if (r != null) pt.rot = r; }   // крыльцо — стеной к ближнему зданию
-    if (meas) {
-      pt.meas = meas;
-      const H = normalHeight(ll.lat, ll.lng, meas.hEll);
-      if (H != null) { pt.h = +H.toFixed(2); pt.hSrc = 'gnss'; }
-    }
+    if (meas) pt.meas = meas;
+    if (hz) { pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from }; }
     data.points.push(pt);
     save(); drawPoints();
-    toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') + (pt.type === GENERIC.point ? ' — знак выберете, нажав на неё' : ''));
+    if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
+      (hz ? `, H ${planNum(hz.h, 2)}` : src === 'tap' || src === 'center' ? ' без отметки' : ', приёмник не дал высоту'));
     const ps = POINTS[pt.type] || {};
     if (ps.frac || ps.svgFor) editPoint(pt);                          // у надписи покрытия и отметок — сразу спросить значения
   } else {
-    const snap = /^(power|air)$/.test((LINES[mode.type] || {}).kind) ? snapToPole(ll) : null;   // ответвление ЛЭП — от уже снятой опоры
-    if (snap) { ll = snap; toast('Привязано к опоре'); }
     mode.latlngs.push([ll.lat, ll.lng]);
+    (mode.hs = mode.hs || []).push(hz);                               // отметка вершины полилинии — или null
     refreshTemp(); setMode(mode);
   }
 }
-// ближайшая опора в пределах пальца: точка ЛЭП/связи или знак опоры (столб, ферма)
-const SNAP_PX = 16;
-function snapToPole(ll) {
-  const c = map.latLngToContainerPoint(ll), cands = [];
-  for (const line of data.lines) if (/^(power|air)$/.test((LINES[line.type] || {}).kind)) cands.push(...line.latlngs);
-  for (const p of data.points) if (/^pole_|^tr_pole$/.test(p.type)) cands.push([p.lat, p.lng]);
-  for (const a of mode.latlngs) cands.push(a);
+// Привязки, как в «Тактической карте»: сначала к точкам и вершинам линий (с их отметкой), потом — на ближнюю линию
+const SNAP_PX = 16, SNAP_EDGE_PX = 10;
+function snapTarget(ll) {
+  const c = map.latLngToContainerPoint(ll), dist = a => { const q = map.latLngToContainerPoint(a); return Math.hypot(q.x - c.x, q.y - c.y); };
+  const last = mode.latlngs && mode.latlngs[mode.latlngs.length - 1];   // к только что поставленной вершине не липнем
   let best = null, bd = SNAP_PX;
-  const last = mode.latlngs[mode.latlngs.length - 1];               // к только что поставленной точке не липнем — иначе двойная опора
-  for (const a of cands) { if (a === last) continue; const q = map.latLngToContainerPoint(a), d = Math.hypot(q.x - c.x, q.y - c.y); if (d < bd) { bd = d; best = a; } }
-  return best ? L.latLng(best[0], best[1]) : null;
+  const take = (a, h, what) => { if (a === last) return; const d = dist(a); if (d < bd) { bd = d; best = { ll: L.latLng(a[0], a[1]), h, what }; } };
+  const hText = h => h != null && h !== '' ? ', H ' + planNum(h, 2) : '';
+  for (const p of data.points) take([p.lat, p.lng], p.h, 'к точке' + hText(p.h));
+  for (const line of data.lines) line.latlngs.forEach((a, i) => { const z = line.hs && line.hs[i]; take(a, z ? z.h : null, 'к вершине' + hText(z && z.h)); });
+  (mode.latlngs || []).forEach((a, i) => { const z = mode.hs && mode.hs[i]; take(a, z ? z.h : null, 'к вершине этой линии' + hText(z && z.h)); });
+  if (best) return best;
+  let ed = SNAP_EDGE_PX;                                              // на отрезок линии или сторону здания
+  for (const line of data.lines) {
+    const pts = screenPts(line);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      const px = a.x + t * dx, py = a.y + t * dy, d = Math.hypot(px - c.x, py - c.y);
+      if (d < ed) { ed = d; best = { ll: map.containerPointToLatLng([px, py]), h: null, what: 'на линию' }; }
+    }
+  }
+  return best;
+}
+// Отметка для новой точки или вершины: по ГНСС («Измерить», «По GPS») или с точки привязки; иначе — нет
+function heightFor(ll, meas, src, snap) {
+  const ref = hgt.ref ? hgt.ref.name || 'репер' : hgt.dh ? 'поправка вручную' : '';
+  if (src === 'measure' || src === 'gps') {
+    const hEll = src === 'measure' ? meas.hEll : gps && gps.alt, H = normalHeight(ll.lat, ll.lng, hEll);
+    if (H == null) return null;
+    return { h: +H.toFixed(2), src: 'gnss', acc: src === 'measure' ? meas.hm : gps && gps.altAcc, ref, from: src };
+  }
+  if (snap && snap.h != null && snap.h !== '') return { h: Number(snap.h), src: 'snap', from: 'snap' };
+  return null;
+}
+// Понятная строка, откуда отметка — чтобы на месте было видно, правильную ли высоту взяла точка
+function heightNote(h, srcKind, info) {
+  info = info || {};
+  if (h == null || h === '') return 'нет — поставлена касанием или в перекрестье. Отметка будет при «По GPS» или «Измерить»';
+  if (srcKind === 'gnss') return 'по ГНСС' + (info.acc != null ? ' ±' + cmText(info.acc) : '') + (info.from === 'gps' ? ', один отсчёт' : info.from === 'measure' ? ', усреднено' : '') +
+    (info.ref ? ', привязка: ' + info.ref : ', без привязки к реперу (EGM2008, ошибка до дм)');
+  if (srcKind === 'snap') return 'взята с точки, к которой привязано';
+  return 'вписана вручную';
 }
 function refreshTemp() {
   if (mode.temp) map.removeLayer(mode.temp);
@@ -2011,6 +2056,7 @@ function finishMode() {
     const closed = (LINES[mode.type] || {}).closed;
     if (mode.latlngs.length < (closed ? 3 : 2)) { toast(closed ? 'Контур строения — хотя бы три угла' : 'Нужно хотя бы две точки'); return; }
     const line = { id: uid(), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: (LINES[mode.type] || {}).defCount || 1, state: '' };
+    if (mode.hs && mode.hs.some(Boolean)) line.hs = mode.hs.slice();
     setMode(null);
     if (line.type === GENERIC.line) { data.lines.push(line); save(); showCard('line', line); toast('Линия готова — выберите «Условный знак…»'); return; }
     editLine(line, true);
@@ -2288,13 +2334,13 @@ function toKml() {
   const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
   const pts = data.points.map(p => {
     const s = POINTS[p.type] || POINTS.mark;
-    return `<Placemark><name>${xml(p.name || s.name)}</name>${ext({ tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '' })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
+    return `<Placemark><name>${xml(p.name || s.name)}</name>${ext({ tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
     const hex = (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || (s.color === REL ? REL_HEX : s.color) || '#111111';
     const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
-    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '' })}` +
+    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '' })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
       `<LineString><tessellate>1</tessellate><coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map(a => a[1] + ',' + a[0] + ',0').join(' ')}</coordinates></LineString></Placemark>`;
   });
@@ -2316,8 +2362,11 @@ function readExtras(ext) {
   const out = {}, r = Number(ext.tk_rot);
   if (ext.tk_rot != null && ext.tk_rot !== '' && !isNaN(r)) out.rot = r;
   try { const a = ext.tk_attr ? JSON.parse(ext.tk_attr) : null; if (a && typeof a === 'object') out.attr = a; } catch (e) { /* без свойств */ }
+  if (ext.tk_hsrc) out.hSrc = ext.tk_hsrc;
+  Object.assign(out, readJson(ext.tk_hinfo, 'hInfo', v => v && typeof v === 'object'));
   return out;
 }
+function readJson(str, key, ok) { try { const v = str ? JSON.parse(str) : null; return ok(v) ? { [key]: v } : {}; } catch (e) { return {}; } }
 $('fileIn').onchange = async e => {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
@@ -2343,7 +2392,7 @@ $('fileIn').onchange = async e => {
         try { attr = ext.tk_attr ? JSON.parse(ext.tk_attr) : undefined; } catch (e) { attr = undefined; }   // повреждённые свойства — просто без них
         data.lines.push({ id: uid(), type, latlngs, caption: ext.tk_type ? (ext.tk_caption || '') : name,
           count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1,
-          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}) }); nl++;
+          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray) }); nl++;
       }
     }
     save(); redrawAll(); MENU.fit();
@@ -2551,6 +2600,8 @@ function rasterMenu() {
 
 ready = true;
 if (NATIVE) { startGnss(); startGps(); checkUpdate(); }   // в Android-приложении спутники и GPS включаются сразу, проверяется обновление
+// вернулись в приложение (из другого окна, после сна телефона) — ещё раз проверить обновление, перезапускать не нужно
+if (NATIVE) document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 // на сайте — фоновый помощник, чтобы приложение открывалось без интернета (в Android-приложении всё и так внутри)
 if (!NATIVE && 'serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { /* без него просто нужен интернет */ });
 redrawAll();
