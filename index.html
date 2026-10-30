@@ -97,7 +97,7 @@
   .btn.primary { background:var(--accent); color:var(--accentInk); border-color:var(--accent); }
   .btn.danger { color:var(--red); }
   .btn.on { border-color:var(--accent); color:var(--accent); }
-  .rubber-lbl span { position:absolute; transform:translate(-50%, -130%); white-space:nowrap; font:italic 12px/1 var(--draft); color:#1e88e5; background:color-mix(in srgb, var(--panel) 75%, transparent); padding:2px 4px; border-radius:4px; }
+  .rubber-lbl span { position:absolute; transform:translate(-50%, -150%); white-space:nowrap; font:700 14px/1 var(--draft); color:var(--ink); background:var(--panel); border:1px solid var(--ink); padding:3px 6px; border-radius:10px; }
 
   /* ── нижние листы ── */
   #sheet { position:absolute; inset:0; z-index:2000; background:rgba(0,0,0,.38); display:none; }
@@ -105,7 +105,8 @@
   .grab { width:40px; height:4px; border-radius:2px; background:var(--line); margin:0 auto 10px; }
   .sh-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
   .sh-head b { font-size:1.1em; }
-  .x { border:0; background:var(--line); color:var(--ink); width:36px; height:36px; border-radius:50%; font-size:18px; line-height:1; }
+  .x { border:0; background:var(--line); color:var(--ink); width:44px; height:44px; border-radius:50%; font-size:20px; line-height:1; flex:none; }
+  body.sun .x { background:#fff; color:#000; border:2px solid #000; }
   .search { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:12px; padding:0 10px; color:var(--muted); }
   body.sun .search { border:2px solid #000; }
   .search input { flex:1; border:0; outline:0; background:none; color:var(--ink); font:inherit; padding:11px 0; }
@@ -144,14 +145,17 @@
   #card .kv { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin:10px 0; font-size:13.5px; font-variant-numeric:tabular-nums; }
   #card .kv span:nth-child(odd) { color:var(--muted); }
   #card .acts { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
-  #card .swatches { display:flex; align-items:center; gap:6px; margin:2px 0 10px; flex-wrap:wrap; }
+  #card .swatches { display:flex; align-items:center; gap:8px; margin:2px 0 10px; overflow-x:auto; padding:3px 2px; }
+  .meas-row .seg button { min-height:44px; font-size:15px; padding:8px 12px; }
+  .tabs button { min-height:40px; }
   #card .swatches > span { color:var(--muted); font-size:.9em; margin-right:4px; }
-  #card .swatches button { width:28px; height:28px; border-radius:50%; border:1px solid var(--line); background:var(--panel); padding:0; font-size:9px; color:var(--muted); }
-  #card .swatches button[data-color=""] { width:auto; border-radius:14px; padding:0 8px; }
+  #card .swatches button { flex:none; width:38px; height:38px; border-radius:50%; border:1px solid var(--line); background:var(--panel); padding:0; font-size:9px; color:var(--muted); }
+  #card .swatches button[data-color=""] { width:auto; border-radius:19px; padding:0 10px; font-size:11px; }
+  body.night #card .swatches button[data-color="#000000"] { box-shadow:0 0 0 2px #888; }
   #card .swatches button.on { outline:3px solid var(--accent); outline-offset:1px; }
 
   /* ── знаки и подписи на карте ── */
-  .sym { background:none; border:0; color:var(--sym); }
+  .sym { background:none; border:0; color:var(--sym); display:flex; align-items:center; justify-content:center; }   /* знак — в центре зоны касания */
   svg [fill="#fff"] { fill:var(--symBg); }                              /* белая заливка знаков — ночью тёмная, чтобы светлые черты были видны */
   .sym .lbl { position:absolute; left:24px; top:-2px; white-space:nowrap; font:italic 12.5px/1 var(--draft); color:var(--sym); letter-spacing:.01em;
     text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo), 0 0 3px var(--halo); }
@@ -201,7 +205,7 @@
   <div id="satLine" style="display:none"><span class="sat-ic">🛰</span><span id="satText"></span><span class="more">▾</span></div>
 </div>
 
-<svg id="cross" viewBox="0 0 34 34"><path d="M17 3v10M17 21v10M3 17h10M21 17h10" stroke="#c62828" stroke-width="2.4" stroke-linecap="round" paint-order="stroke"/><circle cx="17" cy="17" r="2" fill="#c62828"/></svg>
+<svg id="cross" viewBox="0 0 34 34"><path d="M17 3v10M17 21v10M3 17h10M21 17h10" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/><path d="M17 3v10M17 21v10M3 17h10M21 17h10" stroke="#c62828" stroke-width="2.4" stroke-linecap="round" paint-order="stroke"/><circle cx="17" cy="17" r="2" fill="#c62828"/></svg>
 
 <div id="fabs">
   <button class="fab" id="fabLayers" aria-label="Слои"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5z"/><path d="m3 13 9 5 9-5"/></svg></button>
@@ -339,7 +343,7 @@ const POINT_GROUPS = [
 
 // Подземные сети — по «Правилам начертания… подземных коммуникаций» (табл. 1–6), надземные — по ГКИНП (табл. 23–24, 31)
 // Коды прежних видов (p_v, p_k, p_d…) сохранены, чтобы уже нарисованные линии не потерялись
-const P = 0.35, C = 0.2;
+const P = 0.3, C = 0.2;                                           // трубопроводы 0,3 мм, кабели 0,2 мм («Правила», п. 6)
 const LINE_GROUPS = [
   { id: 'water', title: 'Водопровод', items: [
     { id: 'v_p', name: 'Водопровод питьевой', kind: 'indexed', index: 'Вп', w: P },
@@ -491,7 +495,13 @@ function netColor(type, fallback) {
   return k ? `var(--c-${k})` : fallback;
 }
 const PICKET_STEP_M = 100;     // пикет — каждые 100 м
-const MM = 4;                  // экранных пикселей на 1 «мм» знака
+// Экранных пикселей на 1 мм знака — по настоящему размеру экрана (калибровка линейкой или оценка), как на бумажном плане.
+// Надписи остаются прежнего размера (TEXT_K), чтобы не загромождать план на маленьком экране
+const MM = (() => { let px; try { px = JSON.parse(localStorage.getItem('tk.pxmm')); } catch (e) { px = null; }
+  px = px > 0.05 && px < 0.6 ? px : matchMedia('(pointer: coarse)').matches ? 0.159 : 0.2646;
+  return Math.min(7, Math.max(3.5, 1 / px)); })();
+const TEXT_K = 4 / MM;
+const SYM_MM = 2.7, SYM_PX = Math.max(14, Math.round(SYM_MM * MM)), TAP_PX = 44;   // точечный знак ≈2,7 мм (колодец 2 мм, столб 1 мм); зона касания — 44 px
 const RECENT_MAX = 8;          // сколько «последних» знаков помнить
 
 /* ───────────── Координаты: WGS-84 → плоская система (ГСК-2011, СК-42 или своя МСК) ───────────── */
@@ -722,14 +732,16 @@ function calibrate() {
     const mm = parseNum($('f_mm').value);
     const px = mm / CAL_PX;
     if (!(px > 0.05 && px < 0.6)) { toast('Проверьте длину: обычно это от 20 до 100 мм'); return; }
-    PX_MM = px; setPref('pxmm', px); closeSheet(); updateScale(); toast('Готово: масштаб на экране теперь по линейке');
+    PX_MM = px; setPref('pxmm', px); closeSheet(); updateScale(); toast('Готово: масштаб и размер знаков — по линейке');
+    setTimeout(() => location.reload(), 900);                          // размер знаков (мм экрана) пересчитывается при запуске
   };
-  $('calReset').onclick = () => { PX_MM = PX_MM_DEFAULT; setPref('pxmm', PX_MM_DEFAULT); closeSheet(); updateScale(); toast('Калибровка сброшена'); };
+  $('calReset').onclick = () => { PX_MM = PX_MM_DEFAULT; setPref('pxmm', PX_MM_DEFAULT); closeSheet(); updateScale(); toast('Калибровка сброшена'); setTimeout(() => location.reload(), 900); };
 }
 
 /* ───────────── GPS ───────────── */
 
 let gps = null, gpsMarker = null, gpsCircle = null, gpsWatch = null;
+const GPS_FRESH_MS = 5000;        // «По GPS» берёт координаты не старше 5 с
 const RTK_FIX_M = 0.05;          // точность до 5 см — почти наверняка фиксированное решение RTK
 function startGps() {
   startGnss();                                       // в Android-приложении — заодно и спутники
@@ -745,7 +757,7 @@ function startGps() {
       gpsCircle = L.circle(ll, { radius: gps.acc, color: '#1e88e5', weight: 1, fillOpacity: .12, interactive: false }).addTo(map);
       gpsMarker = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1, interactive: false }).addTo(map);
     } else { gpsMarker.setLatLng(ll); gpsCircle.setLatLng(ll).setRadius(gps.acc); }
-    if (first) map.setView(ll, 18);
+    if (first && !mode) map.setView(ll, Math.max(map.getZoom(), 18));
     const acc = gps.acc;
     // RTK-приёмник через «фиктивное местоположение» даёт сантиметры — показываем их, а не округлённые метры
     const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
@@ -756,9 +768,10 @@ function startGps() {
       (acc > 15 ? ' — подождите на открытом месте' : '');
     $('fabMe').classList.add('on');
   }, err => {
+    if (gpsWatch != null) navigator.geolocation.clearWatch(gpsWatch);
     gpsWatch = null;
     $('gpsDot').className = 'dot bad';
-    $('gpsText').textContent = 'GPS: нет доступа — ' + err.message;
+    $('gpsText').textContent = 'GPS: ' + ({ 1: 'нет разрешения — разрешите местоположение в настройках телефона', 2: 'нет сигнала — выйдите на открытое место', 3: 'не ответил вовремя — нажмите ◎ ещё раз' }[err.code] || 'нет доступа');
   }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
   loadGeoid().catch(() => { /* без модели геоида отметки не считаем — координаты работают */ });
 }
@@ -1156,19 +1169,27 @@ function wallAngle(ll) {
   return best && best.d * mpp <= WALL_SNAP_M ? Math.round(best.ang * 180 / Math.PI * 10) / 10 : null;
 }
 let pointMarkers = [];
+// Мельче 1:3000 мелкие подробности 1:500 (крыльца, буквы покрытий, отметки, засечки оград, надписи зданий) не рисуются — иначе каша;
+// сети, здания, геодезические пункты остаются
+const GEN_DENOM = 3000, MINOR_GROUPS = new Set(['street', 'reliefpt']);
+const MINOR_POINTS = new Set(POINT_GROUPS.filter(g => MINOR_GROUPS.has(g.id)).flatMap(g => g.items.map(i => i.id)));
+function planDenom() { return metersPerPx() * 1000 / PX_MM; }
+let generalized = false;
 function drawPoints() {
   pointLayer.clearLayers();
   pointMarkers = [];
+  generalized = planDenom() > GEN_DENOM;
   for (const p of data.points) {
+    if (generalized && MINOR_POINTS.has(p.type) && !(selected && selected.obj === p)) continue;
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
-    const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [22, 22], iconAnchor: [11, 11],
-      html: symbolSvg(pointSvg(p), 22, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}">${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
-    const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(L.latLng(p.lat, p.lng), null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
+    const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [TAP_PX, TAP_PX], iconAnchor: [TAP_PX / 2, TAP_PX / 2],
+      html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}">${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
+    const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(snapOn ? L.latLng(p.lat, p.lng) : e.latlng, null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
     pointMarkers.push({ p, marker, lbl });
   }
 }
 // Номер у знака — справа, слева, сверху, снизу или по диагонали: первое место, где он ни с чем не пересекается
-const LBL_PX = 12.5, SYM_R = 11;
+const LBL_PX = 12.5, SYM_R = SYM_PX / 2;
 function placePointLabels() {
   for (const { p, marker, lbl } of pointMarkers) {
     const span = marker.getElement() && marker.getElement().querySelector('.lbl');
@@ -1184,8 +1205,8 @@ function placePointLabels() {
     const box = tries.map(t => ({ x: t.x, y: t.y, w, h })).find(b => labelsAll || !hits(b, null)) || (labelsAll ? { x: tries[0].x, y: tries[0].y, w, h } : null);
     span.classList.toggle('off', !box);
     if (!box) continue;
-    span.style.left = (box.x - (c.x - SYM_R) + 2) + 'px';             // координаты — от левого верхнего угла значка 22×22
-    span.style.top = (box.y - (c.y - SYM_R) + 1.5) + 'px';
+    span.style.left = (box.x - (c.x - TAP_PX / 2) + 2) + 'px';        // координаты — от левого верхнего угла зоны касания
+    span.style.top = (box.y - (c.y - TAP_PX / 2) + 1.5) + 'px';
     reserve(box, 'lbl:' + p.id);
   }
 }
@@ -1202,6 +1223,7 @@ function frame() {
   }
   placePointLabels();
   drawLines();
+  if (typeof gridLayer !== 'undefined' && map.hasLayer(gridLayer)) gridLayer._draw();   // сетка — последней
 }
 
 /* ───────────── Линии сетей: отрисовка с подписями вдоль линии ───────────── */
@@ -1256,7 +1278,7 @@ function poleMark(g, path, s, kind, w) {
   if (kind === 'rect') el('rect', { x: -r, y: -r * 0.8, width: 2 * r, height: 1.6 * r, fill: 'currentColor', transform: `translate(${p.x} ${p.y}) rotate(${p.a})` }, g);
 }
 // Стрелка от опоры a к соседней опоре b: отрезок от края знака опоры, наконечник наружу (у ЛЭП высокого напряжения — двойной)
-const POLE_ARROW = 4.5 * MM, POLE_R = 0.6 * MM;
+const POLE_ARROW = 4.5 * MM, POLE_R = 0.5 * MM;                        // опора — 1,0 мм (ГКИНП, зн. 106, 108)
 let polesDrawn = [];                                                  // опоры, уже нарисованные в этом кадре
 function poleArrow(g, a, b, w, double, arrows) {
   const d = Math.hypot(b.x - a.x, b.y - a.y);
@@ -1291,7 +1313,7 @@ function poleLine(g, spec, line, w, pts, pole, arrows) {
 function text(g, path, s, str, o) {
   o = Object.assign({ dy: 0, size: 2.8 * MM, italic: true }, o);
   const p = at(path, s), a = upright(p.a);
-  el('text', { 'font-size': o.size, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+  el('text', { 'font-size': o.size * TEXT_K, 'text-anchor': 'middle', 'dominant-baseline': 'central',
     'font-family': 'Georgia, "Times New Roman", serif', 'font-style': o.italic ? 'italic' : 'normal', fill: 'currentColor',
     transform: `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)}) rotate(${a.toFixed(1)}) translate(0 ${o.dy})` }, g).textContent = str;
 }
@@ -1299,6 +1321,8 @@ function text(g, path, s, str, o) {
 let occupied = [], curOwner = null;
 let labelsAll = pref('labelsAll', false);                              // «Подписи: все» — ставить и с наложением (меню)
 const measureCtx = document.createElement('canvas').getContext('2d');
+// ширина надписи, размер которой задан в «мм» знака (переводится в экранный размер надписи)
+function tw(str, size, italic) { return textWidth(str, size * TEXT_K, italic); }
 function textWidth(str, px, italic) {
   measureCtx.font = `${italic ? 'italic ' : ''}${px}px "Roboto Condensed", "Arial Narrow", Arial, sans-serif`;
   return measureCtx.measureText(str).width;
@@ -1314,7 +1338,7 @@ function textBox(p, deg, dy, w, h) {
 // Ставит надпись вдоль линии, только если место свободно; возвращает, поставлена ли она
 function placeText(g, path, s, str, o) {
   o = Object.assign({ dy: 0, size: 2.8 * MM, italic: true }, o);
-  const p = at(path, s), box = textBox(p, upright(p.a), o.dy, textWidth(str, o.size, o.italic) + 6, o.size + 5);   // с запасом на обводку
+  const p = at(path, s), box = textBox(p, upright(p.a), o.dy, tw(str, o.size, o.italic) + 6, o.size * TEXT_K + 5);   // с запасом на обводку
   if (!labelsAll && hits(box, curOwner)) return false;                             // своя линия не мешает, всё остальное — мешает
   text(g, path, s, str, o);
   reserve(box, 'txt');                                                // а поставленная надпись мешает всем, в том числе надписям своей линии
@@ -1334,15 +1358,21 @@ const DRAW = {
   indexed(g, path, spec, line, w) {
     const total = path.getTotalLength(), period = 9 * MM, size = 3 * MM;
     const index = line.state === 'reserve' ? 'тр' : spec.numberedIndex ? String(line.count || 1) : (line.count > 1 ? line.count : '') + spec.index;
-    const gap = textWidth(index, size, true) + 1.6 * MM;                 // разрыв точно по ширине индекса и с полями
+    const gap = tw(index, size, true) + 1.6 * MM;                         // разрыв точно по ширине индекса и с полями
+    const EVERY = 4;                                                  // индекс — в каждом 4-м разрыве (≈ через 4 см), остальные — сплошная линия
+    let placed = 0;
     const run = (a, b) => {
       if (spec.double) { segment(g, path, a, b, w, -spec.double); segment(g, path, a, b, w, spec.double); } else segment(g, path, a, b, w);
       if (spec.sleeve) { segment(g, path, a, b, Math.max(1, C * MM), -1.4, `${1.6 * MM} ${0.8 * MM}`); segment(g, path, a, b, Math.max(1, C * MM), 1.4, `${1.6 * MM} ${0.8 * MM}`); }
     };
-    for (let s = 0; s < total;) {
+    if (total < period * 2 + gap) {                                   // короткая линия — один индекс посередине
+      const m = total / 2;
+      if (total > gap + 2 * MM && placeText(g, path, m, index, { size })) { run(0, m - gap / 2); run(m + gap / 2, total); }
+      else run(0, total);
+    } else for (let s = 0, k = 0; s < total; k++) {
       const e = Math.min(s + period, total);
       run(s, e);
-      if (e + gap < total && !placeText(g, path, e + gap / 2, index, { size })) run(e, e + gap);   // место занято — линия без разрыва
+      if (e + gap < total) { if (k % EVERY === 1 && placeText(g, path, e + gap / 2, index, { size })) placed++; else run(e, e + gap); }   // занято — линия без разрыва
       s = e + gap;
     }
     if (spec.flow && total > 14 * MM) {                                 // стрелка направления течения — по ходу рисования
@@ -1353,7 +1383,7 @@ const DRAW = {
   // Кабели: «←→ ——— ←→»; в блоках/канале — число прокладок в разрывах, в канале — двойная линия без стрелок; сторожки
   cable(g, path, spec, line, w) {
     const total = path.getTotalLength(), arrowLen = 8 * MM, plain = 9 * MM, size = 3 * MM;
-    const num = spec.numbered ? String(line.count || spec.defCount || 1) : null, gap = num ? textWidth(num, size, true) + 1.6 * MM : 2 * MM;
+    const num = spec.numbered ? String(line.count || spec.defCount || 1) : null, gap = num ? tw(num, size, true) + 1.6 * MM : 2 * MM;
     const run = (a, b) => { if (spec.double2) { segment(g, path, a, b, w, -spec.double2); segment(g, path, a, b, w, spec.double2); } else segment(g, path, a, b, w); };
     const sep = (a) => { if (num && a + gap < total && !placeText(g, path, a + gap / 2, num, { size })) run(a, a + gap); };
     for (let s = 0, n = 0; s < total; n++) {
@@ -1378,6 +1408,7 @@ const DRAW = {
   // Ограждения: рисунок по ГКИНП (зн. 472–477), размеры в «мм» знака; засечки — на сторону территории (по ходу слева, «flip» — справа)
   fence(g, path, spec, line, w) {
     const total = path.getTotalLength(), a = line.attr || {}, sg = a.flip ? 1 : -1;
+    if (generalized) { segment(g, path, 0, total, w); return; }       // на мелком масштабе — просто линия ограждения
     const each = (step, start, f) => { for (let s = start * MM; s < total - 1; s += step * MM) f(s); };
     const post = (s, off, r, filled) => { const q = sidePt(path, s, off * sg); el('circle', { cx: q.x, cy: q.y, r: r * MM, fill: filled ? 'currentColor' : 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w }, g); };
     const box = (s, off, size, filled) => { const q = sidePt(path, s, off * sg); el('rect', { x: -size * MM / 2, y: -size * MM / 2, width: size * MM, height: size * MM, fill: filled ? 'currentColor' : 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w, transform: `translate(${q.x} ${q.y}) rotate(${q.a})` }, g); };
@@ -1417,7 +1448,7 @@ const DRAW = {
       const q = at(path, total);
       el('polygon', { points: `0,0 ${-2.4 * MM},${-0.9 * MM} ${-2.4 * MM},${0.9 * MM}`, fill: 'currentColor', transform: `translate(${q.x} ${q.y}) rotate(${q.a})` }, g);
       const mark = (s, v) => { if (v === undefined || v === '') return; const str = planNum(v, 2); placeText(g, path, s, str, { dy: 3 * MM, size: 2.4 * MM }) || placeText(g, path, s, str, { dy: -3 * MM, size: 2.4 * MM }); };
-      const lw = v => v === undefined || v === '' ? 0 : textWidth(planNum(v, 2), 2.4 * MM, true) / 2 + 2;
+      const lw = v => v === undefined || v === '' ? 0 : tw(planNum(v, 2), 2.4 * MM, true) / 2 + 2;
       mark(Math.min(total / 2, lw(a.hLow)), a.hLow); mark(Math.max(total / 2, total - lw(a.hHigh) - 2.4 * MM), a.hHigh);
     }
   },
@@ -1433,7 +1464,7 @@ const DRAW = {
     if (spec.style === 'contour') {
       const lab = a.h !== undefined && a.h !== '' ? String(a.h) : '';
       if (lab && total > 30 * MM) {                                   // подпись — в разрыве горизонтали (зн. 329.7)
-        const s0 = total * 0.45, gap = textWidth(lab, 2.4 * MM, true) + 1.6 * MM;
+        const s0 = total * 0.45, gap = tw(lab, 2.4 * MM, true) + 1.6 * MM;
         segment(g, path, 0, s0 - gap / 2, w, 0, dash);
         if (!placeText(g, path, s0, lab, { size: 2.4 * MM })) segment(g, path, s0 - gap / 2, s0 + gap / 2, w, 0, dash);
         segment(g, path, s0 + gap / 2, total, w, 0, dash);
@@ -1458,7 +1489,7 @@ const DRAW = {
       segment(g, path, 0, total, w);
       if (spec.style === 'wallWood') each(4, 2, s => wedge(s, 0.5, 0.9, false));
       else if (spec.incl) { segment(g, path, 0, total, thin, 4.5 * sg); each(4, 2, s => wedge(s, 0.6, 4.4, true)); }
-      else each(4, 2, s => wedge(s, 0.5, 1.3, true));
+      else each(4, 2, s => wedge(s, 0.5, 0.8, true));                // зубцы 0,8 мм через 4 мм (зн. 280.1)
       const t = a.top !== undefined && a.top !== '' ? planNum(a.top, 2) : '', b = a.bot !== undefined && a.bot !== '' ? planNum(a.bot, 2) : '';
       if (t || b) mark(total * 0.55, `${t}/${b}`, 3);                   // отметки верха и основания стенки (п. 389)
       return;
@@ -1473,7 +1504,7 @@ const DRAW = {
     segment(g, path, 0, total, w, 0, spec.dash ? `${2 * MM} ${1 * MM}` : null);
     const poly = pts.slice(0, -1);
     if (spec.cols) for (const p of poly) el('circle', { cx: p.x, cy: p.y, r: 0.5 * MM, fill: 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w }, g);
-    buildingLabels(g, poly, spec, line);
+    if (!generalized) buildingLabels(g, poly, spec, line);
   },
   route(g, path, spec, line, w, pts) {
     const total = path.getTotalLength(), dash = 4 * MM, space = 1.5 * MM;
@@ -1522,12 +1553,12 @@ function drawLines() {
     const path = el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'none' }, g);
     if (path.getTotalLength() < 6) { el('line', { x1: pts[0].x, y1: pts[0].y, x2: pts[pts.length - 1].x, y2: pts[pts.length - 1].y, stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round' }, g); continue; }
     curOwner = line.id;                                                // надписи своей линии не мешают ей самой
-    const w = Math.max(1, spec.w * MM) * (isSel ? 1.8 : 1), thin = Math.max(0.8, 0.15 * MM) * (isSel ? 1.8 : 1), total = path.getTotalLength();
+    const w = Math.max(0.6, spec.w * MM) * (isSel ? 1.8 : 1), thin = Math.max(0.6, 0.15 * MM) * (isSel ? 1.8 : 1), total = path.getTotalLength();
     // состояние линии: проектируемая и вынесенная в натуру — тонким пунктиром, остальные — обычным знаком с пометкой
     if (line.state === 'project') segment(g, path, 0, total, thin, 0, `${10 * MM} ${4 * MM}`);
     else if (line.state === 'staked') { segment(g, path, 0, total, thin, 0, `${10 * MM} ${2 * MM}`); for (let s = 11 * MM; s < total; s += 12 * MM) tick(g, path, s, 2, thin); }
     else if (line.state === 'build' || line.state === 'approx') segment(g, path, 0, total, thin);
-    else if (NO_STATE.has(spec.kind)) DRAW[spec.kind](g, path, spec, line, spec.kind === 'road' && spec.w >= 0.3 ? w * 1.5 : spec.kind === 'relief' && spec.style === 'contour' && spec.w >= 0.2 ? w * 1.7 : w, pts);   // у строений, оград и дорог состояний нет; проезжая часть заметно толще краёв тротуаров
+    else if (NO_STATE.has(spec.kind)) DRAW[spec.kind](g, path, spec, line, w, pts);   // у строений, оград и дорог состояний нет; проезжая часть заметно толще краёв тротуаров
     else DRAW[spec.kind](g, path, spec, line, line.state === 'off' ? Math.max(1, C * MM) : w, pts);   // тонкая ровная линия, как пером
     if (line.state === 'off') for (let s = 5 * MM; s < total; s += 11 * MM) tick(g, path, s, 2.8, Math.max(1, C * MM) * 1.3, 60);   // косые штрихи — недействующая
     if (NO_STATE.has(spec.kind)) { curOwner = null; if (spec.kind === 'fence' && spec.tag) { curOwner = line.id; captionAlong(g, path, pts, spec.tag); curOwner = null; } continue; }
@@ -1539,7 +1570,7 @@ function drawLines() {
 }
 // Подпись линии — над (или под) серединой участка, где она помещается и ни с чем не пересекается; иначе появится при приближении
 function captionAlong(g, path, pts, str) {
-  const size = 2.9 * MM, need = textWidth(str, size, true) + 2 * MM, segs = [];
+  const size = 2.9 * MM, need = tw(str, size, true) + 2 * MM, segs = [];
   let run = 0;
   for (let i = 1; i < pts.length; i++) { const d = pts[i - 1].distanceTo(pts[i]); segs.push({ d, mid: run + d / 2 }); run += d; }
   segs.sort((a, b) => b.d - a.d);                                     // сначала самые длинные участки
@@ -1568,12 +1599,12 @@ function inPoly(x, y, poly) {
 // Надпись в точке (x, y) под углом deg; inside — целиком внутри контура. Ставится, только если ни с чем не пересекается
 function placeFree(g, poly, x, y, deg, str, size, o) {
   o = o || {};
-  const w = textWidth(str, size, o.italic) + 4, h = size + 3, r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  const w = tw(str, size, o.italic) + 4, h = size * TEXT_K + 3, r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
   const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => ({ x: x + u * w / 2 * c - v * h / 2 * s, y: y + u * w / 2 * s + v * h / 2 * c }));
   if (o.inside && !corners.every(p => inPoly(p.x, p.y, poly))) return false;
   const box = textBox({ x, y }, deg, 0, w, h);
   if (!labelsAll && hits(box, null)) return false;
-  el('text', { x: x.toFixed(1), y: y.toFixed(1), 'font-size': size, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+  el('text', { x: x.toFixed(1), y: y.toFixed(1), 'font-size': size * TEXT_K, 'text-anchor': 'middle', 'dominant-baseline': 'central',
     'font-family': o.italic ? 'Georgia, "Times New Roman", serif' : '"Roboto Condensed", "Arial Narrow", Arial, sans-serif',
     'font-style': o.italic ? 'italic' : 'normal', fill: 'currentColor', transform: `rotate(${deg.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)})` }, g).textContent = str;
   reserve(box, 'txt');
@@ -1603,7 +1634,7 @@ function buildingLabels(g, poly, spec, line) {
   const to = { x: c.x - corner.x, y: c.y - corner.y }, len = Math.hypot(to.x, to.y) || 1;
   if (a.houseNo) placeFree(g, poly, corner.x + to.x / len * 4 * MM, corner.y + to.y / len * 4 * MM, deg, String(a.houseNo), 2.4 * MM, { inside: true, italic: true });
   if (a.hBlind != null && a.hBlind !== '') {                          // отметка отмостки — снаружи у угла: по диагонали, ниже или правее
-    const str = planNum(a.hBlind, 2), half = textWidth(str, 2.3 * MM, true) / 2 + 3;
+    const str = planNum(a.hBlind, 2), half = tw(str, 2.3 * MM, true) / 2 + 3;
     [[-to.x / len * 4.5 * MM, -to.y / len * 4.5 * MM], [0, 3.2 * MM], [half + 2, 0], [0, -3.2 * MM], [-half - 2, 3.2 * MM]]
       .some(([dx, dy]) => placeFree(g, poly, corner.x + dx, corner.y + dy, 0, str, 2.3 * MM, { italic: true }));
   }
@@ -1622,6 +1653,7 @@ function drawHits() {
       : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(e.latlng); else showCard('line', line); }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
 }
 map.on('moveend zoomend resize viewreset', frame);
+map.on('zoomend', () => { if ((planDenom() > GEN_DENOM) !== generalized) { drawPoints(); frame(); } });   // перешли через 1:3000 — пересобрать знаки
 // Во время приближения (кнопки, щипок) линии не прячем, а растягиваем вместе с картой; после — перерисовываем начисто
 netSvg.classList.add('leaflet-zoom-animated');
 netSvg.style.transformOrigin = '0 0';
@@ -1707,7 +1739,7 @@ function showCard(kind, obj) {
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
     const hInfo = obj.hInfo || (obj.meas ? { acc: obj.meas.hm, from: 'measure' } : {});
-    kv.push(['Отметка', (obj.h != null && obj.h !== '' ? `<b>${planNum(obj.h, 2)} м</b><br>` : '') + `<span style="color:var(--muted)">${esc(heightNote(obj.h, obj.hSrc, hInfo))}</span>`]);
+    kv.push(['Отметка', (obj.h != null && obj.h !== '' ? `<b>${mText(Number(obj.h), 2)} м</b><br>` : '') + `<span style="color:var(--muted)">${esc(heightNote(obj.h, obj.hSrc, hInfo))}</span>`]);
     if (obj.meas) {
       const m = obj.meas, mark = { ok: '✓ годится', mid: '≈ на пределе', bad: '✗ не годится' }[m.ok] || '';
       kv.push(['Измерение', `±${cmText(m.m)} за ${m.sec} с, отсчётов ${m.n}${m.hdop != null ? ', HDOP ' + m.hdop : ''}<br>${mark} для 1:${m.scale} (допуск ${cmText(m.tol)})`]);
@@ -1999,7 +2031,7 @@ function setMode(m) {
   const snapBtn = ['snap', snapOn ? 'Привязка: вкл' : 'Привязка: выкл', snapOn ? 'on' : ''];
   const btns = isPt
     ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['sign', 'Знак…'], snapBtn, ['done', 'Готово', 'primary']]
-    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', 'Шаг назад'], ['sign', 'Знак…'], snapBtn, ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
+    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', '↶ Убрать точку'], ['sign', 'Знак…'], snapBtn, ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
   // «Знак…» — выбрать условный знак заранее; без него ставится простая точка или линия, знак выбирается потом в карточке
   $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' && !isPt ? ' style="grid-column:span 2"' : ''}>${t}</button>`).join('');
 }
@@ -2008,12 +2040,14 @@ $('modeBtns').addEventListener('click', e => {
   if (!b || !mode) return;
   const act = b.dataset.act;
   if (act === 'center') addAt(map.getCenter(), null, 'center');
+  if (act === 'gps' && gps && Date.now() - gps.at > GPS_FRESH_MS) { toast(`Координаты GPS устарели (${Math.round((Date.now() - gps.at) / 1000)} с назад) — подождите сигнал`); startGps(); return; }
   if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng), null, 'gps'); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
   if (act === 'snap') { snapOn = !snapOn; setPref('snap', snapOn); setMode(mode); toast(snapOn ? 'Привязка к точкам, вершинам и линиям включена' : 'Привязка выключена — точка ставится ровно куда нажали'); }
   if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
-  if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode === m) addAt(ll, meas); }); }
+  if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode !== m) return; const pt = addAt(ll, meas);
+    if (pt && pt.type === GENERIC.point) openPicker('point', id => changeType('point', pt, id), 'Закройте — останется простой точкой'); }); }
   if (act === 'undo') { mode.latlngs.pop(); if (mode.hs) mode.hs.pop(); refreshTemp(); setMode(mode); }
-  if (act === 'cancel') setMode(null);
+  if (act === 'cancel' && (mode.latlngs.length < 2 || confirm(`Бросить линию из ${mode.latlngs.length} точек?`))) setMode(null);
   if (act === 'done') finishMode();
 });
 map.on('click', e => { if (mode) addAt(e.latlng); });
@@ -2022,6 +2056,7 @@ map.on('click', e => { if (mode) addAt(e.latlng); });
 function addAt(ll, meas, src) {
   src = meas ? 'measure' : src || 'tap';
   const snap = snapOn && (src === 'tap' || src === 'center') ? snapTarget(ll) : null;
+  if (snap && mode.kind === 'line' && (LINES[mode.type] || {}).closed && mode.latlngs.length >= 3 && L.latLng(mode.latlngs[0]).equals(snap.ll)) { finishMode(); return; }   // контур замкнут
   if (snap) { ll = snap.ll; toast('Привязано ' + snap.what); }
   const hz = heightFor(ll, meas, src, snap);
   if (mode.kind === 'point') {
@@ -2033,9 +2068,10 @@ function addAt(ll, meas, src) {
     data.points.push(pt);
     save(); drawPoints();
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
-      (hz ? `, H ${planNum(hz.h, 2)}` : src === 'tap' || src === 'center' ? ' без отметки' : ', приёмник не дал высоту'));
+      (hz ? `, H ${mText(hz.h, 2)}` : src === 'tap' || src === 'center' ? ' без отметки' : ', приёмник не дал высоту'));
     const ps = POINTS[pt.type] || {};
     if (ps.frac || ps.svgFor) editPoint(pt);                          // у надписи покрытия и отметок — сразу спросить значения
+    return pt;
   } else {
     mode.latlngs.push([ll.lat, ll.lng]);
     (mode.hs = mode.hs || []).push(hz);                               // отметка вершины полилинии — или null
@@ -2051,7 +2087,7 @@ function snapTarget(ll) {
   const last = mode.latlngs && mode.latlngs[mode.latlngs.length - 1];   // к только что поставленной вершине не липнем
   let best = null, bd = SNAP_PX;
   const take = (a, h, what) => { if (a === last) return; const d = dist(a); if (d < bd) { bd = d; best = { ll: L.latLng(a[0], a[1]), h, what }; } };
-  const hText = h => h != null && h !== '' ? ', H ' + planNum(h, 2) : '';
+  const hText = h => h != null && h !== '' ? ', H ' + mText(Number(h), 2) : '';
   for (const p of data.points) take([p.lat, p.lng], p.h, 'к точке' + hText(p.h));
   for (const line of data.lines) line.latlngs.forEach((a, i) => { const z = line.hs && line.hs[i]; take(a, z ? z.h : null, 'к вершине' + hText(z && z.h)); });
   (mode.latlngs || []).forEach((a, i) => { const z = mode.hs && mode.hs[i]; take(a, z ? z.h : null, 'к вершине этой линии' + hText(z && z.h)); });
@@ -2118,8 +2154,9 @@ function finishMode() {
     if (line.type === GENERIC.line) line.color = pref('color', VIS_COLOR);
     if (mode.hs && mode.hs.some(Boolean)) line.hs = mode.hs.slice();
     setMode(null);
-    if (line.type === GENERIC.line) { data.lines.push(line); save(); showCard('line', line); toast('Линия готова — выберите «Условный знак…»'); return; }
-    editLine(line, true);
+    data.lines.push(line); save();                                    // сохранена сразу: закрытая форма не теряет линию
+    if (line.type === GENERIC.line) { showCard('line', line); openPicker('line', id => changeType('line', line, id), 'Закройте — останется простой линией'); return; }
+    editLine(line, false);
     return;
   }
   setMode(null);
@@ -2152,7 +2189,7 @@ function tileName(name) {
 
 // Выбор знака или линии: поиск, вкладки, «последние», крупные плитки
 // onPick — свой обработчик выбора (смена знака у готового объекта, выбор знака во время рисования)
-function openPicker(kind, onPick) {
+function openPicker(kind, onPick, note) {
   const groups = kind === 'point' ? POINT_GROUPS : LINE_GROUPS, all = kind === 'point' ? POINTS : LINES;
   const recent = pref('recent.' + kind, []).filter(id => all[id]);
   let tab = recent.length ? 'recent' : groups[0].id, query = '';
@@ -2171,7 +2208,7 @@ function openPicker(kind, onPick) {
     $('pickBody').innerHTML = html;
     for (const b of $('pickTabs').children) b.classList.toggle('on', !query && b.dataset.tab === tab);
   };
-  showSheet(`<div class="sh-head"><b>${kind === 'point' ? 'Выберите знак' : 'Выберите линию'}</b><button class="x" data-close>×</button></div>
+  showSheet(`<div class="sh-head"><b>${kind === 'point' ? 'Выберите знак' : 'Выберите линию'}</b><button class="x" data-close>×</button></div>${note ? `<div class="hint" style="color:var(--muted);font-size:.9em;margin:-4px 0 6px">${esc(note)}</div>` : ''}
     <div class="search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
       <input id="pickSearch" placeholder="${kind === 'point' ? 'Найти: колодец, репер…' : 'Найти: газ, кабель…'}" autocomplete="off"></div>
     <div class="tabs" id="pickTabs"><button data-tab="recent">Последние</button>${groups.map(g => `<button data-tab="${g.id}">${esc(g.title)}</button>`).join('')}</div>
@@ -2200,12 +2237,13 @@ function objColor(obj, kind) {
   if (kind === 'line') { const s = LINES[obj.type] || LINES.plain; return netColor(obj.type, s.color || 'var(--sym)'); }
   const s = POINTS[obj.type] || POINTS.mark; return netColor(obj.type, s.color);
 }
-$('btnPoint').onclick = () => { setMode({ kind: 'point', type: GENERIC.point }); toast('Ставьте точки: касание карты, «В перекрестье» или «По GPS». Знак — потом, в карточке'); };
+$('btnPoint').onclick = () => { setMode({ kind: 'point', type: GENERIC.point }); toast('Ставьте точки: касание карты, «В перекрестье», «По GPS» или «Измерить». Знак — сразу кнопкой «Знак…» или потом, нажав на точку'); };
 $('btnLine').onclick = () => { setMode({ kind: 'line', type: GENERIC.line, latlngs: [] }); toast('Ставьте точки линии. Условный знак выберете после «Готово»'); };
 // смена условного знака у готового объекта; поля, которых у нового знака нет, просто не показываются
 function changeType(kind, obj, id) {
   if (kind === 'point') {
     obj.type = id;
+    if (obj.color && id !== GENERIC.point) delete obj.color;
     const s = POINTS[id];
     if (s.wall) { const r = wallAngle(L.latLng(obj.lat, obj.lng)); if (r != null) obj.rot = r; } else delete obj.rot;
     save(); drawPoints(); frame(); showCard('point', obj);
@@ -2215,6 +2253,7 @@ function changeType(kind, obj, id) {
   const s = LINES[id];
   if (s.closed && obj.latlngs.length < 3) { toast('Для строения нужен контур хотя бы из трёх углов'); return; }
   obj.type = id;
+  if (obj.color && id !== GENERIC.line) delete obj.color;
   obj.count = s.defCount || 1;
   if (NO_STATE.has(s.kind)) obj.state = '';
   save(); showCard('line', obj);
@@ -2406,7 +2445,7 @@ function toKml() {
   const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
   const pts = data.points.map(p => {
     const s = POINTS[p.type] || POINTS.mark;
-    return `<Placemark><name>${xml(p.name || s.name)}</name>${ext({ tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
+    return `<Placemark><name>${xml(p.name || s.name)}</name>${ext({ tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
@@ -2435,6 +2474,7 @@ function readExtras(ext) {
   if (ext.tk_rot != null && ext.tk_rot !== '' && !isNaN(r)) out.rot = r;
   try { const a = ext.tk_attr ? JSON.parse(ext.tk_attr) : null; if (a && typeof a === 'object') out.attr = a; } catch (e) { /* без свойств */ }
   if (ext.tk_hsrc) out.hSrc = ext.tk_hsrc;
+  Object.assign(out, readJson(ext.tk_meas, 'meas', v => v && typeof v === 'object' && v.m != null));
   if (/^#[0-9a-f]{6}$/i.test(ext.tk_color || '')) out.color = ext.tk_color;
   Object.assign(out, readJson(ext.tk_hinfo, 'hInfo', v => v && typeof v === 'object'));
   return out;
@@ -2446,30 +2486,35 @@ $('fileIn').onchange = async e => {
   try {
     const doc = new DOMParser().parseFromString(await f.text(), 'application/xml');
     if (doc.querySelector('parsererror')) throw new Error('это не KML');
-    let np = 0, nl = 0;
-    for (const pm of doc.getElementsByTagName('Placemark')) {
+    let np = 0, nl = 0, bad = 0;
+    const add = { points: [], lines: [] };
+    for (const pm of doc.getElementsByTagName('Placemark')) try {
       const ext = {};
       for (const d of pm.getElementsByTagName('Data')) ext[d.getAttribute('name')] = (d.getElementsByTagName('value')[0] || {}).textContent;
       const name = (pm.getElementsByTagName('name')[0] || {}).textContent || '';
       const pt = pm.getElementsByTagName('Point')[0], ls = pm.getElementsByTagName('LineString')[0];
       const coords = el => (el.getElementsByTagName('coordinates')[0] || {}).textContent.trim().split(/\s+/).map(c => c.split(',').map(Number)).filter(c => c.length >= 2 && !isNaN(c[0]));
       if (pt) {
-        const [lng, lat] = coords(pt)[0];
+        const c0 = coords(pt)[0];
+        if (!c0) throw new Error('нет координат');
+        const [lng, lat] = c0;
         const type = POINTS[ext.tk_type] ? ext.tk_type : 'mark';
-        data.points.push({ id: uid(), type, lat, lng, name: ext.tk_type ? (ext.tk_name || '') : name,
+        add.points.push({ id: uid(), type, lat, lng, name: ext.tk_type ? (ext.tk_name || '') : name,
           h: ext.tk_h != null && ext.tk_h !== '' ? Number(ext.tk_h) : null, note: ext.tk_note || '', ...readExtras(ext) }); np++;
       } else if (ls) {
         const type = LINES[ext.tk_type] ? ext.tk_type : 'plain';
         let latlngs = coords(ls).map(c => [c[1], c[0]]), attr;
+        if (latlngs.length < 2) throw new Error('мало точек');
         if (LINES[type].closed && latlngs.length > 3 && latlngs[0][0] === latlngs[latlngs.length - 1][0] && latlngs[0][1] === latlngs[latlngs.length - 1][1]) latlngs = latlngs.slice(0, -1);   // контур в KML замкнут повтором первой точки
         try { attr = ext.tk_attr ? JSON.parse(ext.tk_attr) : undefined; } catch (e) { attr = undefined; }   // повреждённые свойства — просто без них
-        data.lines.push({ id: uid(), type, latlngs, caption: ext.tk_type ? (ext.tk_caption || '') : name,
+        add.lines.push({ id: uid(), type, latlngs, caption: ext.tk_type ? (ext.tk_caption || '') : name,
           count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1,
           state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray), ...(/^#[0-9a-f]{6}$/i.test(ext.tk_color || '') ? { color: ext.tk_color } : {}) }); nl++;
       }
-    }
+    } catch (e) { bad++; }                                            // повреждённый объект — пропускаем, остальные грузим
+    data.points.push(...add.points); data.lines.push(...add.lines);
     save(); redrawAll(); MENU.fit();
-    toast(`Загружено: знаков ${np}, линий ${nl}`);
+    toast(`Загружено: знаков ${np}, линий ${nl}` + (bad ? `, пропущено повреждённых: ${bad}` : ''));
   } catch (err) { alert('Не удалось загрузить файл: ' + err.message); }
 };
 
@@ -2487,7 +2532,7 @@ const GridLayer = L.Layer.extend({
     this._group = L.layerGroup().addTo(m);
     // свой SVG-слой: Leaflet растягивает его при приближении пальцами — вместе с ним растут и кресты, и подписи
     this._renderer = this._renderer || L.svg({ padding: 0.5 });
-    m.on('moveend zoomend resize', this._draw, this);
+    // перерисовка — из frame(), после знаков и линий: подписи сетки встают только на свободные места
     this._draw();
     try { localStorage.setItem(GRID_KEY, '1'); } catch (e) { /* не критично */ }
   },
