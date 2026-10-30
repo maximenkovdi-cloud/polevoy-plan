@@ -1703,11 +1703,12 @@ function showCard(kind, obj) {
   }
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
-    <div class="acts"><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="copy">Копировать</button><button class="btn danger" data-act="del">Удалить</button></div>`;
+    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span 3">Условный знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="copy">Копировать</button><button class="btn danger" data-act="del">Удалить</button></div>`;
   card.style.display = 'block';
   card.onclick = e => {
     const act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
     if (act === 'close') hideCard();
+    if (act === 'type') openPicker(kind === 'point' ? 'point' : 'line', id => changeType(kind, obj, id));
     if (act === 'edit') { kind === 'point' ? editPoint(obj) : editLine(obj); }
     if (act === 'copy') copyCoords(kind, obj);
     if (act === 'del' && confirm(kind === 'point' ? 'Удалить этот знак?' : 'Удалить эту линию?')) {
@@ -1945,9 +1946,10 @@ function setMode(m) {
   $('modeTitle').innerHTML = (isPt ? symbolSvg(spec.svg, 26, spec.color) : linePreview(spec, 36, 26)) +
     `<span>${isPt ? 'Ставим' : 'Рисуем'}: ${esc(spec.name)}${isPt ? '' : ` · точек ${mode.latlngs.length}`}</span>`;
   const btns = isPt
-    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['done', 'Готово', 'primary']]
-    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', 'Шаг назад'], ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
-  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' && isPt ? ' style="grid-column:span 3"' : ''}>${t}</button>`).join('');
+    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']]
+    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', 'Шаг назад'], ['sign', 'Знак…'], ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
+  // «Знак…» — выбрать условный знак заранее; без него ставится простая точка или линия, знак выбирается потом в карточке
+  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' ? ` style="grid-column:span ${isPt ? 2 : 3}"` : ''}>${t}</button>`).join('');
 }
 $('modeBtns').addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
@@ -1955,6 +1957,7 @@ $('modeBtns').addEventListener('click', e => {
   const act = b.dataset.act;
   if (act === 'center') addAt(map.getCenter());
   if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng)); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
+  if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode === m) addAt(ll, meas); }); }
   if (act === 'undo') { mode.latlngs.pop(); refreshTemp(); setMode(mode); }
   if (act === 'cancel') setMode(null);
@@ -1973,7 +1976,7 @@ function addAt(ll, meas) {
     }
     data.points.push(pt);
     save(); drawPoints();
-    toast(meas ? `Знак поставлен, ±${cmText(meas.m)}` : 'Знак поставлен');
+    toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') + (pt.type === GENERIC.point ? ' — знак выберете, нажав на неё' : ''));
     const ps = POINTS[pt.type] || {};
     if (ps.frac || ps.svgFor) editPoint(pt);                          // у надписи покрытия и отметок — сразу спросить значения
   } else {
@@ -2009,6 +2012,7 @@ function finishMode() {
     if (mode.latlngs.length < (closed ? 3 : 2)) { toast(closed ? 'Контур строения — хотя бы три угла' : 'Нужно хотя бы две точки'); return; }
     const line = { id: uid(), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: (LINES[mode.type] || {}).defCount || 1, state: '' };
     setMode(null);
+    if (line.type === GENERIC.line) { data.lines.push(line); save(); showCard('line', line); toast('Линия готова — выберите «Условный знак…»'); return; }
     editLine(line, true);
     return;
   }
@@ -2041,7 +2045,8 @@ function tileName(name) {
 }
 
 // Выбор знака или линии: поиск, вкладки, «последние», крупные плитки
-function openPicker(kind) {
+// onPick — свой обработчик выбора (смена знака у готового объекта, выбор знака во время рисования)
+function openPicker(kind, onPick) {
   const groups = kind === 'point' ? POINT_GROUPS : LINE_GROUPS, all = kind === 'point' ? POINTS : LINES;
   const recent = pref('recent.' + kind, []).filter(id => all[id]);
   let tab = recent.length ? 'recent' : groups[0].id, query = '';
@@ -2072,13 +2077,34 @@ function openPicker(kind) {
     if (!t) return;
     const id = t.dataset.pick;
     remember(kind, id); closeSheet();
+    if (onPick) { onPick(id); return; }
     if (kind === 'point') { setMode({ kind: 'point', type: id }); toast('Нажмите на карту или «В перекрестье»'); }
     else { setMode({ kind: 'line', type: id, latlngs: [] }); toast('Ставьте точки линии касанием карты'); }
   };
   render();
 }
-$('btnPoint').onclick = () => openPicker('point');
-$('btnLine').onclick = () => openPicker('line');
+// Как в «Тактической карте»: сначала просто точка или линия, условный знак — потом, в карточке объекта
+const GENERIC = { point: 'mark', line: 'plain' };
+$('btnPoint').onclick = () => { setMode({ kind: 'point', type: GENERIC.point }); toast('Ставьте точки: касание карты, «В перекрестье» или «По GPS». Знак — потом, в карточке'); };
+$('btnLine').onclick = () => { setMode({ kind: 'line', type: GENERIC.line, latlngs: [] }); toast('Ставьте точки линии. Условный знак выберете после «Готово»'); };
+// смена условного знака у готового объекта; поля, которых у нового знака нет, просто не показываются
+function changeType(kind, obj, id) {
+  if (kind === 'point') {
+    obj.type = id;
+    const s = POINTS[id];
+    if (s.wall) { const r = wallAngle(L.latLng(obj.lat, obj.lng)); if (r != null) obj.rot = r; } else delete obj.rot;
+    save(); drawPoints(); frame(); showCard('point', obj);
+    if (s.svgFor || s.frac || s.wall) editPoint(obj);
+    return;
+  }
+  const s = LINES[id];
+  if (s.closed && obj.latlngs.length < 3) { toast('Для строения нужен контур хотя бы из трёх углов'); return; }
+  obj.type = id;
+  obj.count = s.defCount || 1;
+  if (NO_STATE.has(s.kind)) obj.state = '';
+  save(); showCard('line', obj);
+  editLine(obj);
+}
 $('btnMap').onclick = () => { if (mode && mode.kind === 'line' && mode.latlngs.length && !confirm('Бросить рисование линии?')) return; setMode(null); closeSheet(); };
 
 // Список с пунктами: [{ id, icon, text, on }]
