@@ -98,6 +98,14 @@
   #mode .title { display:flex; align-items:center; gap:8px; font-weight:700; margin-bottom:8px; }
   #mode .title svg { flex:none; }
   #mode .btns { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; }
+  #mode .quick { display:flex; gap:6px; overflow-x:auto; margin:-2px 0 8px; }
+  #mode .quick button { flex:none; display:flex; align-items:center; gap:4px; min-height:44px; padding:4px 10px; border:1px solid var(--line); border-radius:22px; background:var(--panel); color:var(--ink); font-size:12px; max-width:150px; }
+  #mode .quick button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #mode .quick button.on { border:2px solid var(--accent); font-weight:700; }
+  #stake { position:absolute; left:8px; right:8px; z-index:1000; background:var(--panel); color:var(--ink); border-radius:16px; box-shadow:var(--shadow); padding:10px 12px; display:none; }
+  #stake .big { font-size:1.9em; font-weight:700; font-variant-numeric:tabular-nums; }
+  #stake .row { display:flex; gap:10px; align-items:center; }
+  #stake .ok { color:#2e7d32; }
   .btn { border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:12px; padding:11px 6px; font-weight:600; font-size:.95em; min-height:46px; }
   body.sun .btn { border:2px solid #000; }
   .btn.primary { background:var(--accent); color:var(--accentInk); border-color:var(--accent); }
@@ -234,7 +242,7 @@
 
 <div id="scale"><span id="scaleText"></span><i id="scaleBar"></i></div>
 
-<div id="mode"><div class="title" id="modeTitle"></div><div class="btns" id="modeBtns"></div></div>
+<div id="stake"></div><div id="mode"><div class="title" id="modeTitle"></div><div class="quick" id="modeQuick"></div><div class="btns" id="modeBtns"></div></div>
 <div id="card"></div>
 
 <div id="bar">
@@ -1978,7 +1986,7 @@ function showCard(kind, obj) {
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
-    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
+    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn" data-act="stake" style="grid-column:span 4">◎ Вынести в натуру</button><button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -1994,6 +2002,7 @@ function showCard(kind, obj) {
     if (act === 'edit') { kind === 'point' ? editPoint(obj) : editLine(obj); }
     if (act === 'copy') copyCoords(kind, obj);
     if (act === 'verts') showVertices(obj);
+    if (act === 'stake') startStake(kind === 'point' ? [obj.lat, obj.lng] : obj.latlngs[0], kind === 'point' ? (pointLabel(obj) || (POINTS[obj.type] || POINTS.mark).name) : 'L' + (obj.no || '') + '.1');
     if (act === 'photo') addPhoto(kind, obj);
     if (act === 'ai') { if (obj.ai) showSuggestion(kind, obj, obj.ai); else suggestSign(kind, obj); }
     if (act === 'del') {                                              // без лишнего вопроса — случайное удаление отменяет «Вернуть»
@@ -2291,6 +2300,71 @@ function readNetFields(v, a) {
   return next;
 }
 
+/* ───────────── Вынос в натуру: цель — точка плана, вершина или координаты; показываем куда и сколько идти ───────────── */
+
+const STAKE_OK_M = 0.02;                                               // ближе 2 см — «на месте»
+let stake = null, stakeLayer = L.layerGroup().addTo(map);
+function startStake(ll, name) {
+  stake = { ll: L.latLng(ll), name };
+  stakeLayer.clearLayers();
+  L.circleMarker(stake.ll, { radius: 9, color: '#e65100', weight: 3, fill: false, interactive: false }).addTo(stakeLayer);
+  startGps(); hideCard(); closeSheet(); updateStake();
+  $('stake').style.display = 'block'; layoutStake();
+}
+function stopStake() { stake = null; stakeLayer.clearLayers(); $('stake').style.display = 'none'; }
+function layoutStake() { $('stake').style.bottom = ($('bar').offsetHeight + 8) + 'px'; }
+function updateStake() {
+  if (!stake) return;
+  const t = sk42(stake.ll.lat, stake.ll.lng);
+  let body;
+  if (!gps || Date.now() - gps.at > GPS_FRESH_MS) body = '<div class="big">жду GPS…</div>';
+  else {
+    const me = sk42(gps.lat, gps.lng), dx = t.x - me.x, dy = t.y - me.y, d = Math.hypot(dx, dy);
+    const az = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;      // дирекционный угол на цель (от оси X — на север, по часовой)
+    const here = d <= Math.max(STAKE_OK_M, gps.acc);
+    body = `<div class="row"><svg width="56" height="56" viewBox="-28 -28 56 56" style="flex:none;transform:rotate(${az}deg)"><path d="M0 -24L10 8L0 2L-10 8Z" fill="${here ? '#2e7d32' : '#e65100'}"/></svg>
+      <div><div class="big ${here ? 'ok' : ''}">${here ? 'На месте' : cmText(d)}</div>
+      <div>${dx >= 0 ? 'на север' : 'на юг'} ${cmText(Math.abs(dx))} · ${dy >= 0 ? 'на восток' : 'на запад'} ${cmText(Math.abs(dy))}</div>
+      <div style="color:var(--muted);font-size:.85em">угол ${az.toFixed(1)}° · GPS ±${cmText(gps.acc)}</div></div></div>`;
+  }
+  $('stake').innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:4px"><b>Вынос: ${esc(stake.name)}</b><button class="x" id="stakeStop">×</button></div>${body}
+    <div style="color:var(--muted);font-size:.8em;margin-top:4px">X ${f2(t.x)} Y ${f2(t.y)} — стрелка показывает направление на карте (север вверху)</div>`;
+  $('stakeStop').onclick = stopStake;
+}
+setInterval(updateStake, 1000);
+function stakeByCoords() {
+  openForm('Вынос по координатам', [
+    { key: 'x', label: 'X (на север), м', type: 'number', placeholder: '6181590.47', half: true },
+    { key: 'y', label: 'Y (на восток), м', type: 'number', placeholder: '7413346.04', half: true },
+    { key: 'name', label: 'Название', placeholder: 'например ось 1' }
+  ], v => {
+    const x = parseNum(v.x), y = parseNum(v.y);
+    if (isNaN(x) || isNaN(y)) { toast('X и Y — числа, в метрах'); return false; }
+    const zone = crs().zoned ? (Math.floor(y / 1e6) || zoneOf(gps ? gps.lng : map.getCenter().lng)) : 0;   // в ГСК и СК-42 номер зоны — первые цифры Y
+    try { startStake(fromSk42(x, y, zone), v.name || `X ${x} Y ${y}`); } catch (e) { toast('Не удалось пересчитать координаты'); return false; }
+  }, 'Вынести');
+}
+
+/* ───────────── Точка по расстоянию и углу от базы (смещение): база — GPS, если свежий, иначе последняя поставленная ───────────── */
+function offsetPoint() {
+  const fresh = gps && Date.now() - gps.at < GPS_FRESH_MS;
+  const last = mode.kind === 'point' ? data.points[data.points.length - 1] : null;
+  const base = fresh ? L.latLng(gps.lat, gps.lng) : mode.kind === 'line' && mode.latlngs.length ? L.latLng(mode.latlngs[mode.latlngs.length - 1]) : last ? L.latLng(last.lat, last.lng) : null;
+  if (!base) { toast('Нет базы: включите GPS или сначала поставьте точку'); return; }
+  openForm('Точка по расстоянию и углу', [
+    { key: 'd', label: 'Расстояние, м', type: 'number', placeholder: '3.50', half: true },
+    { key: 'a', label: 'Дирекционный угол, °', type: 'number', placeholder: '90 — на восток', half: true,
+      hint: `От ${fresh ? 'текущего положения по GPS' : 'последней точки'}. 0° — на север, 90° — на восток, 180° — на юг, 270° — на запад.` }
+  ], v => {
+    const d = parseNum(v.d), a = parseNum(v.a);
+    if (!(d >= 0) || isNaN(a)) { toast('Расстояние и угол — числа'); return false; }
+    const b = sk42(base.lat, base.lng), r = a * Math.PI / 180;
+    const ll = fromSk42(b.x + d * Math.cos(r), b.y + d * Math.sin(r), b.zone);
+    addAt(ll, null, 'offset');
+    toast(`Точка на ${mText(d, 2)} м под углом ${mText(a, 1)}°`);
+  }, 'Поставить');
+}
+
 /* ───────────── Режимы: ставим знак / рисуем линию ───────────── */
 
 let mode = null;          // { kind: 'point'|'line', type, latlngs, temp }
@@ -2303,6 +2377,7 @@ function setMode(m) {
   if (mode && mode.temp && (!m || m !== mode)) { map.removeLayer(mode.temp); mode.temp = null; }
   mode = m;
   if (typeof updateRubber === 'function') updateRubber();
+  if (GNSS && GNSS.volumeKeys) GNSS.volumeKeys({ on: !!m && pref('volKeys', true) }).catch(() => {});   // громкость «−» — По GPS, «+» — Измерить
   setBarState();
   const box = $('mode');
   if (!mode) { box.style.display = 'none'; return; }
@@ -2313,11 +2388,30 @@ function setMode(m) {
     `<span>${esc(spec.id === GENERIC.point ? 'Точки' : spec.id === GENERIC.line ? 'Линия' : spec.name)}${isPt ? '' : ` · <b class="cnt">${mode.latlngs.length}</b> ${plural(mode.latlngs.length, 'точка', 'точки', 'точек')}`}</span>`;
   const snapBtn = ['snap', snapOn ? 'Привязка: вкл' : 'Привязка: выкл', snapOn ? 'on' : ''];
   const btns = isPt
-    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['photo', '📷 Фото'], ['sign', 'Знак…'], snapBtn, ['done', 'Готово', 'primary']]
-    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', '↶ Убрать точку'], ['sign', 'Знак…'], snapBtn, ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
+    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['photo', '📷 Фото'], ['offset', '↗ Смещение'], ['sign', 'Знак…'], snapBtn, ['done', 'Готово', 'primary']]
+    : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', '↶ Убрать точку'], ['offset', '↗ Смещение'], ['sign', 'Знак…'], snapBtn, ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
   // «Знак…» — выбрать условный знак заранее; без него ставится простая точка или линия, знак выбирается потом в карточке
-  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' ? ` style="grid-column:span ${isPt ? 3 : 2}"` : ''}>${t}</button>`).join('');
+  // ряд «последних» знаков: смена знака одним касанием, без списка
+  const recent = pref('recent.' + mode.kind, []).filter(id => (isPt ? POINTS : LINES)[id]).slice(0, 6);
+  $('modeQuick').innerHTML = recent.map(id => { const sp = (isPt ? POINTS : LINES)[id];
+    return `<button data-quick="${id}" class="${id === mode.type ? 'on' : ''}">${isPt ? symbolSvg(sp.svg, 20, netColor(id, sp.color)) : linePreview(sp, 28, 20)}<span>${esc(sp.name)}</span></button>`; }).join('');
+  $('modeQuick').style.display = recent.length ? 'flex' : 'none';
+  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' ? ` style="grid-column:span ${isPt ? 2 : 1}"` : ''}>${t}</button>`).join('');
 }
+// кнопки громкости в режиме съёмки (Android): «−» — точка по GPS, «+» — измерение с усреднением
+addEventListener('volumeKey', e => {
+  if (!mode || $('sheet').style.display === 'block') return;
+  const act = (e.key || (e.detail && e.detail.key)) === 'up' ? 'measure' : 'gps';
+  const b = document.querySelector(`#modeBtns [data-act="${act}"]`);
+  if (b) { if (navigator.vibrate) navigator.vibrate(40); b.click(); }
+});
+$('modeQuick').addEventListener('click', e => {
+  const b = e.target.closest('[data-quick]');
+  if (!b || !mode) return;
+  mode.type = b.dataset.quick; remember(mode.kind, mode.type);
+  if (mode.temp) refreshTemp();
+  setMode(mode); toast('Знак: ' + (mode.kind === 'point' ? POINTS : LINES)[mode.type].name);
+});
 $('modeBtns').addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
   if (!b || !mode) return;
@@ -2335,6 +2429,7 @@ $('modeBtns').addEventListener('click', e => {
       if (pt) addPhoto('point', pt, blob);
     });
   }
+  if (act === 'offset') offsetPoint();
   if (act === 'snap') { snapOn = !snapOn; setPref('snap', snapOn); setMode(mode); toast(snapOn ? 'Привязка к точкам, вершинам и линиям включена' : 'Привязка выключена — точка ставится ровно куда нажали'); }
   if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode !== m) return; const pt = addAt(ll, meas);
@@ -2497,7 +2592,7 @@ function openPicker(kind, onPick, note) {
   const render = () => {
     let html = '';
     if (query) {
-      const q = query.toLowerCase(), found = Object.values(all).filter(s => s.name.toLowerCase().includes(q));
+      const q = query.toLowerCase(), found = Object.values(all).filter(s => s.name.toLowerCase().includes(q) || s.id.toLowerCase() === q || (s.index && s.index.toLowerCase() === q));
       html = `<div class="h">Найдено: ${found.length}</div>` + (found.length ? `<div class="tiles">${found.map(tile).join('')}</div>` : '<div class="empty">Ничего не нашлось — попробуйте другое слово</div>');
     } else if (tab === 'recent') {
       html = '<div class="h">Последние</div>' + (recent.length ? `<div class="tiles">${recent.map(id => tile(all[id])).join('')}</div>` : '<div class="empty">Здесь появятся знаки, которыми вы пользовались</div>');
@@ -2593,7 +2688,9 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
   { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' },
   ...(NATIVE ? [{ id: 'screen', icon: '◑', text: pref('keepScreen', true) ? 'Экран не гаснет во время работы' : 'Экран гаснет как обычно', on: pref('keepScreen', true), check: true }] : []),
+  ...(NATIVE ? [{ id: 'volkeys', icon: '±', text: pref('volKeys', true) ? 'Кнопки громкости: «−» По GPS, «+» Измерить' : 'Кнопки громкости: как обычно', on: pref('volKeys', true), check: true }] : []),
   { id: 'cal', icon: '⟷', text: PX_MM === PX_MM_DEFAULT ? 'Размер знаков: откалибровать по линейке' : 'Размер знаков: по линейке — повторить' },
+  { id: 'stake', icon: '◎', text: 'Вынос в натуру по координатам' },
   { header: 'Карта' },
   { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() },
   { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
@@ -2607,6 +2704,9 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'txt', icon: '⇩', text: 'Каталог TXT «№;X;Y;H;код» — точки и вершины линий' },
   { id: 'wells', icon: '⇩', text: 'Ведомость колодцев (CSV для Excel)' },
   { id: 'nets', icon: '⇩', text: 'Ведомость сетей (CSV для Excel)' },
+  { id: 'cross', icon: '⇩', text: 'Ведомость пересечений сетей (CSV)' },
+  { id: 'geojson', icon: '⇩', text: 'GeoJSON для QGIS (WGS-84, все свойства)' },
+  { id: 'mif', icon: '⇩', text: `MIF/MID для MapInfo и Панорамы (${planeName()})` },
   { id: 'kmz', icon: '⇩', text: 'Выгрузить KMZ с фото (Google Earth, ГИС)' },
   { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + каталог + DXF + фото' },
   { id: 'kml', icon: '⇩', text: 'Выгрузить всё в KML (без фото)' },
@@ -2626,7 +2726,12 @@ const MENU = {
   raster: () => rasterInput.click(),
   rasters: () => rasterMenu(),
   heights: () => heightsMenu(),
+  volkeys: () => { const on = !pref('volKeys', true); setPref('volKeys', on); toast(on ? 'В режиме съёмки: громкость «−» — точка по GPS, «+» — Измерить' : 'Кнопки громкости работают как обычно'); },
+  stake: () => stakeByCoords(),
   kmz: () => exportKmz(),
+  cross: () => { const n = netCrossings().length; if (!n) { toast('Пересечений сетей не найдено'); return; } download(`peresecheniya_${today()}.csv`, toCrossSheet(), 'text/csv;charset=utf-8'); },
+  geojson: () => download(`plan_${today()}.geojson`, toGeoJson(), 'application/geo+json'),
+  mif: () => { const { mif, mid } = toMifMid(); download(`plan_mapinfo_${today()}.zip`, makeZip([{ name: `plan_${today()}.mif`, data: mif }, { name: `plan_${today()}.mid`, data: mid }]), 'application/zip'); },
   wells: () => download(`kolodcy_${today()}.csv`, toWellsSheet(), 'text/csv;charset=utf-8'),
   nets: () => download(`seti_${today()}.csv`, toNetsSheet(), 'text/csv;charset=utf-8'),
   dxf: () => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf'),
@@ -3162,6 +3267,61 @@ function toNetsSheet() {
       STATE_NAME[l.state] || 'действующая', a.sleeve ? 'да' + (a.sleeveD ? ', ' + a.sleeveD : '') : '', netCaption(l)]);
   }
   return csvJoin(rows);
+}
+// Ведомость пересечений сетей: точка пересечения в плоской системе, отметки обеих сетей (по вершинам, линейно) и разница
+const isNetLine = l => NET_LINE_KINDS.has((LINES[l.type] || {}).kind) || l.type === 'sleeve';
+function netCrossings() {
+  const nets = data.lines.filter(isNetLine).map(l => ({ l, p: l.latlngs.map(a => sk42(a[0], a[1])), h: l.hs || [] }));
+  const out = [];
+  const hAt = (n, i, t) => { const a = n.h[i], b = n.h[i + 1]; return a && b && hasH(a.h) && hasH(b.h) ? Number(a.h) + (Number(b.h) - Number(a.h)) * t : null; };
+  for (let i = 0; i < nets.length; i++) for (let j = i + 1; j < nets.length; j++) {
+    const A = nets[i], B = nets[j];
+    for (let a = 0; a + 1 < A.p.length; a++) for (let b = 0; b + 1 < B.p.length; b++) {
+      const p = A.p[a], p2 = A.p[a + 1], q = B.p[b], q2 = B.p[b + 1];
+      const rx = p2.x - p.x, ry = p2.y - p.y, sx = q2.x - q.x, sy = q2.y - q.y, den = rx * sy - ry * sx;
+      if (Math.abs(den) < 1e-9) continue;                                 // параллельны
+      const t = ((q.x - p.x) * sy - (q.y - p.y) * sx) / den, u = ((q.x - p.x) * ry - (q.y - p.y) * rx) / den;
+      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+      out.push({ A: A.l, B: B.l, x: p.x + t * rx, y: p.y + t * ry, h1: hAt(A, a, t), h2: hAt(B, b, u) });
+    }
+  }
+  return out;
+}
+function toCrossSheet() {
+  const nm = l => `L${l.no || ''} ${(LINES[l.type] || {}).name}${netCaption(l) ? ' (' + netCaption(l) + ')' : ''}`;
+  const rows = [['№', 'Сеть 1', 'Сеть 2', 'X ' + planeName(), 'Y ' + planeName(), 'Отметка сети 1', 'Отметка сети 2', 'Разность, м', 'Глубина 1, м', 'Глубина 2, м']];
+  netCrossings().forEach((c, i) => rows.push([i + 1, nm(c.A), nm(c.B), f3(c.x), f3(c.y), c.h1 == null ? '' : c.h1.toFixed(2), c.h2 == null ? '' : c.h2.toFixed(2),
+    c.h1 != null && c.h2 != null ? Math.abs(c.h1 - c.h2).toFixed(2) : '', (c.A.attr || {}).depth || '', (c.B.attr || {}).depth || '']));
+  return csvJoin(rows);
+}
+// GeoJSON для QGIS и ИСОГД: WGS-84 (так требует формат), отметка третьей координатой, все свойства
+function toGeoJson() {
+  const props = (o, kind) => { const sp = (kind === 'point' ? POINTS : LINES)[o.type] || {};
+    return { no: o.no || null, code: o.type, name: sp.name, label: kind === 'point' ? pointLabel(o) : netCaption(o) || o.caption || '', h: kind === 'point' ? pointH(o) : null,
+      state: o.state || '', note: kind === 'point' ? pointNote(o) : '', ...(o.attr ? { attr: o.attr } : {}), ...(o.q ? { acc: o.q.acc, fix: o.q.fix, time: o.q.at } : {}) }; };
+  const z = (h) => hasH(h) ? [Number(h)] : [];
+  const feats = data.points.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lng, p.lat, ...z(pointH(p))] }, properties: props(p, 'point') }))
+    .concat(data.lines.map(l => { const sp = LINES[l.type] || {}, c = l.latlngs.map((a, i) => [a[1], a[0], ...z(l.hs && l.hs[i] && l.hs[i].h)]);
+      return { type: 'Feature', geometry: sp.closed ? { type: 'Polygon', coordinates: [c.concat([c[0]])] } : { type: 'LineString', coordinates: c }, properties: props(l, 'line') }; }));
+  return JSON.stringify({ type: 'FeatureCollection', name: 'Полевой план ' + today(), features: feats }, null, 1);
+}
+// MIF/MID для MapInfo и ГИС Панорама: плоская система (X — восток, Y — север), кириллица 1251
+function toMifMid() {
+  const objs = data.points.map(p => ({ o: p, kind: 'point', pts: [sk42(p.lat, p.lng)] })).concat(data.lines.map(l => ({ o: l, kind: 'line', pts: l.latlngs.map(a => sk42(a[0], a[1])) })));
+  const all = objs.flatMap(x => x.pts);
+  const b = all.length ? [Math.min(...all.map(p => p.y)) - 100, Math.min(...all.map(p => p.x)) - 100, Math.max(...all.map(p => p.y)) + 100, Math.max(...all.map(p => p.x)) + 100] : [0, 0, 1, 1];
+  const mif = ['Version 300', 'Charset "WindowsCyrillic"', 'Delimiter ";"', `CoordSys NonEarth Units "m" Bounds (${f3(b[0])}, ${f3(b[1])}) (${f3(b[2])}, ${f3(b[3])})`,
+    'Columns 7', '  NO Char(20)', '  CODE Char(30)', '  NAME Char(100)', '  H Float', '  LABEL Char(120)', '  STATE Char(30)', '  NOTE Char(200)', 'Data'];
+  const mid = [], q = v => '"' + String(v == null ? '' : v).replace(/"/g, "'") + '"';
+  for (const { o, kind, pts } of objs) {
+    const sp = (kind === 'point' ? POINTS : LINES)[o.type] || {};
+    if (kind === 'point') mif.push(`Point ${f3(pts[0].y)} ${f3(pts[0].x)}`);
+    else if (sp.closed) mif.push('Region 1', '  ' + pts.length, ...pts.map(p => `${f3(p.y)} ${f3(p.x)}`));
+    else mif.push('Pline ' + pts.length, ...pts.map(p => `${f3(p.y)} ${f3(p.x)}`));
+    const H = kind === 'point' ? pointH(o) : null;
+    mid.push([q(kind === 'point' ? o.no || '' : 'L' + (o.no || '')), q(o.type), q(sp.name), H == null ? '' : H.toFixed(3), q(kind === 'point' ? pointLabel(o) : netCaption(o) || o.caption || ''), q(STATE_NAME[o.state] || ''), q(kind === 'point' ? pointNote(o) : '')].join(';'));
+  }
+  return { mif: cp1251(mif.join('\r\n') + '\r\n'), mid: cp1251(mid.join('\r\n') + '\r\n') };
 }
 // Каталог для КРЕДО, GeoniCS, Панорамы: «№;X;Y;H;код;описание» — точки и все вершины линий (номер линии.номер вершины)
 function toCatalog() {
