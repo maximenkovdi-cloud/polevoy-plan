@@ -161,7 +161,8 @@
   #card .sub { color:var(--muted); font-size:12.5px; }
   #card .kv { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin:10px 0; font-size:13.5px; font-variant-numeric:tabular-nums; }
   #card .kv span:nth-child(odd) { color:var(--muted); }
-  #card .acts { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  #card .acts { display:grid; grid-template-columns:1fr 1fr 1fr 52px; gap:6px; }
+  #card .btn.trash { color:var(--red); padding:0; margin-left:6px; }
   #card .swatches { display:flex; align-items:center; gap:8px; margin:2px 0 10px; overflow-x:auto; padding:3px 2px; }
   .meas-row .seg button { min-height:44px; font-size:15px; padding:8px 12px; }
   .tabs button { min-height:40px; }
@@ -805,6 +806,7 @@ function calibrate() {
 /* ───────────── GPS ───────────── */
 
 let gps = null, gpsMarker = null, gpsCircle = null, gpsWatch = null;
+const GPS_WARN_M = 0.25;          // хуже — «По GPS» переспрашивает (допуск 1:500 — 0,5 мм на плане)
 const GPS_FRESH_MS = 5000;        // «По GPS» берёт координаты не старше 5 с
 const RTK_FIX_M = 0.05;          // точность до 5 см — почти наверняка фиксированное решение RTK
 function startGps() {
@@ -853,7 +855,9 @@ let hgt = pref('hgt', { src: 'ell', dh: 0, ref: null });   // src: 'ell' — в�
 function loadGeoid() {
   if (!geoidLoading) geoidLoading = fetch(GEOID.url)
     .then(r => { if (!r.ok) throw new Error('нет файла модели геоида'); return r.arrayBuffer(); })
-    .then(b => { if (b.byteLength !== GEOID.rows * GEOID.cols * 2) throw new Error('файл модели геоида повреждён'); geoidGrid = new Int16Array(b); })
+    .then(b => { if (b.byteLength !== GEOID.rows * GEOID.cols * 2) throw new Error('файл модели геоида повреждён'); geoidGrid = new Int16Array(b);
+      const n = recomputeHeights(true);                              // точки, снятые до загрузки модели, получают отметки
+      if (n) { save(); redrawAll(); toast(`Модель геоида загружена — посчитаны отметки: ${n}`); } })
     .catch(e => { geoidLoading = null; throw e; });
   return geoidLoading;
 }
@@ -927,6 +931,30 @@ function heightsMenu() {
   });
   if ($('hgtReset')) $('hgtReset').onclick = () => { hgt = { ...hgt, dh: 0, ref: null }; setPref('hgt', hgt); heightsMenu(); };
 }
+// Пересчёт отметок, снятых по ГНСС (по сохранённой высоте над эллипсоидом): onlyMissing — только тем, у кого отметки ещё нет
+function gnssHeights() {
+  const out = [];
+  for (const p of data.points) { const e = p.hInfo && p.hInfo.hEll != null ? p.hInfo.hEll : p.meas && p.meas.hEll;
+    if (p.hSrc === 'gnss' && e != null) out.push({ ll: [p.lat, p.lng], hEll: e, has: p.h != null && p.h !== '', set: (H, ref) => { p.h = H; p.hInfo = { ...(p.hInfo || {}), ref, hEll: e }; } }); }
+  for (const l of data.lines) (l.hs || []).forEach((z, i) => { if (z && z.src === 'gnss' && z.hEll != null) out.push({ ll: l.latlngs[i], hEll: z.hEll, has: z.h != null, set: (H, ref) => { z.h = H; z.ref = ref; } }); });
+  return out;
+}
+function recomputeHeights(onlyMissing) {
+  const ref = hgt.ref ? hgt.ref.name || 'репер' : hgt.dh ? 'поправка вручную' : '';
+  let n = 0;
+  for (const g of gnssHeights()) {
+    if (onlyMissing && g.has) continue;
+    const H = normalHeight(g.ll[0], g.ll[1], g.hEll);
+    if (H != null) { g.set(+H.toFixed(2), ref); n++; }
+  }
+  // вершины, привязанные к точкам, берут их новую отметку
+  for (const l of data.lines) (l.hs || []).forEach((z, i) => {
+    if (!z || z.src !== 'snap') return;
+    const p = data.points.find(q => q.lat === l.latlngs[i][0] && q.lng === l.latlngs[i][1] && hasH(q.h));
+    if (p && Number(p.h) !== z.h) { z.h = Number(p.h); n++; }
+  });
+  return n;
+}
 function bindToBenchmark(ll, meas) {
   const H0 = rawHeight(ll.lat, ll.lng, meas.hEll);
   if (H0 == null) { toast(meas.hEll == null ? 'Приёмник не дал высоту — привязка невозможна' : 'Модель геоида не загрузилась — проверьте интернет и повторите'); return; }
@@ -942,6 +970,10 @@ function bindToBenchmark(ll, meas) {
     toast(Math.abs(dh) > HEIGHT_DH_SUSPECT
       ? `Поправка ${mText(dh, 2)} м — слишком большая: похоже, приёмник даёт уже отметку. Проверьте «Высота от приёмника».`
       : `Привязано: поправка ${dh >= 0 ? '+' : ''}${mText(dh, 3)} м`);
+    const old = gnssHeights().length;                                 // ранее снятые отметки — пересчитать с новой поправкой
+    if (old && Math.abs(dh) <= HEIGHT_DH_SUSPECT && confirm(`Пересчитать ${old} ранее снятых отметок по ГНСС с новой поправкой?\n\nСовет: проверьте привязку на втором репере — измерьте его как обычную точку и сравните отметку.`)) {
+      const n = recomputeHeights(false); save(); redrawAll(); toast(`Пересчитано отметок: ${n}`);
+    }
   });
 }
 /* ───────────── Измерение точки с усреднением и проверкой допуска ───────────── */
@@ -981,6 +1013,10 @@ function measStats(fixes) {
   }
   return res;
 }
+// допуск по высоте: ¼ сечения рельефа (СП 47.13330, п. 5.1.19); сечение для 1:500–1:1000 — 0,5 м, для 1:2000 — 1 м
+function heightTol(scale) { return (scale <= 1000 ? 0.5 : 1) / 4; }
+// отсчёты хуже допуска (FLOAT, автономные) отбрасываются, если хороших хватает; иначе берутся все и это видно
+function goodFixes(fixes, tol) { const g = fixes.filter(f => f.acc <= tol); return g.length >= MEAS_MIN_FIXES ? g : fixes; }
 function measVerdict(m, tol, scale) {
   if (m <= tol) return ['ok', `Годится для 1:${scale} — ошибка в пределах допуска ${cmText(tol)}`];
   if (m <= 2 * tol) return ['mid', `На пределе для 1:${scale}: больше средней (${cmText(tol)}), но меньше предельной (${cmText(2 * tol)})`];
@@ -1032,10 +1068,14 @@ function runMeasure(o, onAccept) {
     const sec = Math.min(o.sec, Math.round((Date.now() - t0) / 1000));
     if (!fixes.length) { $('measLive').innerHTML = `<div class="meas-big">жду координаты…</div><div class="meas-sub">${sec} с</div>`; }
     else {
-      const s = measStats(fixes), [cls, text] = measVerdict(s.m, tol, o.scale), d = sats && sats.dop;
-      const H = normalHeight(s.lat, s.lng, s.hEll);
+      const use = goodFixes(fixes, tol), dropped = fixes.length - use.length;
+      const s = measStats(use), [cls0, text] = measVerdict(s.m, tol, o.scale), d = sats && sats.dop;
+      const H = normalHeight(s.lat, s.lng, s.hEll), ht = heightTol(o.scale), hBad = s.hm != null && s.hm > ht;
+      const cls = hBad && cls0 === 'ok' ? 'mid' : cls0;
       $('measLive').innerHTML = `<div class="meas-verdict ${cls}"><div class="meas-big">±${cmText(s.m)}</div>${text}</div>
-        ${H != null ? `<div class="meas-h">H ${mText(H, 2)} м <span>±${cmText(s.hm)}${hgt.ref || hgt.dh ? '' : ', без привязки к реперу'}</span></div>` : ''}
+        ${H != null ? `<div class="meas-h">H ${mText(H, 2)} м <span>±${cmText(s.hm)}${hgt.ref || hgt.dh ? '' : ', без привязки к реперу'}</span></div>
+          <div class="meas-sub" style="${hBad ? 'color:var(--red)' : ''}">${hBad ? `Высота хуже допуска ${cmText(ht)} (¼ сечения рельефа) — для отметок не годится` : `Высота в допуске ${cmText(ht)}`}</div>` : ''}
+        ${dropped ? `<div class="meas-sub" style="color:var(--red)">Отброшено отсчётов хуже допуска (FLOAT, без поправок): ${dropped}</div>` : ''}
         <div class="meas-sub">${sec} из ${o.sec} с · отсчётов ${s.n} · разброс ±${cmText(s.dev)} · по приёмнику ±${cmText(s.acc)}${d ? ' · HDOP ' + d.h.toFixed(1) : ''}</div>` +
         (d && d.h > 5 ? '<div class="meas-sub" style="color:var(--red)">Плохая геометрия спутников (HDOP больше 5) — лучше подождать.</div>' : '');
     }
@@ -1044,10 +1084,11 @@ function runMeasure(o, onAccept) {
   const finish = () => {
     stop();
     if (fixes.length < MEAS_MIN_FIXES) { $('measLive').textContent = `Мало отсчётов (${fixes.length}) — нужен хотя бы ${MEAS_MIN_FIXES}. Проверьте GPS и повторите.`; resetButtons(); return; }
-    const s = measStats(fixes), [cls] = measVerdict(s.m, tol, o.scale);
+    const use = goodFixes(fixes, tol), s = measStats(use), [cls0] = measVerdict(s.m, tol, o.scale);
+    const cls = s.hm != null && s.hm > heightTol(o.scale) && cls0 === 'ok' ? 'mid' : cls0;
     const hd = hdops.length ? hdops.reduce((a, b) => a + b, 0) / hdops.length : null;
     const meas = { sec: Math.round((Date.now() - t0) / 1000), n: s.n, m: +s.m.toFixed(3), dev: +s.dev.toFixed(3), acc: +s.acc.toFixed(3),
-      hdop: hd == null ? null : +hd.toFixed(1), hEll: s.hEll == null ? null : +s.hEll.toFixed(3), hm: s.hm == null ? null : +s.hm.toFixed(3), kind: o.kind, scale: o.scale, tol: +tol.toFixed(3), ok: cls, at: new Date().toISOString() };
+      hdop: hd == null ? null : +hd.toFixed(1), hEll: s.hEll == null ? null : +s.hEll.toFixed(3), hm: s.hm == null ? null : +s.hm.toFixed(3), kind: o.kind, scale: o.scale, tol: +tol.toFixed(3), ok: cls, dropped: fixes.length - use.length, at: new Date().toISOString() };
     const go = $('measGo');
     go.textContent = 'Принять'; go.disabled = false;
     go.onclick = () => { closeSheet(); onAccept(L.latLng(s.lat, s.lng), meas); };
@@ -1877,6 +1918,9 @@ function showCard(kind, obj) {
     if (s.svgFor) name = s.name.replace(/ \(.*\)$/, '') + ' — ' + esc(((COVERS.find(c => c[0] === (obj.attr || {}).cover) || COVERS[0])[1]));
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
+    if (obj.no) kv.unshift(['№', String(obj.no)]);
+    if (obj.q) kv.push(['Точность', `±${cmText(obj.q.acc)} в плане · ${obj.q.fix}${obj.q.src === 'measure' ? ' · усреднено' : ''}<br><span style="color:var(--muted)">${new Date(obj.q.at).toLocaleString('ru-RU')}</span>`]);
+    else kv.push(['Точность', '<span style="color:var(--muted)">не измерена — поставлена касанием или в перекрестье</span>']);
     const hInfo = obj.hInfo || (obj.meas ? { acc: obj.meas.hm, from: 'measure' } : {});
     kv.push(['Отметка', (obj.h != null && obj.h !== '' ? `<b>${mText(Number(obj.h), 2)} м</b><br>` : '') + `<span style="color:var(--muted)">${esc(heightNote(obj.h, obj.hSrc, hInfo))}</span>`]);
     if (obj.meas) {
@@ -1889,7 +1933,7 @@ function showCard(kind, obj) {
     icon = linePreview(s, 40, 34, obj.color); name = s.name + (obj.count > 1 ? ` · прокладок ${obj.count}` : '');
     sub = [s.tag, obj.caption].filter(Boolean).map(esc).join(' ') || 'без подписи';
     const withH = (obj.hs || []).filter(Boolean).length;
-    kv = [['Длина', lineLength(obj).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' м'], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
+    kv = [...(obj.no ? [['№', 'L' + obj.no]] : []), ['Длина', lineLength(obj).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' м'], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
     if (s.kind === 'building') {
       const a = obj.attr || {}, lab = buildingLabel(s, obj);
       name = s.name; sub = [lab, a.houseNo ? '№ ' + a.houseNo : ''].filter(Boolean).map(esc).join(' · ') || 'контур';
@@ -1905,12 +1949,12 @@ function showCard(kind, obj) {
     if (obj.state) kv.push(['Состояние', STATE_NAME[obj.state] || obj.state]);
     if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${obj.pk0}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
   }
-  card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button><button class="x" data-act="close">×</button></div>
+  card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
-    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 2 : 3}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button></div>`;
+    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -2199,6 +2243,7 @@ $('modeBtns').addEventListener('click', e => {
   const act = b.dataset.act;
   if (act === 'center') addAt(map.getCenter(), null, 'center');
   if (act === 'gps' && gps && Date.now() - gps.at > GPS_FRESH_MS) { toast(`Координаты GPS устарели (${Math.round((Date.now() - gps.at) / 1000)} с назад) — подождите сигнал`); startGps(); return; }
+  if (act === 'gps' && gps && gps.acc > GPS_WARN_M && !confirm(`Точность GPS ±${cmText(gps.acc)} (${fixKind(gps.acc)}) — хуже допуска 1:500 (25 см). Поставить всё равно?`)) return;
   if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng), null, 'gps'); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
   if (act === 'photo') {                                              // сначала снимок (отмена — точки нет), потом точка с ним
     const m = mode;
@@ -2227,11 +2272,12 @@ function addAt(ll, meas, src) {
   if (snap) { ll = snap.ll; toast('Привязано ' + snap.what); }
   const hz = heightFor(ll, meas, src, snap);
   if (mode.kind === 'point') {
-    const pt = { id: uid(), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' };
+    const pt = { id: uid(), no: nextNo(data.points), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' };
+    if (src === 'gps' || src === 'measure') pt.q = meas ? { acc: meas.m, fix: fixKind(meas.acc), at: meas.at, src } : { acc: +gps.acc.toFixed(3), fix: fixKind(gps.acc), at: new Date(gps.at).toISOString(), src };
     if (pt.type === GENERIC.point) pt.color = pref('color', VIS_COLOR);   // простая точка — заметным цветом (последним выбранным)
     if ((POINTS[mode.type] || {}).wall) { const r = wallAngle(L.latLng(ll)); if (r != null) pt.rot = r; }   // крыльцо — стеной к ближнему зданию
     if (meas) pt.meas = meas;
-    if (hz) { pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from }; }
+    if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll }; }
     data.points.push(pt);
     save(); drawPoints();
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
@@ -2275,15 +2321,21 @@ function heightFor(ll, meas, src, snap) {
   const ref = hgt.ref ? hgt.ref.name || 'репер' : hgt.dh ? 'поправка вручную' : '';
   if (src === 'measure' || src === 'gps') {
     const hEll = src === 'measure' ? meas.hEll : gps && gps.alt, H = normalHeight(ll.lat, ll.lng, hEll);
-    if (H == null) return null;
-    return { h: +H.toFixed(2), src: 'gnss', acc: src === 'measure' ? meas.hm : gps && gps.altAcc, ref, from: src };
+    if (hEll == null || isNaN(hEll)) return null;
+    // высота над эллипсоидом хранится всегда: если модель геоида ещё не загрузилась — отметка посчитается позже
+    return { h: H == null ? null : +H.toFixed(2), src: 'gnss', acc: src === 'measure' ? meas.hm : gps && gps.altAcc, ref, from: src, hEll: +Number(hEll).toFixed(3) };
   }
   if (snap && snap.h != null && snap.h !== '') return { h: Number(snap.h), src: 'snap', from: 'snap' };
   return null;
 }
 // Понятная строка, откуда отметка — чтобы на месте было видно, правильную ли высоту взяла точка
+// оценка решения по точности в плане: ≤5 см — похоже на RTK FIX, ≤1 м — FLOAT/DGPS, хуже — автономно
+function fixKind(acc) { return acc == null ? '' : acc <= RTK_FIX_M ? 'FIX' : acc <= 1 ? 'FLOAT' : 'автономно'; }
+// следующий номер: на 1 больше наибольшего (точки и линии нумеруются отдельно)
+function nextNo(list) { return list.reduce((m, o) => Math.max(m, Number(o.no) || 0), 0) + 1; }
 function heightNote(h, srcKind, info) {
   info = info || {};
+  if ((h == null || h === '') && info.hEll != null) return 'высота по ГНСС получена, отметка посчитается, когда загрузится модель геоида (нужен интернет один раз)';
   if (h == null || h === '') return 'нет — поставлена касанием или в перекрестье. Отметка будет при «По GPS» или «Измерить»';
   if (srcKind === 'gnss') return 'по ГНСС' + (info.acc != null ? ' ±' + cmText(info.acc) : '') + (info.from === 'gps' ? ', один отсчёт' : info.from === 'measure' ? ', усреднено' : '') +
     (info.ref ? ', привязка: ' + info.ref : ', без привязки к реперу (EGM2008, ошибка до дм)');
@@ -2317,7 +2369,7 @@ function finishMode() {
   if (mode.kind === 'line') {
     const closed = (LINES[mode.type] || {}).closed;
     if (mode.latlngs.length < (closed ? 3 : 2)) { toast(closed ? 'Контур строения — хотя бы три угла' : 'Нужно хотя бы две точки'); return; }
-    const line = { id: uid(), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: (LINES[mode.type] || {}).defCount || 1, state: '' };
+    const line = { id: uid(), no: nextNo(data.lines), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: (LINES[mode.type] || {}).defCount || 1, state: '' };
     if (line.type === GENERIC.line) line.color = pref('color', VIS_COLOR);
     if (mode.hs && mode.hs.some(Boolean)) line.hs = mode.hs.slice();
     setMode(null);
@@ -2470,8 +2522,10 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'rasters', icon: '◐', text: 'Свои растры: прозрачность, удаление' },
   { id: 'offlineinfo', icon: '▤', text: 'Карты в телефоне: сколько сохранено, очистить' },
   { header: 'Файлы' },
+  { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z)` },
+  { id: 'txt', icon: '⇩', text: 'Каталог TXT «№;X;Y;H;код» — точки и вершины линий' },
   { id: 'kmz', icon: '⇩', text: 'Выгрузить KMZ с фото (Google Earth, ГИС)' },
-  { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + фото' },
+  { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + каталог + DXF + фото' },
   { id: 'kml', icon: '⇩', text: 'Выгрузить всё в KML (без фото)' },
   { id: 'csv', icon: '⇩', text: `Выгрузить точки в CSV (WGS-84 и ${planeName()})` },
   { id: 'import', icon: '⇧', text: 'Загрузить KML' },
@@ -2490,6 +2544,8 @@ const MENU = {
   rasters: () => rasterMenu(),
   heights: () => heightsMenu(),
   kmz: () => exportKmz(),
+  dxf: () => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf'),
+  txt: () => download(`catalog_${today()}.txt`, '\ufeff' + toCatalog(), 'text/plain;charset=utf-8'),
   screen: () => { const on = !pref('keepScreen', true); setPref('keepScreen', on); if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); toast(on ? 'Экран не будет гаснуть, пока открыт план' : 'Экран гаснет как обычно'); },
   ai: () => aiSettings(),
   report: () => exportReport(),
@@ -2850,6 +2906,68 @@ addEventListener('online', runAiQueue);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) runAiQueue(); });
 setInterval(runAiQueue, AI_RETRY_MS);
 
+/* ───────────── DXF R12: X на восток (Y плоской системы), Y на север (X), Z — отметка; кириллица в кодировке 1251 ───────────── */
+
+const DXF_TEXT_M = 1.0;                                                 // высота подписей — 1 м = 2 мм на плане 1:500
+const NET_GROUPS = new Set(['water', 'sewer', 'gas', 'heat', 'cables', 'comm', 'special', 'air']);
+const DXF_COLOR = { water: 5, sewer: 34, gas: 2, heat: 1, el: 1, own: 6, relief: 34, veg: 3, comm: 3 };
+const LINE_GROUP_OF = Object.fromEntries(LINE_GROUPS.flatMap(g => g.items.map(i => [i.id, g])));
+const layerName = (prefix, title) => (prefix + title).toUpperCase().replace(/[^A-ZА-ЯЁ0-9_]+/g, '_').replace(/_+$/, '');
+function dxfLayerOfLine(l) { const g = LINE_GROUP_OF[l.type] || { id: 'own', title: 'Прочее' }; return layerName(NET_GROUPS.has(g.id) ? 'СЕТИ_' : 'ТОПО_', g.title); }
+function dxfLayerOfPoint(p) { const g = POINT_GROUPS.find(x => x.items.some(i => i.id === p.type)) || { title: 'Прочее' }; return layerName('ТОЧКИ_', g.title); }
+function dxfColorOfLayer(name, kind) { if (kind && DXF_COLOR[kind]) return DXF_COLOR[kind]; return /РЕЛЬЕФ/.test(name) ? 34 : /РАСТИТ|ДЕРЕВ/.test(name) ? 3 : 7; }
+// кодировка Windows-1251 для кириллицы в DXF R12
+function cp1251(str) {
+  const extra = { 0x401: 0xA8, 0x451: 0xB8, 0x2116: 0xB9, 0x2013: 0x96, 0x2014: 0x97, 0xAB: 0xAB, 0xBB: 0xBB, 0xB0: 0xB0, 0xB1: 0xB1 };
+  const out = new Uint8Array(str.length);
+  for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i);
+    out[i] = c < 128 ? c : c >= 0x410 && c <= 0x44F ? c - 0x350 : extra[c] != null ? extra[c] : 0x3F; }
+  return out;
+}
+function toDxf() {
+  const L = [], put = (...kv) => { for (let i = 0; i < kv.length; i += 2) L.push(String(kv[i]), String(kv[i + 1])); };
+  const xyz = (ll, h) => { const c = sk42(ll[0], ll[1]); return [f3(c.y), f3(c.x), hasH(h) ? Number(h).toFixed(3) : '0.0']; };
+  const layers = new Map();
+  const useLayer = (name, kind) => { if (!layers.has(name)) layers.set(name, dxfColorOfLayer(name, kind)); return name; };
+  // сущности — сначала, чтобы знать слои и блоки
+  const E = [], ent = (...kv) => { for (let i = 0; i < kv.length; i += 2) E.push(String(kv[i]), String(kv[i + 1])); };
+  const blocks = new Set();
+  const ATTRS = [['НОМЕР', 0], ['ОТМ', 0], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]
+  for (const p of data.points) {
+    const lay = useLayer(dxfLayerOfPoint(p), NET_KIND[p.type]), H = pointH(p), [x, y, z] = xyz([p.lat, p.lng], H), blk = p.type.toUpperCase();
+    blocks.add(blk);
+    ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z);
+    const val = { НОМЕР: p.no || '', ОТМ: H == null ? '' : H.toFixed(2), КОД: p.type, ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
+      ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : '' };
+    ATTRS.forEach(([tag, inv], k) => ent(0, 'ATTRIB', 8, lay, 10, (Number(x) + 0.6).toFixed(3), 20, (Number(y) + 0.4 - k * 1.2).toFixed(3), 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv));
+    ent(0, 'SEQEND', 8, lay);
+  }
+  for (const l of data.lines) {
+    const sp = LINES[l.type] || LINES.plain, lay = useLayer(dxfLayerOfLine(l), NET_KIND[l.type] || (sp.color === REL ? 'relief' : sp.color === VEG ? 'veg' : null));
+    ent(0, 'POLYLINE', 8, lay, 66, 1, 10, 0, 20, 0, 30, 0, 70, 8 | (sp.closed ? 1 : 0));
+    l.latlngs.forEach((ll, i) => { const z = l.hs && l.hs[i], [x, y, zz] = xyz(ll, z && z.h); ent(0, 'VERTEX', 8, lay, 10, x, 20, y, 30, zz, 70, 32); });
+    ent(0, 'SEQEND', 8, lay);
+    const label = [sp.kind === 'building' ? buildingLabel(sp, l) : '', l.caption, (l.attr && l.attr.caption) || ''].filter(Boolean).join(' ');
+    if (label) { const lay2 = useLayer('ТОПО_ПОДПИСИ'), [x, y, z] = xyz(l.latlngs[0]); ent(0, 'TEXT', 8, lay2, 10, x, 20, y, 30, z, 40, DXF_TEXT_M, 1, label); }
+  }
+  put(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1009', 9, '$DWGCODEPAGE', 3, 'ANSI_1251', 9, '$INSUNITS', 70, 6, 0, 'ENDSEC');
+  put(0, 'SECTION', 2, 'TABLES', 0, 'TABLE', 2, 'LTYPE', 70, 1, 0, 'LTYPE', 2, 'CONTINUOUS', 70, 0, 3, 'Solid line', 72, 65, 73, 0, 40, 0.0, 0, 'ENDTAB');
+  put(0, 'TABLE', 2, 'LAYER', 70, layers.size + 1, 0, 'LAYER', 2, '0', 70, 0, 62, 7, 6, 'CONTINUOUS');
+  for (const [name, color] of layers) put(0, 'LAYER', 2, name, 70, 0, 62, color, 6, 'CONTINUOUS');
+  put(0, 'ENDTAB', 0, 'ENDSEC');
+  // блоки знаков: кружок 0,5 м (заменяются своими блоками ГКИНП в офисе) и атрибуты
+  put(0, 'SECTION', 2, 'BLOCKS');
+  for (const blk of blocks) {
+    put(0, 'BLOCK', 8, '0', 2, blk, 70, 2, 10, 0, 20, 0, 30, 0, 3, blk, 0, 'CIRCLE', 8, '0', 10, 0, 20, 0, 30, 0, 40, 0.25);
+    ATTRS.forEach(([tag, inv], k) => put(0, 'ATTDEF', 8, '0', 10, 0.6, 20, (0.4 - k * 1.2).toFixed(1), 30, 0, 40, DXF_TEXT_M, 1, '', 3, tag, 2, tag, 70, inv));
+    put(0, 'ENDBLK', 8, '0');
+  }
+  put(0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES');
+  L.push(...E);
+  put(0, 'ENDSEC', 0, 'EOF');
+  return cp1251(L.join('\r\n') + '\r\n');
+}
+
 /* ───────────── Архив без сжатия (ZIP «stored»): KMZ с фото и архив для отчёта ───────────── */
 
 const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -2890,7 +3008,8 @@ async function exportKmz() {
 async function exportReport() {
   toast('Собираю архив для отчёта…');
   const enc = new TextEncoder();
-  const files = [{ name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) }, ...await photoFiles('photos/')];
+  const files = [{ name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
+    { name: `catalog_${today()}.txt`, data: enc.encode('\ufeff' + toCatalog()) }, { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
 
@@ -2903,33 +3022,50 @@ function toKml(photoDir) {
   const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
   const pts = data.points.map(p => {
     const s = POINTS[p.type] || POINTS.mark;
-    return `<Placemark><name>${xml(p.name || s.name)}</name>${desc(p)}${ext({ tk_photos: p.photos ? JSON.stringify(p.photos) : '', tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
+    return `<Placemark><name>${xml(p.name || s.name)}</name>${desc(p)}${ext({ tk_photos: p.photos ? JSON.stringify(p.photos) : '', tk_no: p.no, tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point>${hasH(p.h) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${p.lng},${p.lat},${hasH(p.h) ? Number(p.h) : 0}</coordinates></Point></Placemark>`;
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
     const hex = l.color || (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || (s.color === REL ? REL_HEX : s.color === VEG ? VEG_HEX : s.color) || '#111111';
     const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
-    return `<Placemark><name>${xml(l.caption || s.name)}</name>${desc(l)}${ext({ tk_photos: l.photos ? JSON.stringify(l.photos) : '', tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '', tk_color: l.color })}` +
+    return `<Placemark><name>${xml(l.caption || s.name)}</name>${desc(l)}${ext({ tk_photos: l.photos ? JSON.stringify(l.photos) : '', tk_no: l.no, tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '', tk_color: l.color })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
-      `<LineString><tessellate>1</tessellate><coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map(a => a[1] + ',' + a[0] + ',0').join(' ')}</coordinates></LineString></Placemark>`;
+      `<LineString><tessellate>1</tessellate>${l.hs && l.hs.every(z => z && hasH(z.h)) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map((a, i) => { const z = l.hs && l.hs[s.closed ? i % l.latlngs.length : i]; return a[1] + ',' + a[0] + ',' + (z && hasH(z.h) ? Number(z.h) : 0); }).join(' ')}</coordinates></LineString></Placemark>`;
   });
   return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Полевой план ${today()}</name>\n${pts.concat(lns).join('\n')}\n</Document></kml>`;
 }
+const hasH = h => h != null && h !== '' && !isNaN(Number(h));
+const f3 = v => Number(v).toFixed(3), f8 = v => Number(v).toFixed(8);
+// отметка точки для выгрузок: у дроби бортового камня — верх (на камне), низ — в примечании
+function pointH(p) { const s = POINTS[p.type] || {}; return s.frac ? (p.attr && hasH(p.attr.top) ? Number(p.attr.top) : null) : hasH(p.h) ? Number(p.h) : null; }
+function pointNote(p) { const s = POINTS[p.type] || {}; return [p.note, s.frac && p.attr && hasH(p.attr.bot) ? 'рядом с камнем ' + planNum(p.attr.bot, 2) : ''].filter(Boolean).join('; '); }
+const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки' };
 function toCsv() {
-  const rows = [['Знак', 'Подпись', 'Отметка', 'Примечание', 'Широта WGS-84', 'Долгота WGS-84', 'X ' + planeName(), 'Y ' + planeName(), 'Зона',
-    'Отметка из', 'Фото', 'СКО, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб']];
+  const rows = [['№', 'Код', 'Знак', 'Подпись', 'X ' + planeName(), 'Y ' + planeName(), 'H', 'Отметка из', 'Точность в плане, м', 'Решение', 'Время',
+    'Широта WGS-84', 'Долгота WGS-84', 'Зона', 'Примечание', 'Фото', 'СКО измерения, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб']];
   for (const p of data.points) {
-    const s = sk42(p.lat, p.lng), m = p.meas;
-    rows.push([(POINTS[p.type] || POINTS.mark).name, p.name || '', p.h == null ? '' : p.h, p.note || '', f6(p.lat), f6(p.lng), s.x.toFixed(2), s.y.toFixed(2), s.zone,
-      p.h == null ? '' : p.hSrc === 'gnss' ? 'ГНСС' : 'вручную',
-      (p.photos || []).map(photoFile).join(' '),
+    const c = sk42(p.lat, p.lng), m = p.meas, H = pointH(p), q = p.q || {};
+    rows.push([p.no || '', p.type, (POINTS[p.type] || POINTS.mark).name, p.name || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(2),
+      H == null ? '' : H_SRC[p.hSrc] || 'вручную', q.acc != null ? f3(q.acc) : '', q.fix || '', q.at ? new Date(q.at).toLocaleString('ru-RU') : '',
+      f8(p.lat), f8(p.lng), c.zone, pointNote(p), (p.photos || []).map(photoFile).join(' '),
       ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', ''])]);
   }
-  return '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  return '\ufeff' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+}
+// Каталог для КРЕДО, GeoniCS, Панорамы: «№;X;Y;H;код;описание» — точки и все вершины линий (номер линии.номер вершины)
+function toCatalog() {
+  const out = ['№;X;Y;H;Код;Описание'];
+  for (const p of data.points) { const c = sk42(p.lat, p.lng), H = pointH(p);
+    out.push([p.no || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(3), p.type, [(POINTS[p.type] || POINTS.mark).name, p.name, pointNote(p)].filter(Boolean).join(' ')].join(';')); }
+  for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain;
+    l.latlngs.forEach((ll, i) => { const c = sk42(ll[0], ll[1]), z = l.hs && l.hs[i];
+      out.push([`L${l.no || ''}.${i + 1}`, f3(c.x), f3(c.y), z && hasH(z.h) ? Number(z.h).toFixed(3) : '', l.type, i ? '' : [sp.name, l.caption, sp.closed ? 'замкнут' : ''].filter(Boolean).join(' ')].join(';')); }); }
+  return out.join('\r\n');
 }
 // поворот и свойства знака из KML; повреждённые — просто пропускаем
 function readExtras(ext) {
   const out = {}, r = Number(ext.tk_rot);
+  if (Number(ext.tk_no) > 0) out.no = Number(ext.tk_no);
   if (ext.tk_rot != null && ext.tk_rot !== '' && !isNaN(r)) out.rot = r;
   try { const a = ext.tk_attr ? JSON.parse(ext.tk_attr) : null; if (a && typeof a === 'object') out.attr = a; } catch (e) { /* без свойств */ }
   if (ext.tk_hsrc) out.hSrc = ext.tk_hsrc;
@@ -2969,7 +3105,7 @@ $('fileIn').onchange = async e => {
         try { attr = ext.tk_attr ? JSON.parse(ext.tk_attr) : undefined; } catch (e) { attr = undefined; }   // повреждённые свойства — просто без них
         add.lines.push({ id: uid(), type, latlngs, caption: ext.tk_type ? (ext.tk_caption || '') : name,
           count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1,
-          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray), ...readJson(ext.tk_photos, 'photos', Array.isArray), ...(/^#[0-9a-f]{6}$/i.test(ext.tk_color || '') ? { color: ext.tk_color } : {}) }); nl++;
+          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray), ...readJson(ext.tk_photos, 'photos', Array.isArray), ...(Number(ext.tk_no) > 0 ? { no: Number(ext.tk_no) } : {}), ...(/^#[0-9a-f]{6}$/i.test(ext.tk_color || '') ? { color: ext.tk_color } : {}) }); nl++;
       }
     } catch (e) { bad++; }                                            // повреждённый объект — пропускаем, остальные грузим
     data.points.push(...add.points); data.lines.push(...add.lines);
@@ -3178,6 +3314,7 @@ function rasterMenu() {
 /* ───────────── Старт ───────────── */
 
 ready = true;
+loadGeoid().catch(() => { /* без сети и кэша — попробуем при съёмке */ });
 if (NATIVE) { startGnss(); startGps(); checkUpdate(); }   // в Android-приложении спутники и GPS включаются сразу, проверяется обновление
 // вернулись в приложение (из другого окна, после сна телефона) — ещё раз проверить обновление, перезапускать не нужно
 if (NATIVE) document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
