@@ -149,6 +149,10 @@
   #card .photos { display:flex; gap:6px; overflow-x:auto; margin:4px 0 8px; }
   #card .photos button { flex:none; width:64px; height:64px; border-radius:10px; border:1px solid var(--line); padding:0; overflow:hidden; background:var(--line); color:var(--muted); font-size:11px; }
   #card .photos img { width:100%; height:100%; object-fit:cover; display:block; }
+  .ai-btn { width:100%; margin:0 0 8px; }
+  .ai-cand { display:flex; gap:12px; align-items:center; width:100%; text-align:left; border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:12px; padding:10px 12px; margin-bottom:6px; min-height:56px; }
+  .ai-cand:first-of-type { border:2px solid var(--accent); }
+  .ai-cand svg { flex:none; } .ai-cand small { color:var(--muted); }
   .photo-big { width:100%; max-height:60vh; object-fit:contain; border-radius:10px; background:#000; display:block; }
   #card .x.trash { background:none; color:var(--red); border:1px solid var(--line); }
   #card .t > div { flex:1; min-width:0; }
@@ -1801,7 +1805,8 @@ function showCard(kind, obj) {
   }
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
-    ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>` : ''}
+    ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
+      <button class="btn ai-btn" data-act="ai">✨ Подсказать знак по фото</button>` : ''}
     <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
     <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 2 : 3}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button></div>`;
   card.style.display = 'block';
@@ -1820,6 +1825,7 @@ function showCard(kind, obj) {
     if (act === 'copy') copyCoords(kind, obj);
     if (act === 'verts') showVertices(obj);
     if (act === 'photo') addPhoto(kind, obj);
+    if (act === 'ai') suggestSign(kind, obj);
     if (act === 'del') {                                              // без лишнего вопроса — случайное удаление отменяет «Вернуть»
       if (kind === 'point') data.points = data.points.filter(x => x !== obj); else data.lines = data.lines.filter(x => x !== obj);
       save(); hideCard(); toast((kind === 'point' ? 'Удалено' : 'Линия удалена') + ' — кнопка ↶ справа вернёт');
@@ -2336,6 +2342,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'heights', icon: '△', text: hgt.ref ? `Отметки: привязка к реперу ${hgt.ref.name || ''}`.trim() : hgt.dh ? 'Отметки: с поправкой' : 'Отметки: привязать к реперу' },
   { id: 'offline', icon: '⇩', text: 'Сохранить участок карты — работать без интернета' },
   { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
+  { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' },
   { id: 'cal', icon: '⟷', text: PX_MM === PX_MM_DEFAULT ? 'Размер знаков: откалибровать по линейке' : 'Размер знаков: по линейке — повторить' },
   { header: 'Карта' },
   { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() },
@@ -2366,6 +2373,7 @@ const MENU = {
   rasters: () => rasterMenu(),
   heights: () => heightsMenu(),
   kmz: () => exportKmz(),
+  ai: () => aiSettings(),
   report: () => exportReport(),
   cal: () => calibrate(),
   offline: () => saveArea(),
@@ -2593,6 +2601,96 @@ async function showPhoto(kind, obj, id) {
     if (!obj.photos.length) delete obj.photos;
     save(); closeSheet(); showCard(kind, obj); toast('Фото откреплено — кнопка ↶ вернёт');
   };
+}
+
+/* ───────────── Подсказка знака по фото: Яндекс AI Studio, мультимодальная модель (OpenAI-совместимый API) ───────────── */
+
+// Ключ и каталог вводит сам пользователь, они хранятся только в этом телефоне (настройка 'ai')
+const AI_URL = 'https://ai.api.cloud.yandex.net/v1/chat/completions', AI_MODEL = 'qwen3.6-35b-a3b', AI_PHOTO_PX = 1024, AI_TIMEOUT_MS = 90000;
+const NET = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Net) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Net')));
+let aiCfg = pref('ai', { key: '', folder: '', model: AI_MODEL });
+const aiReady = () => !!(aiCfg.key && aiCfg.folder);
+// запрос: в приложении — через системный модуль (WebView не пускает к чужому сайту), в браузере — напрямую
+async function aiPost(messages, maxTokens) {
+  const body = JSON.stringify({ model: `gpt://${aiCfg.folder}/${aiCfg.model || AI_MODEL}`, messages, temperature: 0.1, max_tokens: maxTokens || 600 });
+  const headers = { 'Content-Type': 'application/json', Authorization: 'Api-Key ' + aiCfg.key, 'OpenAI-Project': aiCfg.folder };
+  let status, text;
+  if (NET && NET.post) ({ status, text } = await NET.post({ url: AI_URL, headers, body, timeout: AI_TIMEOUT_MS }));
+  else { const r = await fetch(AI_URL, { method: 'POST', headers, body }); status = r.status; text = await r.text(); }
+  if (status === 401 || status === 403) throw new Error('ключ или каталог не подходят — проверьте их в «Подсказка знака по фото»');
+  if (status === 429) throw new Error('слишком часто или закончились средства на счёте Яндекс Облака');
+  if (status >= 400) throw new Error(`сервер ответил ${status}: ${String(text).slice(0, 160)}`);
+  const j = JSON.parse(text), msg = j.choices && j.choices[0] && j.choices[0].message;
+  if (!msg || !msg.content) throw new Error('пустой ответ');
+  return String(msg.content);
+}
+function aiSettings() {
+  showSheet(`<div class="sh-head"><b>Подсказка знака по фото</b><button class="x" data-close>×</button></div><div class="form">
+    <div class="meas-verdict ${aiReady() ? 'ok' : 'mid'}">${aiReady() ? 'Настроено — в карточке объекта с фото есть «Подсказать знак»' : 'Нужен ключ Яндекс Облака — инструкция ниже'}</div>
+    <div><label for="ai_key">API-ключ (секретный ключ)</label><input id="ai_key" type="password" autocomplete="off" value="${esc(aiCfg.key)}" placeholder="AQVN…"></div>
+    <div><label for="ai_folder">ID каталога</label><input id="ai_folder" autocomplete="off" value="${esc(aiCfg.folder)}" placeholder="b1g…"></div>
+    <div><label for="ai_model">Модель</label><input id="ai_model" autocomplete="off" value="${esc(aiCfg.model || AI_MODEL)}"></div>
+    <div class="hint">Ключ хранится только в этом телефоне и уходит только в Яндекс Облако. Запрос с фото платный — по тарифу Яндекса, обычно копейки за снимок.</div>
+    <details class="more"><summary>Как получить ключ (один раз, ~10 минут)</summary><div class="hint" style="line-height:1.5">
+      1. Откройте <b>console.yandex.cloud</b> и войдите через Яндекс ID.<br>
+      2. Создайте <b>платёжный аккаунт</b> (российская карта) — без него модели не работают.<br>
+      3. Откройте каталог (по умолчанию «default») и скопируйте его <b>ID</b> — строка вида b1g… под названием каталога.<br>
+      4. «Сервисные аккаунты» → «Создать»: имя, например, polevoy-plan; роль <b>ai.languageModels.user</b>.<br>
+      5. Откройте этот аккаунт → «Создать новый ключ» → <b>«Создать API-ключ»</b> (область действия — yc.ai.languageModels.execute). Скопируйте <b>секретный ключ</b> — он показывается один раз.<br>
+      6. Вставьте ключ и ID каталога сюда и нажмите «Проверить».</div></details>
+    <div class="acts"><button class="btn" id="aiTest">Проверить</button><button class="btn primary" id="aiSave">Сохранить</button></div></div>`);
+  const read = () => ({ key: $('ai_key').value.trim(), folder: $('ai_folder').value.trim(), model: $('ai_model').value.trim() || AI_MODEL });
+  $('aiSave').onclick = () => { aiCfg = read(); setPref('ai', aiCfg); closeSheet(); toast(aiReady() ? 'Сохранено' : 'Сохранено, но ключ или каталог пустые'); };
+  $('aiTest').onclick = async () => {
+    aiCfg = read(); setPref('ai', aiCfg);
+    if (!aiReady()) { toast('Введите ключ и ID каталога'); return; }
+    const b = $('aiTest'); b.disabled = true; b.textContent = 'Проверяю…';
+    try { await aiPost([{ role: 'user', content: 'Ответь одним словом: работает' }], 10); toast('Связь есть — подсказка работает'); }
+    catch (e) { toast('Не работает: ' + e.message); }
+    b.disabled = false; b.textContent = 'Проверить';
+  };
+}
+// фото для запроса — поменьше (1024 px), этого хватает, чтобы прочитать надпись на люке
+async function aiPhotoBase64(blob) {
+  const bmp = await createImageBitmap(blob), k = Math.min(1, AI_PHOTO_PX / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+  cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+  return blobBase64(await new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.85)));
+}
+// список знаков, из которых выбирает модель: «код — название (группа)»
+function signCatalog(kind) {
+  return (kind === 'point' ? POINT_GROUPS : LINE_GROUPS).flatMap(g => g.items.filter(i => i.id !== GENERIC[kind]).map(i => `${i.id} — ${i.name} (${g.title})`)).join('\n');
+}
+async function suggestSign(kind, obj) {
+  if (!aiReady()) { aiSettings(); return; }
+  if (!obj.photos || !obj.photos.length) { if (!await addPhoto(kind, obj)) return; }
+  const recs = (await Promise.all(obj.photos.slice(-3).map(id => photoGet(id).catch(() => null)))).filter(Boolean);
+  if (!recs.length) { toast('Фото не найдено в памяти телефона'); return; }
+  showSheet(`<div class="sh-head"><b>Подсказка знака</b><button class="x" data-close>×</button></div><div class="meas-big" style="font-size:1.3em">Смотрю фото…</div><div class="meas-sub">обычно 5–20 секунд, нужен интернет</div>`);
+  const ask = `Ты помогаешь инженеру-геодезисту на топографической съёмке 1:500 (Россия, условные знаки ГКИНП 02-049-86). На фото — объект, который он снимает${kind === 'line' ? ' (линейный: сеть, забор, край дороги, откос и т. п.)' : ''}.
+Внимательно прочитай надписи и буквы на крышках люков, табличках, шкафах (например В, К, Г, ГАЗ, ТС, ГТС, ВК, ЛК, ГОРТЕЛ, МГТС, Д) — они определяют вид сети.
+Выбери до 3 наиболее подходящих знаков СТРОГО из списка (код — название):
+${signCatalog(kind)}
+Ответь только JSON без пояснений вокруг: {"text":"надписи, которые видно на фото, или пусто","candidates":[{"id":"код из списка","why":"кратко по-русски, почему"}]}. Самый вероятный — первым. Если ничего не подходит — пустой список.`;
+  const content = [{ type: 'text', text: ask }];
+  for (const r of recs) content.push({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + await aiPhotoBase64(r.blob) } });
+  let answer;
+  try { answer = await aiPost([{ role: 'user', content }], 700); }
+  catch (e) { closeSheet(); toast('Подсказка не получилась: ' + e.message); return; }
+  if (!$('sheet') || $('sheet').style.display === 'none') return;     // окно закрыли, пока ждали
+  let parsed = null;
+  try { parsed = JSON.parse(answer.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, '$1')); } catch (e) { parsed = null; }
+  const all = kind === 'point' ? POINTS : LINES;
+  const cands = ((parsed && parsed.candidates) || []).filter(c => c && all[c.id]).slice(0, 3);
+  const tile = c => { const sp = all[c.id];
+    return `<button class="ai-cand" data-pick="${c.id}">${kind === 'point' ? symbolSvg(sp.svg, 34, netColor(sp.id, sp.color)) : linePreview(sp, 52, 30)}<span><b>${esc(sp.name)}</b><br><small>${esc(c.why || '')}</small></span></button>`; };
+  showSheet(`<div class="sh-head"><b>Подсказка знака</b><button class="x" data-close>×</button></div>
+    ${parsed && parsed.text ? `<div class="meas-sub" style="margin-bottom:8px">На фото видно: «${esc(parsed.text)}»</div>` : ''}
+    ${cands.length ? cands.map(tile).join('') : '<div class="meas-verdict mid">Не узнал объект — выберите знак сами</div>'}
+    <div class="hint" style="margin:8px 0;color:var(--muted)">Это подсказка — проверьте её. Последнее слово за вами.</div>
+    <button class="btn" id="aiOther" style="width:100%">Другой знак — открыть список</button>`);
+  $('sheetPanel').onclick = e => { const b = e.target.closest('.ai-cand'); if (b) { closeSheet(); remember(kind, b.dataset.pick); changeType(kind, obj, b.dataset.pick); } };
+  $('aiOther').onclick = () => openPicker(kind, id => changeType(kind, obj, id));
 }
 
 /* ───────────── Архив без сжатия (ZIP «stored»): KMZ с фото и архив для отчёта ───────────── */
