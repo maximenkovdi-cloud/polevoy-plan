@@ -1239,8 +1239,11 @@ function drawPoints() {
 }
 // Номер у знака — справа, слева, сверху, снизу или по диагонали: первое место, где он ни с чем не пересекается
 const LBL_PX = 12.5, SYM_R = SYM_PX / 2;
+const GROUP_OF = Object.fromEntries(POINT_GROUPS.flatMap(g => g.items.map(i => [i.id, g.id])));
+const LABEL_RANK = { geo: 0, wells: 1, reliefpt: 4, street: 3 };          // меньше — важнее (ГКИНП: пункты > номера колодцев > прочие > отметки)
+function labelRank(p) { return p.type === 'spot' ? 5 : LABEL_RANK[GROUP_OF[p.type]] != null ? LABEL_RANK[GROUP_OF[p.type]] : 2; }
 function placePointLabels() {
-  for (const { p, marker, lbl } of pointMarkers) {
+  for (const { p, marker, lbl } of pointMarkers.slice().sort((a, b) => labelRank(a.p) - labelRank(b.p))) {
     const span = marker.getElement() && marker.getElement().querySelector('.lbl');
     if (!span) continue;
     const frac = (POINTS[p.type] || {}).frac, parts = frac ? fracParts(p) : [lbl];
@@ -1464,8 +1467,8 @@ const DRAW = {
     const spur = (s, len, from, slant) => { const p = sidePt(path, s, (from || 0) * sg), q = sidePt(path, Math.min(total, s + (slant || 0) * MM), ((from || 0) + len) * sg); el('line', { x1: p.x, y1: p.y, x2: q.x, y2: q.y, stroke: 'currentColor', 'stroke-width': w }, g); };
     const line0 = (off, dash, k) => segment(g, path, 0, total, w * (k || 1), off * sg, dash);
     ({
-      stone() { line0(0); line0(0.6); each(8, 4, s => box(s, 0.3, 1.6)); },
-      stoneLow() { line0(0, null, .8); line0(0.5, null, .8); each(8, 3, s => box(s, 0.25, 0.8, true)); },
+      stone() { line0(0); line0(0.6); each(8, 4, s => { const q = sidePt(path, s, 0.95 * sg); el('rect', { x: -0.6 * MM, y: -0.35 * MM, width: 1.2 * MM, height: 0.7 * MM, fill: 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w, transform: `translate(${q.x} ${q.y}) rotate(${q.a})` }, g); }); },   // выступы столбов — наружу от стены
+      stoneLow() { line0(0, null, .8); line0(0.5, null, .8); each(8, 3, s => spur(s, 0.5)); },   // поперечные штрихи между линиями
       metal() { line0(0); each(8, 4, s => post(s, 0, 0.5)); },
       metalLow() { line0(0); each(8, 4, s => post(s, 0, 0.5, true)); },
       metalFound() { line0(-0.5); line0(0.5); line0(0, `${3 * MM} ${1 * MM}`, .7); each(8, 4, s => post(s, 0, 0.45, true)); },
@@ -1818,7 +1821,7 @@ function showCard(kind, obj) {
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
-      <button class="btn ai-btn" data-act="ai">✨ Подсказать знак по фото</button>` : ''}
+      <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
     <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 2 : 3}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button></div>`;
   card.style.display = 'block';
@@ -1837,7 +1840,7 @@ function showCard(kind, obj) {
     if (act === 'copy') copyCoords(kind, obj);
     if (act === 'verts') showVertices(obj);
     if (act === 'photo') addPhoto(kind, obj);
-    if (act === 'ai') suggestSign(kind, obj);
+    if (act === 'ai') { if (obj.ai) showSuggestion(kind, obj, obj.ai); else suggestSign(kind, obj); }
     if (act === 'del') {                                              // без лишнего вопроса — случайное удаление отменяет «Вернуть»
       if (kind === 'point') data.points = data.points.filter(x => x !== obj); else data.lines = data.lines.filter(x => x !== obj);
       save(); hideCard(); toast((kind === 'point' ? 'Удалено' : 'Линия удалена') + ' — кнопка ↶ справа вернёт');
@@ -2675,12 +2678,10 @@ async function aiPhotoBase64(blob) {
 function signCatalog(kind) {
   return (kind === 'point' ? POINT_GROUPS : LINE_GROUPS).flatMap(g => g.items.filter(i => i.id !== GENERIC[kind]).map(i => `${i.id} — ${i.name} (${g.title})`)).join('\n');
 }
-async function suggestSign(kind, obj) {
-  if (!aiReady()) { aiSettings(); return; }
-  if (!obj.photos || !obj.photos.length) { if (!await addPhoto(kind, obj)) return; }
-  const recs = (await Promise.all(obj.photos.slice(-3).map(id => photoGet(id).catch(() => null)))).filter(Boolean);
-  if (!recs.length) { toast('Фото не найдено в памяти телефона'); return; }
-  showSheet(`<div class="sh-head"><b>Подсказка знака</b><button class="x" data-close>×</button></div><div class="meas-big" style="font-size:1.3em">Смотрю фото…</div><div class="meas-sub">обычно 5–20 секунд, нужен интернет</div>`);
+// Запрос к модели: { text, cands } по последним (до 3) фото объекта; ошибка связи — err.offline
+async function aiRequest(kind, obj) {
+  const recs = (await Promise.all((obj.photos || []).slice(-3).map(id => photoGet(id).catch(() => null)))).filter(Boolean);
+  if (!recs.length) throw new Error('фото не найдено в памяти телефона');
   const ask = `Ты помогаешь инженеру-геодезисту на топографической съёмке 1:500 (Россия, условные знаки ГКИНП 02-049-86). На фото — объект, который он снимает${kind === 'line' ? ' (линейный: сеть, забор, край дороги, откос и т. п.)' : ''}.
 Внимательно прочитай надписи и буквы на крышках люков, табличках, шкафах (например В, К, Г, ГАЗ, ТС, ГТС, ВК, ЛК, ГОРТЕЛ, МГТС, Д) — они определяют вид сети.
 Выбери до 3 наиболее подходящих знаков СТРОГО из списка (код — название):
@@ -2690,22 +2691,63 @@ ${signCatalog(kind)}
   for (const r of recs) content.push({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + await aiPhotoBase64(r.blob) } });
   let answer;
   try { answer = await aiPost([{ role: 'user', content }], 700); }
-  catch (e) { closeSheet(); toast('Подсказка не получилась: ' + e.message); return; }
-  if (!$('sheet') || $('sheet').style.display === 'none') return;     // окно закрыли, пока ждали
+  catch (e) { if (!navigator.onLine || /Нет связи|Failed to fetch|NetworkError|timeout/i.test(e.message)) e.offline = true; throw e; }
   let parsed = null;
   try { parsed = JSON.parse(answer.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, '$1')); } catch (e) { parsed = null; }
   const all = kind === 'point' ? POINTS : LINES;
-  const cands = ((parsed && parsed.candidates) || []).filter(c => c && all[c.id]).slice(0, 3);
+  return { text: (parsed && parsed.text) || '', cands: ((parsed && parsed.candidates) || []).filter(c => c && all[c.id]).slice(0, 3), at: new Date().toISOString() };
+}
+async function suggestSign(kind, obj) {
+  if (!aiReady()) { aiSettings(); return; }
+  if (!obj.photos || !obj.photos.length) { if (!await addPhoto(kind, obj)) return; }
+  showSheet(`<div class="sh-head"><b>Подсказка знака</b><button class="x" data-close>×</button></div><div class="meas-big" style="font-size:1.3em">Смотрю фото…</div><div class="meas-sub">обычно 5–20 секунд, нужен интернет</div>`);
+  let res;
+  try { res = await aiRequest(kind, obj); }
+  catch (e) {
+    closeSheet();
+    if (e.offline) { queueAi(kind, obj); toast('Нет интернета — подсказка придёт сама, когда появится связь'); }
+    else toast('Подсказка не получилась: ' + e.message);
+    return;
+  }
+  obj.ai = res; save();
+  if (!$('sheet') || $('sheet').style.display === 'none') return;     // окно закрыли, пока ждали — подсказка сохранена в объекте
+  showSuggestion(kind, obj, res);
+}
+function showSuggestion(kind, obj, res) {
+  const all = kind === 'point' ? POINTS : LINES;
   const tile = c => { const sp = all[c.id];
     return `<button class="ai-cand" data-pick="${c.id}">${kind === 'point' ? symbolSvg(sp.svg, 34, netColor(sp.id, sp.color)) : linePreview(sp, 52, 30)}<span><b>${esc(sp.name)}</b><br><small>${esc(c.why || '')}</small></span></button>`; };
   showSheet(`<div class="sh-head"><b>Подсказка знака</b><button class="x" data-close>×</button></div>
-    ${parsed && parsed.text ? `<div class="meas-sub" style="margin-bottom:8px">На фото видно: «${esc(parsed.text)}»</div>` : ''}
-    ${cands.length ? cands.map(tile).join('') : '<div class="meas-verdict mid">Не узнал объект — выберите знак сами</div>'}
+    ${res.text ? `<div class="meas-sub" style="margin-bottom:8px">На фото видно: «${esc(res.text)}»</div>` : ''}
+    ${res.cands.length ? res.cands.map(tile).join('') : '<div class="meas-verdict mid">Не узнал объект — выберите знак сами</div>'}
     <div class="hint" style="margin:8px 0;color:var(--muted)">Это подсказка — проверьте её. Последнее слово за вами.</div>
     <button class="btn" id="aiOther" style="width:100%">Другой знак — открыть список</button>`);
-  $('sheetPanel').onclick = e => { const b = e.target.closest('.ai-cand'); if (b) { closeSheet(); remember(kind, b.dataset.pick); changeType(kind, obj, b.dataset.pick); } };
-  $('aiOther').onclick = () => openPicker(kind, id => changeType(kind, obj, id));
+  $('sheetPanel').onclick = e => { const b = e.target.closest('.ai-cand'); if (b) { $('sheetPanel').onclick = null; closeSheet(); delete obj.ai; remember(kind, b.dataset.pick); changeType(kind, obj, b.dataset.pick); } };
+  $('aiOther').onclick = () => { $('sheetPanel').onclick = null; openPicker(kind, id => { delete obj.ai; changeType(kind, obj, id); }); };
 }
+/* Очередь без интернета: объекты ждут связи; появилась сеть (или вернулись в приложение) — подсказки запрашиваются сами */
+const AI_RETRY_MS = 60000;
+function queueAi(kind, obj) { const q = pref('aiQueue', []).filter(x => x.id !== obj.id); q.push({ kind, id: obj.id }); setPref('aiQueue', q); }
+let aiBusy = false;
+async function runAiQueue() {
+  const q = pref('aiQueue', []);
+  if (aiBusy || !q.length || !aiReady() || !navigator.onLine) return;
+  aiBusy = true;
+  let done = 0; const left = [];
+  for (const it of q) {
+    const obj = (it.kind === 'point' ? data.points : data.lines).find(o => o.id === it.id);
+    if (!obj) continue;                                               // объект удалили — из очереди убираем
+    try { obj.ai = await aiRequest(it.kind, obj); done++; }
+    catch (e) { if (e.offline) { left.push(it); break; } }            // связь снова пропала — остальное потом
+  }
+  const rest = q.slice(q.findIndex(x => left[0] && x.id === left[0].id));
+  setPref('aiQueue', left.length ? rest : []);
+  aiBusy = false;
+  if (done) { save(); if (selected) showCard(selected.kind, selected.obj); toast(`Готовы подсказки знаков: ${done} — откройте объект, кнопка «✨ Подсказка готова»`); }
+}
+addEventListener('online', runAiQueue);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) runAiQueue(); });
+setInterval(runAiQueue, AI_RETRY_MS);
 
 /* ───────────── Архив без сжатия (ZIP «stored»): KMZ с фото и архив для отчёта ───────────── */
 
