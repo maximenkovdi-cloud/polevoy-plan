@@ -1143,10 +1143,21 @@ function satSheetBody() {
   const dopLine = d
     ? `<div class="dop"><span class="dot ${g[2]}"></span><b>HDOP ${d.h.toFixed(1)}</b> — ${g[1]} · PDOP ${d.p.toFixed(1)} · VDOP ${d.v.toFixed(1)}</div>`
     : `<div class="dop"><span class="dot bad"></span>DOP: мало спутников в решении</div>`;
-  return dopLine + (sats.sats ? skyPlot(sats.sats, 240) : '') +
+  const bands = [...new Set((sats.sats || []).map(x => x.band).filter(Boolean))];
+  const dual = bands.some(b => b !== 'L1' && b !== 'B1');
+  const track = sats.fullTracking
+    ? '<div class="dop"><span class="dot ok"></span>Полное слежение включено — телефон не притормаживает спутниковый чип</div>'
+    : '<div class="dop"><span class="dot mid"></span>Полное слежение недоступно (нужен Android 12+) — включите его в настройках телефона, см. ниже</div>';
+  const freq = bands.length ? `<div class="dop"><span class="dot ${dual ? 'ok' : 'mid'}"></span>Частоты: <b>${bands.join(', ')}</b> — ${dual ? 'телефон двухчастотный' : 'только одна частота'}</div>` : '';
+  return dopLine + track + freq + (sats.sats ? skyPlot(sats.sats, 240) : '') +
     `<table class="sat-tab"><tr><th>Система</th><th>Видно</th><th>В решении</th><th>Сигнал, дБ·Гц</th></tr>${rows}
     <tr class="sum"><td>Всего</td><td>${sats.total}</td><td>${sats.used}</td><td></td></tr></table>
     <div class="hint" style="margin-top:10px;color:var(--muted);font-size:12.5px">HDOP — во сколько раз геометрия спутников ухудшает точность в плане: до 2 — хорошо, больше 5 — снимать не стоит.
+    <details class="more"><summary>Как ещё помочь приёму</summary><div class="hint" style="line-height:1.5">
+      1. <b>Батарея без ограничений:</b> Настройки → Приложения → «Полевой план» → Батарея → «Без ограничений».<br>
+      2. <b>Все измерения ГНСС:</b> Настройки → «Для разработчиков» → «Принудительно включать все измерения GNSS» (если пункт есть). Меню разработчика открывается 7 нажатиями на «Номер сборки» в «О телефоне».<br>
+      3. Держите телефон экраном вверх, не закрывайте рукой верх корпуса — там антенна. На вехе или на капоте лучше, чем в кармане.<br>
+      4. Это убирает пропуски и скачки, но сантиметров телефон не даст — для 1:500 нужен внешний приёмник.</div></details>
     Закрашенные кружки — в решении, пустые — только видны; ниже пунктира (15°) спутникам веры меньше. Сигнал выше 30 дБ·Гц — хороший, ниже 20 — слабый.</div>`;
 }
 function satMessage(msg) { $('satLine').style.display = 'flex'; $('satText').textContent = msg; }
@@ -1156,6 +1167,7 @@ function startGnss() {
   gnssOn = true;
   satMessage('Спутники: поиск… (на открытом месте, без сим-карты — до нескольких минут)');
   GNSS.addListener('status', showSats);
+  if (GNSS.keepScreen) GNSS.keepScreen({ on: pref('keepScreen', true) }).catch(() => {});   // экран не гаснет, пока открыт план
   GNSS.start().catch(e => { gnssOn = false; satMessage('Спутники: ' + (e && e.message || 'нет доступа') + ' — нажмите ◎'); });
 }
 $('satLine').onclick = () => {
@@ -2343,6 +2355,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'offline', icon: '⇩', text: 'Сохранить участок карты — работать без интернета' },
   { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
   { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' },
+  ...(NATIVE ? [{ id: 'screen', icon: '◑', text: pref('keepScreen', true) ? 'Экран не гаснет во время работы' : 'Экран гаснет как обычно', on: pref('keepScreen', true), check: true }] : []),
   { id: 'cal', icon: '⟷', text: PX_MM === PX_MM_DEFAULT ? 'Размер знаков: откалибровать по линейке' : 'Размер знаков: по линейке — повторить' },
   { header: 'Карта' },
   { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() },
@@ -2373,6 +2386,7 @@ const MENU = {
   rasters: () => rasterMenu(),
   heights: () => heightsMenu(),
   kmz: () => exportKmz(),
+  screen: () => { const on = !pref('keepScreen', true); setPref('keepScreen', on); if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); toast(on ? 'Экран не будет гаснуть, пока открыт план' : 'Экран гаснет как обычно'); },
   ai: () => aiSettings(),
   report: () => exportReport(),
   cal: () => calibrate(),
