@@ -146,6 +146,10 @@
   #card .t { display:flex; align-items:center; gap:10px; }
   #mode .title .cnt { font-variant-numeric:tabular-nums; }
   details.more { margin-top:10px; } details.more summary { color:var(--accent); padding:10px 0; min-height:44px; cursor:pointer; }
+  #card .photos { display:flex; gap:6px; overflow-x:auto; margin:4px 0 8px; }
+  #card .photos button { flex:none; width:64px; height:64px; border-radius:10px; border:1px solid var(--line); padding:0; overflow:hidden; background:var(--line); color:var(--muted); font-size:11px; }
+  #card .photos img { width:100%; height:100%; object-fit:cover; display:block; }
+  .photo-big { width:100%; max-height:60vh; object-fit:contain; border-radius:10px; background:#000; display:block; }
   #card .x.trash { background:none; color:var(--red); border:1px solid var(--line); }
   #card .t > div { flex:1; min-width:0; }
   #card .name { font-weight:700; font-size:1.08em; }
@@ -1797,9 +1801,11 @@ function showCard(kind, obj) {
   }
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
+    ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>` : ''}
     <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
-    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 2 : 3}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="copy" style="grid-column:span 2">Координаты в буфер</button></div>`;
+    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 2 : 3}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button></div>`;
   card.style.display = 'block';
+  fillThumbs(kind, obj);
   card.onclick = e => {
     const act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
     if (act === 'close') hideCard();
@@ -1813,6 +1819,7 @@ function showCard(kind, obj) {
     if (act === 'edit') { kind === 'point' ? editPoint(obj) : editLine(obj); }
     if (act === 'copy') copyCoords(kind, obj);
     if (act === 'verts') showVertices(obj);
+    if (act === 'photo') addPhoto(kind, obj);
     if (act === 'del') {                                              // без лишнего вопроса — случайное удаление отменяет «Вернуть»
       if (kind === 'point') data.points = data.points.filter(x => x !== obj); else data.lines = data.lines.filter(x => x !== obj);
       save(); hideCard(); toast((kind === 'point' ? 'Удалено' : 'Линия удалена') + ' — кнопка ↶ справа вернёт');
@@ -2059,10 +2066,10 @@ function setMode(m) {
     `<span>${esc(spec.id === GENERIC.point ? 'Точки' : spec.id === GENERIC.line ? 'Линия' : spec.name)}${isPt ? '' : ` · <b class="cnt">${mode.latlngs.length}</b> ${plural(mode.latlngs.length, 'точка', 'точки', 'точек')}`}</span>`;
   const snapBtn = ['snap', snapOn ? 'Привязка: вкл' : 'Привязка: выкл', snapOn ? 'on' : ''];
   const btns = isPt
-    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['sign', 'Знак…'], snapBtn, ['done', 'Готово', 'primary']]
+    ? [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['photo', '📷 Фото'], ['sign', 'Знак…'], snapBtn, ['done', 'Готово', 'primary']]
     : [['center', 'В перекрестье'], ['gps', 'По GPS'], ['measure', 'Измерить'], ['undo', '↶ Убрать точку'], ['sign', 'Знак…'], snapBtn, ['cancel', 'Отмена', 'danger'], ['done', 'Готово', 'primary']];
   // «Знак…» — выбрать условный знак заранее; без него ставится простая точка или линия, знак выбирается потом в карточке
-  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' && !isPt ? ' style="grid-column:span 2"' : ''}>${t}</button>`).join('');
+  $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' ? ` style="grid-column:span ${isPt ? 3 : 2}"` : ''}>${t}</button>`).join('');
 }
 $('modeBtns').addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
@@ -2071,6 +2078,15 @@ $('modeBtns').addEventListener('click', e => {
   if (act === 'center') addAt(map.getCenter(), null, 'center');
   if (act === 'gps' && gps && Date.now() - gps.at > GPS_FRESH_MS) { toast(`Координаты GPS устарели (${Math.round((Date.now() - gps.at) / 1000)} с назад) — подождите сигнал`); startGps(); return; }
   if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng), null, 'gps'); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
+  if (act === 'photo') {                                              // сначала снимок (отмена — точки нет), потом точка с ним
+    const m = mode;
+    takePhoto().then(blob => {
+      if (!blob || mode !== m) return;
+      const fresh = gps && Date.now() - gps.at < GPS_FRESH_MS;
+      const pt = addAt(fresh ? L.latLng(gps.lat, gps.lng) : map.getCenter(), null, fresh ? 'gps' : 'center');
+      if (pt) addPhoto('point', pt, blob);
+    });
+  }
   if (act === 'snap') { snapOn = !snapOn; setPref('snap', snapOn); setMode(mode); toast(snapOn ? 'Привязка к точкам, вершинам и линиям включена' : 'Привязка выключена — точка ставится ровно куда нажали'); }
   if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode !== m) return; const pt = addAt(ll, meas);
@@ -2330,7 +2346,9 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'rasters', icon: '◐', text: 'Свои растры: прозрачность, удаление' },
   { id: 'offlineinfo', icon: '▤', text: 'Карты в телефоне: сколько сохранено, очистить' },
   { header: 'Файлы' },
-  { id: 'kml', icon: '⇩', text: 'Выгрузить всё в KML' },
+  { id: 'kmz', icon: '⇩', text: 'Выгрузить KMZ с фото (Google Earth, ГИС)' },
+  { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + фото' },
+  { id: 'kml', icon: '⇩', text: 'Выгрузить всё в KML (без фото)' },
   { id: 'csv', icon: '⇩', text: `Выгрузить точки в CSV (WGS-84 и ${planeName()})` },
   { id: 'import', icon: '⇧', text: 'Загрузить KML' },
   { header: 'Прочее' },
@@ -2347,6 +2365,8 @@ const MENU = {
   raster: () => rasterInput.click(),
   rasters: () => rasterMenu(),
   heights: () => heightsMenu(),
+  kmz: () => exportKmz(),
+  report: () => exportReport(),
   cal: () => calibrate(),
   offline: () => saveArea(),
   offlineinfo: () => offlineInfo(),
@@ -2462,27 +2482,179 @@ function editMsk() {
   }, 'Сохранить');
 }
 const today = () => new Date().toISOString().slice(0, 10);
-function download(name, text, type) {
+// text — строка или Blob. В Android-приложении файл пишется в «Загрузки/Полевой план» и предлагается «Поделиться»
+const FILES = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Files) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Files')));
+async function download(name, text, type) {
+  const blob = text instanceof Blob ? text : new Blob([text], { type });
+  if (FILES && FILES.save) {
+    try {
+      const data = await blobBase64(blob);
+      const r = await FILES.save({ name, mime: type, data });
+      showSheet(`<div class="sh-head"><b>Файл сохранён</b><button class="x" data-close>×</button></div>
+        <div class="hint" style="margin:4px 0 12px">${esc(r.path)} (${Math.max(1, Math.round(blob.size / 1024))} КБ)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><button class="btn" data-close>Готово</button><button class="btn primary" id="shareFile">Отправить…</button></div>`);
+      $('shareFile').onclick = () => { closeSheet(); FILES.share({ name, mime: type, data }).catch(e => toast(e.message || 'Не удалось отправить')); };
+    } catch (e) { toast((e && e.message) || 'Не удалось сохранить файл'); }
+    return;
+  }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.href = URL.createObjectURL(blob);
   a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function blobBase64(blob) {
+  return new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = () => bad(new Error('файл не прочитан')); r.readAsDataURL(blob); });
+}
+
+/* ───────────── Фото к объектам: съёмка, хранение в телефоне (IndexedDB «tk-photos»), просмотр ───────────── */
+
+const PHOTO_MAX_PX = 1600, PHOTO_Q = 0.82;                           // ≈ 300–500 КБ: надпись на люке читается
+const photoDb = new Promise(resolve => {
+  try {
+    const req = indexedDB.open('tk-photos', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('photos', { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  } catch (e) { resolve(null); }
+});
+async function photoTx(mode, fn) {
+  const db = await photoDb;
+  if (!db) throw new Error('память для фото недоступна');
+  return new Promise((ok, bad) => { const tx = db.transaction('photos', mode), r = fn(tx.objectStore('photos')); tx.oncomplete = () => ok(r && r.result); tx.onerror = () => bad(tx.error); });
+}
+const photoGet = id => photoTx('readonly', st => st.get(id));
+const photoPut = rec => photoTx('readwrite', st => st.put(rec));
+// направление съёмки — по компасу телефона, если он есть
+let heading = null;
+addEventListener('deviceorientationabsolute', e => { if (e.alpha != null) heading = Math.round((360 - e.alpha) % 360); });
+const photoInput = document.createElement('input');
+photoInput.type = 'file'; photoInput.accept = 'image/*'; photoInput.setAttribute('capture', 'environment'); photoInput.style.display = 'none';
+document.body.appendChild(photoInput);
+// открыть камеру; вернёт сжатый JPEG или null, если сняли отмену
+function takePhoto() {
+  return new Promise(resolve => {
+    photoInput.value = '';
+    photoInput.onchange = async () => {
+      const file = photoInput.files[0];
+      if (!file) { resolve(null); return; }
+      try { resolve(await shrinkPhoto(file)); } catch (e) { toast('Не удалось обработать фото'); resolve(null); }
+    };
+    photoInput.click();
+  });
+}
+async function shrinkPhoto(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const k = Math.min(1, PHOTO_MAX_PX / Math.max(bmp.width, bmp.height)), w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  cv.getContext('2d').drawImage(bmp, 0, 0, w, h);
+  return new Promise(ok => cv.toBlob(b => ok(b), 'image/jpeg', PHOTO_Q));
+}
+// снять и прикрепить фото к объекту
+async function addPhoto(kind, obj, blob) {
+  blob = blob || await takePhoto();
+  if (!blob) return false;
+  const fresh = gps && Date.now() - gps.at < GPS_FRESH_MS;
+  const at = kind === 'point' ? [obj.lat, obj.lng] : obj.latlngs[0];
+  const rec = { id: uid(), blob, at: new Date().toISOString(), lat: fresh ? gps.lat : at[0], lng: fresh ? gps.lng : at[1], heading, obj: obj.id };
+  try { await photoPut(rec); } catch (e) { toast('Фото не сохранилось: ' + e.message); return false; }
+  obj.photos = (obj.photos || []).concat(rec.id);
+  save(); toast(`Фото прикреплено${heading != null ? `, съёмка на ${heading}°` : ''}`);
+  if (selected && selected.obj === obj) showCard(kind, obj);
+  return true;
+}
+// миниатюры в карточке подгружаются после её показа
+const photoUrls = new Map();
+async function photoUrl(id) {
+  if (photoUrls.has(id)) return photoUrls.get(id);
+  const rec = await photoGet(id).catch(() => null);
+  const url = rec ? URL.createObjectURL(rec.blob) : null;
+  photoUrls.set(id, url);
+  return url;
+}
+function fillThumbs(kind, obj) {
+  const box = document.getElementById('cardPhotos');
+  if (!box || !obj.photos || !obj.photos.length) return;
+  obj.photos.forEach(async id => {
+    const url = await photoUrl(id), b = box.querySelector(`[data-photo="${id}"]`);
+    if (b) b.innerHTML = url ? `<img src="${url}" alt="">` : '<span>нет</span>';
+  });
+  box.onclick = e => { const b = e.target.closest('[data-photo]'); if (b) showPhoto(kind, obj, b.dataset.photo); };
+}
+async function showPhoto(kind, obj, id) {
+  const rec = await photoGet(id).catch(() => null), url = await photoUrl(id);
+  if (!rec || !url) { toast('Фото не найдено в памяти телефона'); return; }
+  const when = new Date(rec.at), c = sk42(rec.lat, rec.lng);
+  showSheet(`<div class="sh-head"><b>Фото ${obj.photos.indexOf(id) + 1} из ${obj.photos.length}</b><button class="x" data-close>×</button></div>
+    <img src="${url}" class="photo-big" alt="">
+    <div class="hint" style="margin:6px 0 10px;color:var(--muted)">${when.toLocaleString('ru-RU')}${rec.heading != null ? ` · съёмка на ${rec.heading}°` : ''} · X ${f2(c.x)} Y ${f2(c.y)}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><button class="btn danger" id="photoDel">Открепить фото</button><button class="btn primary" data-close>Готово</button></div>`);
+  $('photoDel').onclick = () => {                                     // само фото остаётся в памяти — «Вернуть» прикрепит его обратно
+    obj.photos = obj.photos.filter(x => x !== id);
+    if (!obj.photos.length) delete obj.photos;
+    save(); closeSheet(); showCard(kind, obj); toast('Фото откреплено — кнопка ↶ вернёт');
+  };
+}
+
+/* ───────────── Архив без сжатия (ZIP «stored»): KMZ с фото и архив для отчёта ───────────── */
+
+const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+// files: [{ name, data: Uint8Array }] → Blob zip (имена в UTF-8, флаг 0x0800)
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], central = [];
+  let offset = 0;
+  const now = new Date(), dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1),
+    dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  for (const f of files) {
+    const name = enc.encode(f.name), crc = crc32(f.data), size = f.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    [[0, 0x04034b50, 4], [4, 20, 2], [6, 0x0800, 2], [8, 0, 2], [10, dosTime, 2], [12, dosDate, 2], [14, crc, 4], [18, size, 4], [22, size, 4], [26, name.length, 2], [28, 0, 2]]
+      .forEach(([o, v, n]) => n === 4 ? lh.setUint32(o, v, true) : lh.setUint16(o, v, true));
+    parts.push(lh, name, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0x0800, 2], [10, 0, 2], [12, dosTime, 2], [14, dosDate, 2], [16, crc, 4], [20, size, 4], [24, size, 4], [28, name.length, 2], [30, 0, 2], [32, 0, 2], [34, 0, 2], [36, 0, 2], [38, 0, 4], [42, offset, 4]]
+      .forEach(([o, v, n]) => n === 4 ? ch.setUint32(o, v, true) : ch.setUint16(o, v, true));
+    central.push(ch, name);
+    offset += 30 + name.length + size;
+  }
+  const cdSize = central.reduce((a, p) => a + (p.byteLength || p.length), 0), end = new DataView(new ArrayBuffer(22));
+  [[0, 0x06054b50, 4], [8, files.length, 2], [10, files.length, 2], [12, cdSize, 4], [16, offset, 4]].forEach(([o, v, n]) => n === 4 ? end.setUint32(o, v, true) : end.setUint16(o, v, true));
+  return new Blob([...parts, ...central, end], { type: 'application/zip' });
+}
+const photoFile = id => `photo_${id}.jpg`;
+async function photoFiles(folder) {
+  const ids = [...data.points, ...data.lines].flatMap(o => o.photos || []), out = [];
+  for (const id of ids) { const rec = await photoGet(id).catch(() => null); if (rec) out.push({ name: folder + photoFile(id), data: new Uint8Array(await rec.blob.arrayBuffer()) }); }
+  return out;
+}
+async function exportKmz() {
+  toast('Собираю KMZ с фото…');
+  const files = [{ name: 'doc.kml', data: new TextEncoder().encode(toKml('files/')) }, ...await photoFiles('files/')];
+  download(`plan_${today()}.kmz`, makeZip(files), 'application/vnd.google-earth.kmz');
+}
+async function exportReport() {
+  toast('Собираю архив для отчёта…');
+  const enc = new TextEncoder();
+  const files = [{ name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) }, ...await photoFiles('photos/')];
+  download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
 
 /* ───────────── KML и CSV ───────────── */
 
 const xml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
-function toKml() {
+// photoDir — при выгрузке с фото: путь к снимкам внутри архива (в описании объекта — картинки)
+function toKml(photoDir) {
+  const desc = o => photoDir && o.photos && o.photos.length ? `<description><![CDATA[${o.photos.map(id => `<img src="${photoDir}${photoFile(id)}" width="480"/>`).join('<br/>')}]]></description>` : '';
   const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
   const pts = data.points.map(p => {
     const s = POINTS[p.type] || POINTS.mark;
-    return `<Placemark><name>${xml(p.name || s.name)}</name>${ext({ tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
+    return `<Placemark><name>${xml(p.name || s.name)}</name>${desc(p)}${ext({ tk_photos: p.photos ? JSON.stringify(p.photos) : '', tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
     const hex = l.color || (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || (s.color === REL ? REL_HEX : s.color) || '#111111';
     const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
-    return `<Placemark><name>${xml(l.caption || s.name)}</name>${ext({ tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '', tk_color: l.color })}` +
+    return `<Placemark><name>${xml(l.caption || s.name)}</name>${desc(l)}${ext({ tk_photos: l.photos ? JSON.stringify(l.photos) : '', tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '', tk_color: l.color })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
       `<LineString><tessellate>1</tessellate><coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map(a => a[1] + ',' + a[0] + ',0').join(' ')}</coordinates></LineString></Placemark>`;
   });
@@ -2490,11 +2662,12 @@ function toKml() {
 }
 function toCsv() {
   const rows = [['Знак', 'Подпись', 'Отметка', 'Примечание', 'Широта WGS-84', 'Долгота WGS-84', 'X ' + planeName(), 'Y ' + planeName(), 'Зона',
-    'Отметка из', 'СКО, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб']];
+    'Отметка из', 'Фото', 'СКО, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб']];
   for (const p of data.points) {
     const s = sk42(p.lat, p.lng), m = p.meas;
     rows.push([(POINTS[p.type] || POINTS.mark).name, p.name || '', p.h == null ? '' : p.h, p.note || '', f6(p.lat), f6(p.lng), s.x.toFixed(2), s.y.toFixed(2), s.zone,
       p.h == null ? '' : p.hSrc === 'gnss' ? 'ГНСС' : 'вручную',
+      (p.photos || []).map(photoFile).join(' '),
       ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', ''])]);
   }
   return '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
@@ -2505,6 +2678,7 @@ function readExtras(ext) {
   if (ext.tk_rot != null && ext.tk_rot !== '' && !isNaN(r)) out.rot = r;
   try { const a = ext.tk_attr ? JSON.parse(ext.tk_attr) : null; if (a && typeof a === 'object') out.attr = a; } catch (e) { /* без свойств */ }
   if (ext.tk_hsrc) out.hSrc = ext.tk_hsrc;
+  Object.assign(out, readJson(ext.tk_photos, 'photos', Array.isArray));
   Object.assign(out, readJson(ext.tk_meas, 'meas', v => v && typeof v === 'object' && v.m != null));
   if (/^#[0-9a-f]{6}$/i.test(ext.tk_color || '')) out.color = ext.tk_color;
   Object.assign(out, readJson(ext.tk_hinfo, 'hInfo', v => v && typeof v === 'object'));
@@ -2540,7 +2714,7 @@ $('fileIn').onchange = async e => {
         try { attr = ext.tk_attr ? JSON.parse(ext.tk_attr) : undefined; } catch (e) { attr = undefined; }   // повреждённые свойства — просто без них
         add.lines.push({ id: uid(), type, latlngs, caption: ext.tk_type ? (ext.tk_caption || '') : name,
           count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1,
-          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray), ...(/^#[0-9a-f]{6}$/i.test(ext.tk_color || '') ? { color: ext.tk_color } : {}) }); nl++;
+          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray), ...readJson(ext.tk_photos, 'photos', Array.isArray), ...(/^#[0-9a-f]{6}$/i.test(ext.tk_color || '') ? { color: ext.tk_color } : {}) }); nl++;
       }
     } catch (e) { bad++; }                                            // повреждённый объект — пропускаем, остальные грузим
     data.points.push(...add.points); data.lines.push(...add.lines);
