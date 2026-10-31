@@ -19,8 +19,8 @@
   /* традиционные цвета сетей («Правила начертания…», п. 6 — по дополнительным требованиям) */
   /* чертёжный шрифт подписей на плане: узкий наклонный, как по ГОСТ 2.304 */
   body { --draft:"Roboto Condensed","Arial Narrow",Arial,sans-serif; }
-  body { --c-water:#1b8a3a; --c-sewer:#8d5524; --c-heat:#1f4fbf; --c-gas:#1aa3d9; --c-el:#d32f2f; --c-own:#7b1fa2; }
-  body.night { --c-water:#4caf50; --c-sewer:#c49a6c; --c-heat:#6f9cff; --c-gas:#4fc3f7; --c-el:#ff6b6b; --c-own:#ce93d8; }
+  body { --c-water:#1565c0; --c-sewer:#6d4c41; --c-heat:#8e24aa; --c-gas:#ef8f00; --c-el:#d32f2f; --c-comm:#2e7d32; --c-own:#7b1fa2; }
+  body.night { --c-water:#64b5f6; --c-sewer:#bcaaa4; --c-heat:#ce93d8; --c-gas:#ffb74d; --c-el:#ff6b6b; --c-comm:#81c784; --c-own:#ce93d8; }
   /* рельеф по ГКИНП — коричневым (горизонтали, откосы, обрывы); ночью светлее, на солнце темнее */
   body { --rel:#8a4b1c; } body.sun { --rel:#5e2e0c; } body.night { --rel:#d6a06e; }
   body { --veg:#2e7d32; } body.sun { --veg:#1b5e20; } body.night { --veg:#81c784; }
@@ -262,6 +262,7 @@ const BENCHMARK = '<circle cx="12" cy="12" r="8" fill="currentColor"/><rect x="5
 const BOLT = '<path d="M15.2 3.2 8.4 12.8h6.4l-4.5 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="miter" stroke-miterlimit="6"/><path d="M9.2 21.4 12.4 20.1 8.7 17.6Z" fill="currentColor"/>';
 const BOXK = t => `<rect x="2.5" y="5" width="19" height="14" fill="#fff" stroke="currentColor" stroke-width="1.6"/><text x="12" y="16.3" font-size="10.5" text-anchor="middle" font-style="italic" font-family="Roboto Condensed, Arial Narrow, Arial, sans-serif" fill="currentColor">${t}</text>`;
 
+const hasH = h => h != null && h !== '' && !isNaN(Number(h));       // есть ли числовая отметка
 const VIS_COLOR = '#ff00b4';                                         // хорошо заметный и на схеме, и на снимке — для простых точек и линий
 const REL = 'var(--rel)', REL_HEX = '#8a4b1c';                    // цвет рельефа (в KML — как на светлой теме)
 const VEG = 'var(--veg)', VEG_HEX = '#2e7d32';                       // растительность — зелёным (ГКИНП)
@@ -541,12 +542,13 @@ const NET_KIND = {
   p_g: 'gas', g_nd: 'gas', g_sd: 'gas', g_vd: 'gas', w_g: 'gas', kover: 'gas', gas_booth: 'gas', gas_kp: 'gas', grs: 'gas', gru: 'gas', grp: 'gas',
   c_hv: 'el', c_hvp: 'el', c_lv: 'el', c_block: 'el', c_chan: 'el', w_e: 'el', lep_rc: 'el', lep_truss: 'el', lep_lv: 'el', lep_cab: 'el',
   tr_pole: 'el', tr_base: 'el', tr_booth: 'el', substation: 'el',
+  c_s: 'comm', s_br: 'comm', s_tel: 'comm', s_radio: 'comm', s_sig: 'comm', s_tlg: 'comm', air_comm: 'comm', w_s: 'comm', tel_booth: 'comm', tel_cab: 'comm',
   route: 'own'
 };
 // Состояние линии («Правила», табл. 5–6) — настройка в карточке любой линии
 const STATES = [['', 'действующая'], ['off', 'недействующая'], ['reserve', 'в резерве'], ['project', 'проектируемая'], ['build', 'строящаяся'], ['staked', 'вынесенная в натуру'], ['approx', 'по неуточнённым данным']];
 const STATE_NAME = Object.fromEntries(STATES);
-const NET_HEX = { water: '#1b8a3a', sewer: '#8d5524', heat: '#1f4fbf', gas: '#1aa3d9', el: '#d32f2f', own: '#7b1fa2' };   // для KML
+const NET_HEX = { water: '#1565c0', sewer: '#6d4c41', heat: '#8e24aa', gas: '#ef8f00', el: '#d32f2f', comm: '#2e7d32', own: '#7b1fa2' };   // для KML
 let netColors = false;           // читается из настроек ниже, когда готовы pref()
 function netColor(type, fallback) {
   const k = netColors && NET_KIND[type];
@@ -872,8 +874,11 @@ function geoidN(lat, lng) {
   return ((v(r, c) * (1 - fx) + v(r, c1) * fx) * (1 - fy) + (v(r1, c) * (1 - fx) + v(r1, c1) * fx) * fy) / 100;
 }
 // отметка без поправки по реперу
+// высота антенны над точкой (веха), м — отметка относится к земле, а не к антенне
+let antH = Number(pref('antH', 0)) || 0;
 function rawHeight(lat, lng, hEll) {
   if (hEll == null || isNaN(hEll)) return null;
+  hEll = Number(hEll) - antH;
   if (hgt.src === 'normal') return hEll;
   const N = geoidN(lat, lng);
   return N == null ? null : hEll - N;
@@ -903,6 +908,7 @@ function heightsMenu() {
     : hgt.dh ? `${hgt.dh >= 0 ? '+' : ''}${mText(hgt.dh, 3)} м к каждой отметке` : 'отметки по модели геоида EGM2008';
   showSheet(`<div class="sh-head"><b>Отметки</b><button class="x" data-close>×</button></div><div id="hgtBox">
     <div class="meas-verdict ${r && !far || hgt.dh && !r ? 'ok' : 'mid'}"><div style="font-size:1.15em">${status}</div><div style="font-weight:400">${statusSub}</div></div>
+    <div class="meas-row"><span>Высота антенны</span><input id="antH" inputmode="decimal" value="${antH ? String(antH).replace('.', ',') : ''}" placeholder="0 — если приёмник уже учёл" style="flex:1;min-height:44px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)"><span style="min-width:auto">м</span></div>
     <button class="btn primary" id="hgtRef" style="width:100%;margin-top:6px">Встать на репер и привязать</button>
     <details class="more"><summary>Подробнее и настройки</summary>
       <div class="meas-row"><span>Высота от приёмника</span><div class="seg" id="hgtSrc">
@@ -922,6 +928,14 @@ function heightsMenu() {
     setPref('hgt', hgt); heightsMenu();
   };
   $('hgtRef').onclick = () => openMeasure((ll, meas) => bindToBenchmark(ll, meas));
+  $('antH').onchange = () => {                                        // высоту вехи часто меняют — отметки по ГНСС пересчитать
+    const v = $('antH').value.trim() === '' ? 0 : parseNum($('antH').value);
+    if (isNaN(v) || v < 0 || v > 5) { toast('Высота антенны — от 0 до 5 м, например 1.8'); return; }
+    antH = v; setPref('antH', v);
+    const n = gnssHeights().length && confirm(`Высота антенны ${mText(v, 3)} м. Пересчитать ранее снятые отметки по ГНСС?`) ? recomputeHeights(false) : 0;
+    if (n) { save(); redrawAll(); }
+    toast(`Высота антенны ${mText(v, 3)} м${n ? `, пересчитано отметок: ${n}` : ''}`);
+  };
   $('hgtManual').onclick = () => openForm('Поправка к отметкам', [
     { key: 'dh', label: 'Поправка, м', type: 'number', value: hgt.dh || 0, hint: 'Прибавляется к каждой отметке. Например, −0.23.' }
   ], v => {
@@ -1272,7 +1286,8 @@ function pointLabel(p) {
   const s = POINTS[p.type] || POINTS.mark;
   if (s.frac) { const [t, b] = fracParts(p); return t || b ? `${t}/${b}` : ''; }
   if (s.spot) return p.h == null || p.h === '' ? '' : planNum(p.h, 2);
-  if (p.type === GENERIC.point && p.h != null && p.h !== '') return [p.name, planNum(p.h, 2)].filter(Boolean).join(' ');            // отметка высоты — сама отметка, два знака (1:500)
+  if (p.type === GENERIC.point && p.h != null && p.h !== '') return [p.name, planNum(p.h, 2)].filter(Boolean).join(' ');
+  if (/^w_/.test(p.type) && hasH(p.h) && wellBottom(p) != null) return [p.name, `${planNum(p.h, 2)}/${planNum(wellBottom(p), 2)}`].filter(Boolean).join(' ');            // отметка высоты — сама отметка, два знака (1:500)
   return [s.prefix, p.name, s.suffix].filter(Boolean).join(' ');
 }
 // рисунок знака: у надписи покрытия — своя буква, у крылец — поворот стеной к зданию
@@ -1497,7 +1512,7 @@ const DRAW = {
     let placed = 0;
     const run = (a, b) => {
       if (spec.double) { segment(g, path, a, b, w, -spec.double); segment(g, path, a, b, w, spec.double); } else segment(g, path, a, b, w);
-      if (spec.sleeve) { segment(g, path, a, b, Math.max(1, C * MM), -1.4, `${1.6 * MM} ${0.8 * MM}`); segment(g, path, a, b, Math.max(1, C * MM), 1.4, `${1.6 * MM} ${0.8 * MM}`); }
+      if (spec.sleeve || (line.attr || {}).sleeve) { segment(g, path, a, b, Math.max(1, C * MM), -1.4, `${1.6 * MM} ${0.8 * MM}`); segment(g, path, a, b, Math.max(1, C * MM), 1.4, `${1.6 * MM} ${0.8 * MM}`); }
     };
     if (total < period * 2 + gap) {                                   // короткая линия — один индекс посередине
       const m = total / 2;
@@ -1734,20 +1749,20 @@ function drawLines() {
     if (line.state === 'off') for (let s = 5 * MM; s < total; s += 11 * MM) tick(g, path, s, 2.8, Math.max(1, C * MM) * 1.3, 60);   // косые штрихи — недействующая
     if (NO_STATE.has(spec.kind)) { curOwner = null; if (spec.kind === 'fence' && spec.tag) { curOwner = line.id; captionAlong(g, path, pts, spec.tag); curOwner = null; } continue; }
     const tag = { build: 'стр.', approx: 'ориент.' }[line.state];
-    const cap = [tag, spec.tag, line.caption].filter(Boolean).join(' ');
-    if (cap) captionAlong(g, path, pts, cap);
+    const cap = [tag, spec.tag, netCaption(line)].filter(Boolean).join(' ');
+    if (cap) captionAlong(g, path, pts, cap, spec.sleeve || (line.attr || {}).sleeve ? 1.6 * MM : spec.double ? spec.double * MM : spec.double2 ? spec.double2 * MM : 0);
     curOwner = null;
   }
 }
 // Подпись линии — над (или под) серединой участка, где она помещается и ни с чем не пересекается; иначе появится при приближении
-function captionAlong(g, path, pts, str) {
+function captionAlong(g, path, pts, str, extra) {          // extra — на сколько дальше от оси (футляр, двойная линия)
   const size = 2.9 * MM, need = tw(str, size, true) + 2 * MM, segs = [];
   let run = 0;
   for (let i = 1; i < pts.length; i++) { const d = pts[i - 1].distanceTo(pts[i]); segs.push({ d, mid: run + d / 2 }); run += d; }
   segs.sort((a, b) => b.d - a.d);                                     // сначала самые длинные участки
   for (const sg of segs) {
     if (sg.d < need) break;
-    for (const dy of [-3.2 * MM, 3.2 * MM])
+    for (const dy of [-(3.2 * MM + (extra || 0)), 3.2 * MM + (extra || 0)])
       for (const shift of [0, -0.25, 0.25]) if (placeText(g, path, sg.mid + shift * (sg.d - need), str, { dy, size })) return;
   }
 }
@@ -1919,6 +1934,12 @@ function showCard(kind, obj) {
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
     if (obj.no) kv.unshift(['№', String(obj.no)]);
+    if (/^w_/.test(obj.type) && obj.attr) {
+      const a = obj.attr, bot = wellBottom(obj);
+      (a.lot || []).forEach((l, i) => kv.push([`Лоток ${i + 1}`, `${hasH(l.h) ? mText(Number(l.h), 2) + ' м' : '—'}${l.dir ? ' · ' + esc(l.dir) : ''}`]));
+      if (bot != null && hasH(obj.h)) kv.push(['Глубина', mText(Number(obj.h) - bot, 2) + ' м']);
+      if (a.wd || a.wm) kv.push(['Колодец', [a.wm, a.wd ? 'Ø ' + a.wd + ' мм' : ''].filter(Boolean).join(', ')]);
+    }
     if (obj.q) kv.push(['Точность', `±${cmText(obj.q.acc)} в плане · ${obj.q.fix}${obj.q.src === 'measure' ? ' · усреднено' : ''}<br><span style="color:var(--muted)">${new Date(obj.q.at).toLocaleString('ru-RU')}</span>`]);
     else kv.push(['Точность', '<span style="color:var(--muted)">не измерена — поставлена касанием или в перекрестье</span>']);
     const hInfo = obj.hInfo || (obj.meas ? { acc: obj.meas.hm, from: 'measure' } : {});
@@ -1947,6 +1968,9 @@ function showCard(kind, obj) {
       kv.push(['Засечки', a.flip ? 'справа по ходу' : 'слева по ходу'], ['Концы', a.gates ? 'упоры ворот' : 'обычные']);
     }
     if (obj.state) kv.push(['Состояние', STATE_NAME[obj.state] || obj.state]);
+    if (NET_LINE_KINDS.has(s.kind) && obj.attr) { const a = obj.attr;
+      const parts = [[netCaption({ attr: a, type: obj.type }), ''], [a.depth !== '' && a.depth != null ? 'глубина ' + mText(Number(a.depth), 2) + ' м' : '', ''], [a.year ? a.year + ' г.' : '', ''], [a.owner ? esc(a.owner) : '', '']].map(x => x[0]).filter(Boolean);
+      if (parts.length) kv.push(['Сеть', parts.join(' · ')]); }
     if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${obj.pk0}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
   }
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x" data-act="close">×</button></div>
@@ -2039,6 +2063,7 @@ function editPoint(p) {
     p.rot = ((r % 360) + 360) % 360; p.note = v.note;
     save(); drawPoints(); frame(); showCard('point', p);
   });
+  if (/^w_/.test(p.type)) return editWell(p, s);
   openForm(s.name, [
     ...(s.spot ? [] : [{ key: 'name', label: s.nameLabel || 'Подпись у знака (номер)', value: p.name, placeholder: s.nameLabel ? 'например 1.6' : 'например 12' }]),
     { key: 'h', label: 'Отметка, м', type: 'number', value: p.h, placeholder: 'например 245.51' },
@@ -2050,6 +2075,30 @@ function editPoint(p) {
     if (h !== p.h) { delete p.hSrc; delete p.hInfo; }                                   // отметку исправили вручную — она уже не из ГНСС
     p.h = h;
     save(); showCard('point', p);
+  });
+}
+// Колодец: номер, отметка люка, до трёх лотков (отметка и куда), диаметр и материал; глубина считается сама
+const WELL_MATS = [['', '—'], ['ж/б', 'ж/б — железобетон'], ['кирп.', 'кирп. — кирпич'], ['пласт.', 'пластик'], ['бет.', 'бет. — бетон']];
+function wellBottom(p) { const l = ((p.attr || {}).lot || []).map(x => x && x.h).filter(hasH).map(Number); return l.length ? Math.min(...l) : null; }
+function editWell(p, s) {
+  const a = p.attr || {}, lot = a.lot || [];
+  const fields = [
+    { key: 'name', label: 'Номер колодца', value: p.name, placeholder: 'К1', half: true },
+    { key: 'h', label: 'Отметка люка, м', type: 'number', value: p.h, placeholder: '145.32', half: true }];
+  for (let i = 0; i < 3; i++) fields.push({ key: 'l' + i, label: `Лоток ${i + 1}, м`, type: 'number', value: lot[i] && lot[i].h, placeholder: i ? '' : '142.10', half: true },
+    { key: 'd' + i, label: 'Куда (ввод, выпуск)', value: lot[i] && lot[i].dir, placeholder: i ? '' : 'на К2', half: true });
+  fields.push({ key: 'wd', label: 'Диаметр колодца, мм', type: 'number', value: a.wd, placeholder: '1000', half: true },
+    { key: 'wm', label: 'Материал', type: 'select', value: a.wm || '', options: WELL_MATS, half: true },
+    { key: 'note', label: 'Примечание', value: p.note, placeholder: 'необязательно' });
+  openForm(s.name, fields, v => {
+    const num = k => v[k] === '' ? '' : parseNum(v[k]);
+    const h = num('h'), lots = [0, 1, 2].map(i => ({ h: num('l' + i), dir: v['d' + i] || '' })).filter(x => x.h !== '' || x.dir);
+    if ((h !== '' && isNaN(h)) || lots.some(x => x.h !== '' && isNaN(x.h)) || (v.wd !== '' && isNaN(num('wd')))) { toast('Отметки и диаметр — числа, например 142.10'); return false; }
+    const hv = h === '' ? null : h;
+    if (hv !== p.h) { delete p.hSrc; delete p.hInfo; }
+    p.name = v.name || ''; p.note = v.note; p.h = hv;
+    p.attr = { ...a, lot: lots, wd: num('wd'), wm: v.wm };
+    save(); drawPoints(); frame(); showCard('point', p);
   });
 }
 // надпись покрытия и отметки у бортового камня — свои поля вместо номера и отметки
@@ -2195,8 +2244,9 @@ function editLine(line, isNew) {
     fields.push({ key: 'state', label: 'Состояние', type: 'select', value: line.state || '', options: STATES, half: true });
     if (spec.kind === 'power') fields.push({ key: 'solid', label: 'Между опорами', type: 'select', value: (line.attr || {}).solid ? 1 : 0, half: true,
       options: [[0, 'только стрелки у опор'], [1, 'сплошная линия']], hint: 'Каждая точка — опора; стрелки сами смотрят на соседние. Ответвление: начните новую ЛЭП с существующей опоры — точка привяжется. Застроенная территория — со стрелками, незастроенная — сплошной (ГКИНП, п. 175).' });
-    fields.push({ key: 'caption', label: spec.kind === 'power' || spec.kind === 'air' ? 'Напряжение, число проводов' : 'Подпись вдоль линии',
-      value: line.caption, placeholder: spec.placeholder ? 'например ' + spec.placeholder : 'например «гл. 1.2» или «ст. 100»',
+    if (NET_LINE_KINDS.has(spec.kind)) fields.push(...netFields(line, spec));
+    fields.push({ key: 'caption', label: NET_LINE_KINDS.has(spec.kind) ? 'Своя подпись (если пусто — из полей выше)' : 'Подпись вдоль линии',
+      value: line.caption, placeholder: spec.placeholder ? 'например ' + spec.placeholder : 'например «гл. 1.2»',
       hint: spec.tag ? `«${spec.tag}» поставится само.` : '' });
   }
   openForm(spec.name, fields, v => {
@@ -2204,10 +2254,41 @@ function editLine(line, isNew) {
     if ('count' in v) line.count = Math.max(1, parseInt(v.count, 10) || 1);
     if ('state' in v) line.state = v.state || '';
     if ('solid' in v) line.attr = { ...(line.attr || {}), solid: v.solid === '1' };
+    if (NET_LINE_KINDS.has(spec.kind)) { const nx = readNetFields(v, line.attr || {}); if (!nx) { toast('Диаметр, глубина и год — числа'); return false; } line.attr = { ...nx, solid: (line.attr || {}).solid }; }
     line.caption = v.caption || '';
     if (isNew) data.lines.push(line);
     save(); showCard('line', line);
   }, isNew ? 'Готово' : 'Сохранить');
+}
+
+// Подпись сети на плане: своя, если написана; иначе — из полей (материал, диаметр, футляр), как в «Правилах» (п. 22)
+const PIPE_MATS = [['', '—'], ['ст.', 'ст. — сталь'], ['чуг.', 'чуг. — чугун'], ['ПЭ', 'ПЭ — полиэтилен'], ['ПВХ', 'ПВХ'], ['ж/б', 'ж/б — железобетон'], ['а/ц', 'а/ц — асбестоцемент'], ['кер.', 'кер. — керамика'], ['бет.', 'бет. — бетон'], ['др.', 'другой']];
+function netCaption(line) {
+  if (line.caption) return line.caption;
+  const a = line.attr || {}, sp = LINES[line.type] || {};
+  const main = sp.kind === 'cable' || sp.kind === 'air' || sp.kind === 'power' ? [a.mark, a.volt].filter(Boolean).join(' ') : [a.mat, a.d].filter(Boolean).join(' ');
+  return [main, a.sleeve ? 'футл.' + (a.sleeveD ? ' ' + a.sleeveD : '') : ''].filter(Boolean).join(', ');
+}
+const NET_LINE_KINDS = new Set(['indexed', 'cable', 'power', 'air']);
+function netFields(line, spec) {
+  const a = line.attr || {}, pipe = spec.kind === 'indexed';
+  const f = pipe
+    ? [{ key: 'mat', label: 'Материал', type: 'select', value: a.mat || '', options: PIPE_MATS, half: true }, { key: 'd', label: 'Диаметр, мм', type: 'number', value: a.d, placeholder: '100', half: true }]
+    : [{ key: 'mark', label: spec.kind === 'cable' ? 'Марка кабеля' : 'Марка провода', value: a.mark, placeholder: spec.kind === 'cable' ? 'ААБл 3×120' : 'СИП 4×50', half: true },
+       { key: 'volt', label: 'Напряжение', value: a.volt, placeholder: '10 кВ', half: true }];
+  f.push({ key: 'depth', label: 'Глубина заложения, м', type: 'number', value: a.depth, placeholder: '1.8', half: true },
+    { key: 'year', label: 'Год прокладки', type: 'number', value: a.year, placeholder: '2026', half: true },
+    { key: 'owner', label: 'Владелец (балансодержатель)', value: a.owner, placeholder: 'например Водоканал' });
+  if (pipe) f.push({ key: 'sleeve', label: 'В футляре', type: 'select', value: a.sleeve ? 1 : 0, options: [[0, 'нет'], [1, 'да — штриховые линии по бокам']], half: true },
+    { key: 'sleeveD', label: 'Футляр (материал, Ø)', value: a.sleeveD, placeholder: 'ст. 325', half: true });
+  return f;
+}
+function readNetFields(v, a) {
+  const next = { ...a };
+  for (const k of ['mat', 'mark', 'volt', 'owner', 'sleeveD']) if (k in v) next[k] = v[k];
+  for (const k of ['d', 'depth', 'year']) if (k in v) { const n = v[k] === '' ? '' : parseNum(v[k]); if (n !== '' && isNaN(n)) return null; next[k] = n; }
+  if ('sleeve' in v) next.sleeve = v.sleeve === '1';
+  return next;
 }
 
 /* ───────────── Режимы: ставим знак / рисуем линию ───────────── */
@@ -2524,6 +2605,8 @@ $('btnMenu').onclick = () => openList('Меню', [
   { header: 'Файлы' },
   { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z)` },
   { id: 'txt', icon: '⇩', text: 'Каталог TXT «№;X;Y;H;код» — точки и вершины линий' },
+  { id: 'wells', icon: '⇩', text: 'Ведомость колодцев (CSV для Excel)' },
+  { id: 'nets', icon: '⇩', text: 'Ведомость сетей (CSV для Excel)' },
   { id: 'kmz', icon: '⇩', text: 'Выгрузить KMZ с фото (Google Earth, ГИС)' },
   { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + каталог + DXF + фото' },
   { id: 'kml', icon: '⇩', text: 'Выгрузить всё в KML (без фото)' },
@@ -2544,6 +2627,8 @@ const MENU = {
   rasters: () => rasterMenu(),
   heights: () => heightsMenu(),
   kmz: () => exportKmz(),
+  wells: () => download(`kolodcy_${today()}.csv`, toWellsSheet(), 'text/csv;charset=utf-8'),
+  nets: () => download(`seti_${today()}.csv`, toNetsSheet(), 'text/csv;charset=utf-8'),
   dxf: () => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf'),
   txt: () => download(`catalog_${today()}.txt`, '\ufeff' + toCatalog(), 'text/plain;charset=utf-8'),
   screen: () => { const on = !pref('keepScreen', true); setPref('keepScreen', on); if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); toast(on ? 'Экран не будет гаснуть, пока открыт план' : 'Экран гаснет как обычно'); },
@@ -2910,7 +2995,7 @@ setInterval(runAiQueue, AI_RETRY_MS);
 
 const DXF_TEXT_M = 1.0;                                                 // высота подписей — 1 м = 2 мм на плане 1:500
 const NET_GROUPS = new Set(['water', 'sewer', 'gas', 'heat', 'cables', 'comm', 'special', 'air']);
-const DXF_COLOR = { water: 5, sewer: 34, gas: 2, heat: 1, el: 1, own: 6, relief: 34, veg: 3, comm: 3 };
+const DXF_COLOR = { water: 5, sewer: 34, gas: 30, heat: 6, el: 1, own: 6, relief: 34, veg: 3, comm: 3 };
 const LINE_GROUP_OF = Object.fromEntries(LINE_GROUPS.flatMap(g => g.items.map(i => [i.id, g])));
 const layerName = (prefix, title) => (prefix + title).toUpperCase().replace(/[^A-ZА-ЯЁ0-9_]+/g, '_').replace(/_+$/, '');
 function dxfLayerOfLine(l) { const g = LINE_GROUP_OF[l.type] || { id: 'own', title: 'Прочее' }; return layerName(NET_GROUPS.has(g.id) ? 'СЕТИ_' : 'ТОПО_', g.title); }
@@ -2947,7 +3032,7 @@ function toDxf() {
     ent(0, 'POLYLINE', 8, lay, 66, 1, 10, 0, 20, 0, 30, 0, 70, 8 | (sp.closed ? 1 : 0));
     l.latlngs.forEach((ll, i) => { const z = l.hs && l.hs[i], [x, y, zz] = xyz(ll, z && z.h); ent(0, 'VERTEX', 8, lay, 10, x, 20, y, 30, zz, 70, 32); });
     ent(0, 'SEQEND', 8, lay);
-    const label = [sp.kind === 'building' ? buildingLabel(sp, l) : '', l.caption, (l.attr && l.attr.caption) || ''].filter(Boolean).join(' ');
+    const label = [sp.kind === 'building' ? buildingLabel(sp, l) : '', NET_LINE_KINDS.has(sp.kind) ? netCaption(l) : l.caption, (l.attr && l.attr.caption) || ''].filter(Boolean).join(' ');
     if (label) { const lay2 = useLayer('ТОПО_ПОДПИСИ'), [x, y, z] = xyz(l.latlngs[0]); ent(0, 'TEXT', 8, lay2, 10, x, 20, y, 30, z, 40, DXF_TEXT_M, 1, label); }
   }
   put(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1009', 9, '$DWGCODEPAGE', 3, 'ANSI_1251', 9, '$INSUNITS', 70, 6, 0, 'ENDSEC');
@@ -3009,7 +3094,7 @@ async function exportReport() {
   toast('Собираю архив для отчёта…');
   const enc = new TextEncoder();
   const files = [{ name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
-    { name: `catalog_${today()}.txt`, data: enc.encode('\ufeff' + toCatalog()) }, { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
+    { name: `catalog_${today()}.txt`, data: enc.encode('\ufeff' + toCatalog()) }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) }, { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
 
@@ -3034,11 +3119,14 @@ function toKml(photoDir) {
   });
   return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Полевой план ${today()}</name>\n${pts.concat(lns).join('\n')}\n</Document></kml>`;
 }
-const hasH = h => h != null && h !== '' && !isNaN(Number(h));
 const f3 = v => Number(v).toFixed(3), f8 = v => Number(v).toFixed(8);
 // отметка точки для выгрузок: у дроби бортового камня — верх (на камне), низ — в примечании
 function pointH(p) { const s = POINTS[p.type] || {}; return s.frac ? (p.attr && hasH(p.attr.top) ? Number(p.attr.top) : null) : hasH(p.h) ? Number(p.h) : null; }
-function pointNote(p) { const s = POINTS[p.type] || {}; return [p.note, s.frac && p.attr && hasH(p.attr.bot) ? 'рядом с камнем ' + planNum(p.attr.bot, 2) : ''].filter(Boolean).join('; '); }
+function pointNote(p) {
+  const s = POINTS[p.type] || {}, a = p.attr || {}, bot = /^w_/.test(p.type) ? wellBottom(p) : null;
+  const lots = /^w_/.test(p.type) && a.lot && a.lot.length ? 'лотки ' + a.lot.map(l => (hasH(l.h) ? planNum(l.h, 2) : '?') + (l.dir ? ' (' + l.dir + ')' : '')).join(', ') : '';
+  return [p.note, s.frac && hasH(a.bot) ? 'рядом с камнем ' + planNum(a.bot, 2) : '', lots, bot != null && hasH(p.h) ? 'глуб. ' + (Number(p.h) - bot).toFixed(2) : ''].filter(Boolean).join('; ');
+}
 const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки' };
 function toCsv() {
   const rows = [['№', 'Код', 'Знак', 'Подпись', 'X ' + planeName(), 'Y ' + planeName(), 'H', 'Отметка из', 'Точность в плане, м', 'Решение', 'Время',
@@ -3051,6 +3139,29 @@ function toCsv() {
       ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', ''])]);
   }
   return '\ufeff' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+}
+const csvJoin = rows => '\ufeff' + rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+// Ведомость колодцев: номер, координаты, отметки люка и лотков, глубина, колодец
+function toWellsSheet() {
+  const rows = [['№ п/п', '№ колодца', 'Вид', 'X ' + planeName(), 'Y ' + planeName(), 'Отм. люка', 'Лоток 1', 'Куда 1', 'Лоток 2', 'Куда 2', 'Лоток 3', 'Куда 3', 'Глубина', 'Диаметр, мм', 'Материал', 'Примечание']];
+  data.points.filter(p => /^w_/.test(p.type)).forEach((p, i) => {
+    const c = sk42(p.lat, p.lng), a = p.attr || {}, lot = a.lot || [], bot = wellBottom(p);
+    rows.push([i + 1, p.name || p.no || '', (POINTS[p.type] || {}).name, f3(c.x), f3(c.y), hasH(p.h) ? Number(p.h).toFixed(2) : '',
+      ...[0, 1, 2].flatMap(k => [lot[k] && hasH(lot[k].h) ? Number(lot[k].h).toFixed(2) : '', (lot[k] && lot[k].dir) || '']),
+      bot != null && hasH(p.h) ? (Number(p.h) - bot).toFixed(2) : '', a.wd || '', a.wm || '', p.note || '']);
+  });
+  return csvJoin(rows);
+}
+// Ведомость сетей: линия, вид, длина, материал/марка, диаметр, глубина, год, владелец, состояние, футляр
+function toNetsSheet() {
+  const rows = [['№', 'Вид сети', 'Длина, м', 'Материал / марка', 'Диаметр, мм', 'Число труб / кабелей', 'Напряжение', 'Глубина, м', 'Год', 'Владелец', 'Состояние', 'Футляр', 'Подпись']];
+  for (const l of data.lines) { const sp = LINES[l.type] || {};
+    if (!NET_LINE_KINDS.has(sp.kind) && l.type !== 'sleeve') continue;
+    const a = l.attr || {};
+    rows.push(['L' + (l.no || ''), sp.name, lineLength(l).toFixed(2), a.mat || a.mark || '', a.d || '', l.count || 1, a.volt || '', hasH(a.depth) ? Number(a.depth).toFixed(2) : '', a.year || '', a.owner || '',
+      STATE_NAME[l.state] || 'действующая', a.sleeve ? 'да' + (a.sleeveD ? ', ' + a.sleeveD : '') : '', netCaption(l)]);
+  }
+  return csvJoin(rows);
 }
 // Каталог для КРЕДО, GeoniCS, Панорамы: «№;X;Y;H;код;описание» — точки и все вершины линий (номер линии.номер вершины)
 function toCatalog() {
