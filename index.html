@@ -687,8 +687,10 @@ function persist(json) {
   }
   scheduleAutoCopy();
 }
+let outage = null;                                                      // последний расчёт отключения (подсветка на карте)
 function save() {
   const now = JSON.stringify(data);
+  if (now !== lastSaved && outage) clearOutage();                     // план изменился — подсветка отключения устарела
   if (now !== lastSaved) { pushUndo(lastSaved); lastSaved = now; }
   persist(now);
   showUndo();
@@ -1335,7 +1337,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 37;
+const APP_BUILD = 38;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -2081,7 +2083,7 @@ function drawHits() {
   hitLayer.clearLayers();
   for (const line of data.lines)
     ((LINES[line.type] || {}).closed ? L.polygon(line.latlngs, { opacity: 0, fillOpacity: 0, weight: 24, interactive: true })
-      : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(e.latlng); else showCard('line', line); }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
+      : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(e.latlng); else { lineTap = { line, ll: e.latlng }; showCard('line', line); } }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
 }
 map.on('moveend zoomend resize viewreset', frame);
 map.on('zoomend', () => { if ((planDenom() > GEN_DENOM) !== generalized) { drawPoints(); frame(); } });   // перешли через 1:3000 — пересобрать знаки
@@ -2166,6 +2168,7 @@ function linePreview(spec, w, h, color) {
   else body = `<path d="M2 ${m}H${w * 0.3}M${w * 0.7} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.5"/><text x="${w / 2}" y="${m + 4.5}" font-size="12.5" text-anchor="middle" ${ital}>${spec.index}</text>${spec.flow ? `<path d="M${w - 2} ${m}l-6 -2.6v5.2Z" fill="currentColor"/>` : ''}`;
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="color:${c};display:block">${body}</svg>`;
 }
+let lineTap = null;                                                     // где нажали на линию: отсюда считается отключение
 function showCard(kind, obj) {
   selected = { kind, obj };
   const card = $('card');
@@ -2223,7 +2226,7 @@ function showCard(kind, obj) {
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
-    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn" data-act="stake" style="grid-column:span ${kind === 'point' ? 2 : 3}">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn" data-act="ctrl" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : ''}<button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
+    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn" data-act="stake" style="grid-column:span ${kind === 'point' ? 2 : 3}">◎ Вынести в натуру</button>${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}${kind === 'point' ? '<button class="btn" data-act="ctrl" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : ''}<button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -2242,6 +2245,7 @@ function showCard(kind, obj) {
     if (act === 'stake') startStake(kind === 'point' ? [obj.lat, obj.lng] : obj.latlngs[0], kind === 'point' ? (pointLabel(obj) || (POINTS[obj.type] || POINTS.mark).name) : 'L' + (obj.no || '') + '.1');
     if (act === 'photo') addPhoto(kind, obj);
     if (act === 'ctrl') controlPoint(obj);
+    if (act === 'outage') showOutage(outageFrom(kind, obj));
     if (act === 'ai') { if (obj.ai) showSuggestion(kind, obj, obj.ai); else suggestSign(kind, obj); }
     if (act === 'del') {                                              // без лишнего вопроса — случайное удаление отменяет «Вернуть»
       if (kind === 'point') data.points = data.points.filter(x => x !== obj); else data.lines = data.lines.filter(x => x !== obj);
@@ -4013,6 +4017,133 @@ function toArmSheet() {
   });
   return sheetJoin(rows);
 }
+/* ───────────── Отключение участка: какие задвижки закрыть ───────────── */
+
+// Схема сети одного назначения (водопровод, теплосеть…): куски линий между вершинами, задвижками и врезками.
+// Конец линии на другой линии (до 30 см) — врезка; концы у одного колодца (до 1 м) сходятся в колодце.
+// Задвижка — отдельный узел на своей трубе: через неё обход не идёт, даже если она стоит в колодце.
+const OUT_COLOR = '#e65100';
+const netKindOf = l => NET_KIND[l.type] || l.type;
+const isShutValve = p => { const s = POINTS[p.type] || {}; return !!(s.arm && s.shut); };
+const graphLine = l => isNetLine(l) && l.type !== 'sleeve' && l.latlngs.length >= 2;
+// ближайшее место на ломаной: номер отрезка, доля, расстояние, точка
+function projOn(c, v) {
+  let best = null;
+  for (let i = 1; i < v.length; i++) { const a = v[i - 1], b = v[i], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / L2)) : 0, x = a.x + t * dx, y = a.y + t * dy, d = Math.hypot(x - c.x, y - c.y);
+    if (!best || d < best.d) best = { s: i - 1 + t, d, x, y }; }
+  return best;
+}
+// откуда считать: место касания сети или знак на сети (дефект, точка); задвижки и футляры — нет
+function outageFrom(kind, obj) {
+  if (kind === 'line') { if (!graphLine(obj)) return null;
+    const v = obj.latlngs.map(a => sk42(a[0], a[1])), at = lineTap && lineTap.line === obj ? sk42(lineTap.ll.lat, lineTap.ll.lng) : null, q = at && projOn(at, v);
+    return { line: obj, s: q && q.d < Math.max(30, metersPerPx() * 40) ? q.s : (v.length - 1) / 2 }; }
+  if (isShutValve(obj) || /^w_/.test(obj.type)) return null;
+  const l = pipeLine(obj); if (!l || !graphLine(l)) return null;
+  return { line: l, s: projOn(sk42(obj.lat, obj.lng), l.latlngs.map(a => sk42(a[0], a[1]))).s, from: obj };
+}
+const atChain = (l, s) => { const i = Math.min(Math.floor(s), l.latlngs.length - 2), t = s - i, a = l.latlngs[i], b = l.latlngs[i + 1]; return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; };
+function netGraph(kind) {
+  const all = data.lines.filter(graphLine), lines = all.filter(l => netKindOf(l) === kind), V = lines.map(l => l.latlngs.map(a => sk42(a[0], a[1])));
+  const nodes = [], up = [], cut = lines.map(() => []);
+  const node = (c, valve, k) => { nodes.push({ c, valve, k }); up.push(nodes.length - 1); return nodes.length - 1; };
+  const root = n => { while (up[n] !== n) n = up[n] = up[up[n]]; return n; }, join = (a, b) => { up[root(a)] = root(b); };
+  lines.forEach((l, k) => V[k].forEach((c, i) => cut[k].push({ s: i, n: node(c, null, k) })));
+  for (const p of data.points.filter(isShutValve)) {                     // задвижка — на ближней трубе этого назначения
+    const c = sk42(p.lat, p.lng); let best = null;
+    for (const l of all) { const q = projOn(c, l.latlngs.map(a => sk42(a[0], a[1]))); if (q.d <= PIPE_SNAP_M && (!best || q.d < best.q.d)) best = { l, q }; }
+    const k = best ? lines.indexOf(best.l) : -1;
+    if (k >= 0) cut[k].push({ s: best.q.s, n: node({ x: best.q.x, y: best.q.y }, p, k) });
+  }
+  lines.forEach((l, k) => [0, V[k].length - 1].forEach(e => {            // врезки: конец одной линии на другой
+    const end = cut[k].find(x => x.s === e).n;
+    lines.forEach((m, j) => { if (j === k) return; const q = projOn(V[k][e], V[j]); if (q.d > DANGLE_M) return;
+      const n = node({ x: q.x, y: q.y }, null, j); cut[j].push({ s: q.s, n }); join(end, n); });
+  }));
+  const wells = data.points.filter(p => /^w_/.test(p.type)).map(p => ({ p, c: sk42(p.lat, p.lng) }));
+  const free = nodes.map((n, i) => i).filter(i => !nodes[i].valve);
+  for (const i of free) { const c = nodes[i].c;
+    const w = wells.find(w => Math.hypot(w.c.x - c.x, w.c.y - c.y) <= NET_END_M); if (w) { nodes[i].well = w.p; if (w.n == null) w.n = i; else join(i, w.n); } }
+  const grid = new Map(), cell = c => [Math.floor(c.x / DANGLE_M), Math.floor(c.y / DANGLE_M)];
+  for (const i of free) { const [gx, gy] = cell(nodes[i].c), c = nodes[i].c;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of grid.get((gx + dx) + ':' + (gy + dy)) || []) {
+      const q = nodes[j].c; if (nodes[j].k !== nodes[i].k && Math.hypot(c.x - q.x, c.y - q.y) <= DANGLE_M) join(i, j); }
+    const key = gx + ':' + gy; grid.set(key, [...(grid.get(key) || []), i]); }
+  const edges = [];
+  cut.forEach((cs, k) => { cs.sort((a, b) => a.s - b.s);
+    for (let i = 1; i < cs.length; i++) { const a = cs[i - 1], b = cs[i];
+      if (b.s - a.s < 1e-9 && !nodes[a.n].valve && !nodes[b.n].valve) { join(a.n, b.n); continue; }
+      edges.push({ line: lines[k], k, s0: a.s, s1: b.s, a: a.n, b: b.n }); } });
+  for (const e of edges) { e.a = root(e.a); e.b = root(e.b);
+    e.len = 0; const v = V[e.k], pts = [atChain(e.line, e.s0)];
+    for (let i = Math.floor(e.s0) + 1; i < e.s1; i++) pts.push(e.line.latlngs[i]);
+    pts.push(atChain(e.line, e.s1)); e.latlngs = pts;
+    const xy = pts.map(a => sk42(a[0], a[1])); for (let i = 1; i < xy.length; i++) e.len += Math.hypot(xy[i].x - xy[i - 1].x, xy[i].y - xy[i - 1].y); }
+  const info = new Map();                                                // по корню: задвижка, колодец
+  nodes.forEach((n, i) => { const r = root(i), x = info.get(r) || {}; if (n.valve) x.valve = n.valve; if (n.well) x.well = n.well; x.c = x.c || n.c; info.set(r, x); });
+  return { edges, info };
+}
+// обход от места аварии: по кускам сети до задвижек; концы сети без задвижки — «сеть уходит дальше»
+function outageCalc(from) {
+  const kind = netKindOf(from.line), g = netGraph(kind), deg = new Map();
+  g.edges.forEach(e => { if (e.a === e.b) return; deg.set(e.a, (deg.get(e.a) || 0) + 1); deg.set(e.b, (deg.get(e.b) || 0) + 1); });
+  const on = g.edges.filter(e => e.line === from.line && from.s >= e.s0 - 1e-9 && from.s <= e.s1 + 1e-9), start = on.find(e => e.s1 > e.s0) || on[0];
+  if (!start) return null;
+  const seen = new Set([start]), stop = new Set(), queue = [start], valves = new Set(), ends = [], wells = new Set();
+  while (queue.length) { const e = queue.shift();
+    for (const n of [e.a, e.b]) { if (stop.has(n)) continue; stop.add(n);
+      const x = g.info.get(n) || {};
+      if (x.valve) { valves.add(x.valve); continue; }
+      if (x.well) wells.add(x.well);
+      if (deg.get(n) === 1) ends.push({ n, c: x.c, line: e.line, at: e.a === n ? atChain(e.line, e.s0) : atChain(e.line, e.s1), well: x.well });
+      for (const f of g.edges) if (!seen.has(f) && (f.a === n || f.b === n)) { seen.add(f); queue.push(f); } } }
+  const pieces = [...seen], vs = [...valves];
+  return { kind, from, pieces, close: vs.filter(p => (p.attr || {}).state !== 'закр.'), closed: vs.filter(p => (p.attr || {}).state === 'закр.'),
+    ends, wells: [...wells], lines: [...new Set(pieces.map(e => e.line))], len: pieces.reduce((n, e) => n + e.len, 0) };
+}
+const outageLayer = L.layerGroup().addTo(map);
+function clearOutage() { outage = null; outageLayer.clearLayers(); }
+const valveText = p => pointLabel(p) + ((p.attr || {}).well ? ' · в колодце ' + (p.attr || {}).well : '');
+function showOutage(from) {
+  const r = from && outageCalc(from);
+  if (!r) { toast('Не нашёл участок сети под этим местом'); return; }
+  outage = r; outageLayer.clearLayers();
+  r.pieces.forEach(e => L.polyline(e.latlngs, { color: OUT_COLOR, weight: 9, opacity: 0.45, interactive: false }).addTo(outageLayer));
+  r.close.forEach(p => L.circleMarker([p.lat, p.lng], { radius: 13, color: '#c62828', weight: 3, fill: false, interactive: false }).addTo(outageLayer));
+  r.closed.forEach(p => L.circleMarker([p.lat, p.lng], { radius: 13, color: '#757575', weight: 2, dashArray: '4 3', fill: false, interactive: false }).addTo(outageLayer));
+  r.ends.forEach(x => L.circleMarker(x.at, { radius: 11, color: OUT_COLOR, weight: 3, dashArray: '2 4', fill: false, interactive: false }).addTo(outageLayer));
+  hideCard();
+  const row = (t, i, kind) => `<div class="meas-row"><span style="flex:1;min-width:0">${t}</span><button class="btn" data-go="${kind}:${i}" style="flex:none">◎ Идти</button></div>`;
+  const net = (LINES[r.from.line.type] || {}).name || 'сеть';
+  showSheet(`<div class="sh-head"><b>Отключение: ${esc(net)}</b><button class="x" data-close>×</button></div>
+    <div id="outList" style="max-height:52vh;overflow:auto">
+    ${r.close.length ? `<div class="hint" style="margin:4px 0"><b style="color:#c62828">Закрыть (${r.close.length}):</b></div>${r.close.map((p, i) => row(esc(valveText(p)), i, 'c')).join('')}`
+      : '<div class="hint" style="margin:4px 0"><b>Задвижек на плане нет</b> — участок не отсечь по снятым данным.</div>'}
+    ${r.closed.length ? `<div class="hint" style="margin:8px 0 4px">Уже закрыты: ${r.closed.map(p => esc(valveText(p))).join('; ')}</div>` : ''}
+    ${r.ends.length ? `<div class="hint" style="margin:8px 0 4px;color:${OUT_COLOR}"><b>Сеть уходит за план (${r.ends.length}):</b> там могут быть ещё задвижки или потребители — проверьте по схеме владельца.</div>${r.ends.map((x, i) => row(esc(x.well ? 'у колодца ' + pointRef(x.well) : 'конец L' + (x.line.no || '')), i, 'e')).join('')}` : ''}
+    <div class="hint" style="margin:8px 0 4px">Отключается: ${r.lines.map(l => 'L' + (l.no || '')).join(', ')} — ${r.len.toFixed(0)} м сети${r.wells.length ? '; колодцы ' + r.wells.map(w => esc(pointRef(w))).join(', ') : ''}.</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px"><button class="btn" id="outCsv">Ведомость (CSV)</button><button class="btn" id="outClear">Убрать с карты</button></div>
+    <div class="hint" style="margin-top:6px;color:var(--muted)">Считается только по тому, что снято на плане: задвижка должна стоять на трубе (до 3 м), отводы — касаться трубы концом.</div>`);
+  $('outList').onclick = e => { const b = e.target.closest('[data-go]'); if (!b) return;
+    const [k, i] = b.dataset.go.split(':'), x = k === 'c' ? r.close[i] : r.ends[i];
+    startStake(k === 'c' ? [x.lat, x.lng] : x.at, k === 'c' ? valveText(x) : 'конец сети'); };
+  $('outCsv').onclick = () => download(`otklyuchenie_${today()}.csv`, toOutageSheet(r), 'text/csv;charset=utf-8');
+  $('outClear').onclick = () => { clearOutage(); closeSheet(); };
+  map.fitBounds(L.latLngBounds(r.pieces.flatMap(e => e.latlngs).concat(r.close.map(p => [p.lat, p.lng]))),   // участок — над листом
+    { paddingTopLeft: [30, $('top').offsetHeight + 30], paddingBottomRight: [30, $('sheetPanel').offsetHeight + 30], maxZoom: 20 });
+}
+function toOutageSheet(r) {
+  const rows = [['Что', 'Объект', 'Сейчас', 'В колодце', 'X ' + planeName(), 'Y ' + planeName()]];
+  const xy = ll => { const c = sk42(ll[0], ll[1]); return [f3(c.x), f3(c.y)]; };
+  r.close.forEach(p => rows.push(['закрыть', `${POINTS[p.type].name} ${pointLabel(p)}`, (p.attr || {}).state === 'откр.' ? 'открыта' : 'не указано', (p.attr || {}).well || '', ...xy([p.lat, p.lng])]));
+  r.closed.forEach(p => rows.push(['уже закрыта', `${POINTS[p.type].name} ${pointLabel(p)}`, 'закрыта', (p.attr || {}).well || '', ...xy([p.lat, p.lng])]));
+  r.ends.forEach(x => rows.push(['сеть уходит за план', x.well ? pointRef(x.well) : 'конец L' + (x.line.no || ''), '', '', ...xy(x.at)]));
+  rows.push([], ['Отключается', r.lines.map(l => `L${l.no || ''} ${(LINES[l.type] || {}).name}`).join('; '), r.len.toFixed(1) + ' м', r.wells.map(pointRef).join(', ')]);
+  if (r.from.from) rows.push(['Место', pointLabel(r.from.from) || (POINTS[r.from.from.type] || {}).name || '']);
+  return sheetJoin(rows);
+}
+
 // Ведомость дефектов: вид, где (сеть, ближний колодец), координаты, даты, срочность, устранён ли
 const DEF_WELL_M = 10;                                                  // колодец дальше 10 м — уже не «у колодца»
 function toDefectSheet() {
