@@ -1310,7 +1310,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 33;
+const APP_BUILD = 34;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -2125,7 +2125,7 @@ function showCard(kind, obj) {
       if (bot != null && hasH(obj.h)) kv.push(['Глубина', mText(Number(obj.h) - bot, 2) + ' м']);
       if (a.wd || a.wm) kv.push(['Колодец', [a.wm, a.wd ? 'Ø ' + a.wd + ' мм' : ''].filter(Boolean).join(', ')]);
     }
-    if (obj.q) kv.push(['Точность', `±${cmText(obj.q.acc)} в плане · ${obj.q.fix}${obj.q.src === 'measure' ? ' · усреднено' : ''}<br><span style="color:var(--muted)">${new Date(obj.q.at).toLocaleString('ru-RU')}</span>`]);
+    if (obj.q) kv.push(['Точность', `±${cmText(obj.q.acc)} в плане · ${fixText(obj.q.fix)}${obj.q.src === 'measure' ? ' · усреднено' : ''}<br><span style="color:var(--muted)">${new Date(obj.q.at).toLocaleString('ru-RU')}</span>`]);
     else kv.push(['Точность', '<span style="color:var(--muted)">не измерена — поставлена касанием или в перекрестье</span>']);
     const hInfo = obj.hInfo || (obj.meas ? { acc: obj.meas.hm, from: 'measure' } : {});
     kv.push(['Отметка', (obj.h != null && obj.h !== '' ? `<b>${mText(Number(obj.h), 2)} м</b><br>` : '') + `<span style="color:var(--muted)">${esc(heightNote(obj.h, obj.hSrc, hInfo))}</span>`]);
@@ -2606,7 +2606,7 @@ $('modeBtns').addEventListener('click', e => {
   if (act === 'gps' && gps && Date.now() - gps.at > GPS_FRESH_MS) { toast(`Координаты GPS устарели (${Math.round((Date.now() - gps.at) / 1000)} с назад) — подождите сигнал`); startGps(); return; }
   if (act === 'gps' && gps && gps.acc > GPS_WARN_M) {
     const m = mode, at = L.latLng(gps.lat, gps.lng);
-    ask(`Точность GPS ±${cmText(gps.acc)} (${fixKind(gps.acc)}) — хуже допуска 1:500 (25 см). Поставить всё равно?`, 'Поставить').then(ok => { if (ok && mode === m) addAt(at, null, 'gps'); });
+    ask(`Точность GPS ±${cmText(gps.acc)} (${fixText(fixKind(gps.acc))}) — хуже допуска 1:500 (25 см). Поставить всё равно?`, 'Поставить').then(ok => { if (ok && mode === m) addAt(at, null, 'gps'); });
     return;
   }
   if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng), null, 'gps'); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
@@ -2882,6 +2882,9 @@ $('fabLayers').onclick = () => {
 };
 $('btnMenu').onclick = () => openList('Меню', [
   { header: 'На объекте' },
+  { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || 'без названия') + ' — сменить, новый' },
+  { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
+  { id: 'check', icon: '✓', text: 'Проверка перед сдачей' },
   { id: 'heights', icon: '△', text: hgt.ref ? `Отметки: привязка к реперу ${hgt.ref.name || ''}`.trim() : hgt.dh ? 'Отметки: с поправкой' : 'Отметки: привязать к реперу' },
   { id: 'offline', icon: '⇩', text: 'Сохранить участок карты — работать без интернета' },
   { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
@@ -2935,6 +2938,9 @@ const MENU = {
   heights: () => heightsMenu(),
   volkeys: () => { const on = !pref('volKeys', true); setPref('volKeys', on); toast(on ? 'В режиме съёмки: громкость «−» — точка по GPS, «+» — Измерить' : 'Кнопки громкости работают как обычно'); },
   stake: () => stakeByCoords(),
+  project: () => projectsMenu(),
+  passport: () => passportForm(),
+  check: () => checkSheet(),
   sound: () => { soundOn = !soundOn; setPref('sound', soundOn); if (soundOn) cue('ok'); toast(soundOn ? 'Звук включён: два высоких — в допуске, низкий — брак, три падающих — потерян FIX' : 'Звук выключен, осталась вибрация'); },
   voice: () => { voiceOn = !voiceOn; setPref('voice', voiceOn); if (voiceOn) say('В допуске, плюс-минус 2 сантиметра'); toast(voiceOn ? 'Результат измерения будет озвучен' : 'Без голоса'); },
   glove: () => { gloveOn = !gloveOn; setPref('glove', gloveOn); document.body.classList.toggle('glove', gloveOn); toast(gloveOn ? 'Крупные кнопки включены' : 'Обычные кнопки'); },
@@ -2942,16 +2948,16 @@ const MENU = {
   kmz: () => exportKmz(),
   cross: () => { const n = netCrossings().length; if (!n) { toast('Пересечений сетей не найдено'); return; } download(`peresecheniya_${today()}.csv`, toCrossSheet(), 'text/csv;charset=utf-8'); },
   ctrlsheet: () => { if (!data.points.some(p => p.ctrl && p.ctrl.length)) { toast('Контрольных измерений нет — карточка точки → «✓ Контроль»'); return; } download(`kontrol_${today()}.csv`, toCtrlSheet(), 'text/csv;charset=utf-8'); },
-  geojson: () => download(`plan_${today()}.geojson`, toGeoJson(), 'application/geo+json'),
-  mif: () => { const { mif, mid } = toMifMid(); download(`plan_mapinfo_${today()}.zip`, makeZip([{ name: `plan_${today()}.mif`, data: mif }, { name: `plan_${today()}.mid`, data: mid }]), 'application/zip'); },
+  geojson: () => guardExport(() => download(`plan_${today()}.geojson`, toGeoJson(), 'application/geo+json')),
+  mif: () => guardExport(() => { const { mif, mid } = toMifMid(); download(`plan_mapinfo_${today()}.zip`, makeZip([{ name: `plan_${today()}.mif`, data: mif }, { name: `plan_${today()}.mid`, data: mid }]), 'application/zip'); }),
   wells: () => download(`kolodcy_${today()}.csv`, toWellsSheet(), 'text/csv;charset=utf-8'),
   nets: () => download(`seti_${today()}.csv`, toNetsSheet(), 'text/csv;charset=utf-8'),
-  dxf: () => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf'),
-  txt: () => catalogMenu(),
-  pnezd: () => download(`civil3d_PNEZD_${today()}.csv`, new Blob([toPnezd()], { type: 'text/csv' }), 'text/csv'),
+  dxf: () => guardExport(() => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf')),
+  txt: () => guardExport(catalogMenu),
+  pnezd: () => guardExport(() => download(`civil3d_PNEZD_${today()}.csv`, new Blob([toPnezd()], { type: 'text/csv' }), 'text/csv')),
   screen: () => { const on = !pref('keepScreen', true); setPref('keepScreen', on); if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); toast(on ? 'Экран не будет гаснуть, пока открыт план' : 'Экран гаснет как обычно'); },
   ai: () => aiSettings(),
-  report: () => exportReport(),
+  report: () => guardExport(exportReport),
   cal: () => calibrate(),
   offline: () => saveArea(),
   offlineinfo: () => offlineInfo(),
@@ -2966,7 +2972,7 @@ const MENU = {
     const all = data.points.map(p => [p.lat, p.lng]).concat(...data.lines.map(l => l.latlngs));
     if (all.length) map.fitBounds(all, { padding: [60, 60], maxZoom: 18 }); else toast('На карте пока ничего нет');
   },
-  clear: () => ask('Удалить ВСЕ знаки и линии? Их можно будет вернуть кнопкой «Вернуть» или из автокопии.', 'Удалить всё', true).then(ok => { if (ok) { data = { points: [], lines: [] }; save(); hideCard(); } }),
+  clear: () => ask('Удалить ВСЕ знаки и линии? Их можно будет вернуть кнопкой «Вернуть» или из автокопии.', 'Удалить всё', true).then(ok => { if (ok) { data = { points: [], lines: [], ...(data.meta ? { meta: data.meta } : {}) }; save(); hideCard(); } }),
   about: () => alert('Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
   crs: () => openList('Система координат', [
     { header: 'Плоские координаты' },
@@ -3070,6 +3076,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 // text — строка или Blob. В Android-приложении файл пишется в «Загрузки/Полевой план» и предлагается «Поделиться»
 const FILES = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Files) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Files')));
 async function download(name, text, type) {
+  if (typeof fileSlug === 'function' && fileSlug()) name = fileSlug() + '_' + name;   // название объекта — в имени файла
   const blob = text instanceof Blob ? text : new Blob([text], { type });
   if (FILES && FILES.save) {
     try {
@@ -3458,16 +3465,206 @@ async function exportKmz() {
 async function exportReport() {
   toast('Собираю архив для отчёта…');
   const enc = new TextEncoder();
-  const files = [{ name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
+  const files = [{ name: 'pasport_obekta.txt', data: enc.encode(passportText()) }, { name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
     { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `catalog_kody_${today()}.txt`, data: toCatalog(true) },{ name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) },
     ...(data.points.some(p => p.ctrl && p.ctrl.length) ? [{ name: `kontrol_${today()}.csv`, data: enc.encode(toCtrlSheet()) }] : []), { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
 
+/* ───────────── Объекты (несколько планов), паспорт объекта, проверка перед сдачей ───────────── */
+
+// Паспорт хранится в самом плане (data.meta) — переезжает вместе с копиями и объектами
+const PASSPORT_FIELDS = [
+  { key: 'object', label: 'Объект (название)', placeholder: 'например: Водопровод ул. Ленина, 12' },
+  { key: 'cipher', label: 'Шифр / номер договора', placeholder: 'необязательно', half: true },
+  { key: 'customer', label: 'Заказчик', placeholder: 'необязательно', half: true },
+  { key: 'contractor', label: 'Исполнитель (организация)', placeholder: 'например: ООО «Геоплан»' },
+  { key: 'sro', label: 'СРО / выписка из реестра', placeholder: 'необязательно', half: true },
+  { key: 'performer', label: 'Съёмку выполнил (ФИО)', placeholder: 'фамилия, инициалы', half: true },
+  { key: 'receiver', label: 'Приёмник (модель)', placeholder: 'например: EFIX F8', half: true },
+  { key: 'serial', label: 'Заводской номер', placeholder: 'с шильдика', half: true },
+  { key: 'verif', label: 'Поверка: свидетельство, действует до', placeholder: 'например: № С-ГСХ/12-05-2026/123, до 11.05.2027' },
+  { key: 'ntrip', label: 'Поправки: сеть и базовая станция', placeholder: 'например: EFT-CORS, точка MSK1' }
+];
+const meta = () => data.meta || {};
+const objectName = () => (meta().object || '').trim();
+// кусок имени файла из названия объекта: без запрещённых символов, коротко
+const fileSlug = () => objectName().replace(/[\\/:*?"<>|«»]+/g, '').replace(/\s+/g, '_').slice(0, 40);
+const fixText = f => f === 'FIX' || f === 'FLOAT' ? `похоже на ${f}` : f || '';
+function heightsText() {
+  if (hgt.src === 'normal') return 'отметки — как выдаёт приёмник' + (hgt.dh ? `, поправка ${mText(hgt.dh, 3)} м` : '');
+  return 'Балтийская 1977 (нормальные высоты через модель геоида EGM2008)' + (hgt.ref ? `, привязка к реперу ${hgt.ref.name || ''}`.trimEnd() : hgt.dh ? `, поправка ${mText(hgt.dh, 3)} м` : ', без привязки к реперу');
+}
+// строки паспорта для выгрузок: то, что ввёл пользователь, и то, что приложение знает само
+function passportLines() {
+  const m = meta(), out = [];
+  for (const f of PASSPORT_FIELDS) if ((m[f.key] || '').trim()) out.push(`${f.label.replace(/ \(.*\)$/, '')}: ${m[f.key].trim()}`);
+  out.push(`Система координат: ${planeName()}`, `Система высот: ${heightsText()}`, `Высота антенны: ${mText(antH, 3)} м`,
+    'Решение FIX/FLOAT — оценка по точности, которую сообщает приёмник (до 5 см — «похоже на FIX»), а не статус RTK из приёмника',
+    `Выгружено: ${new Date().toLocaleString('ru-RU')}, «Полевой план», сборка ${APP_BUILD}`);
+  return out;
+}
+const passportText = () => '﻿' + passportLines().join('\r\n') + '\r\n';
+function passportForm(onDone, title) {
+  const m = meta();
+  openForm(title || 'Паспорт объекта', PASSPORT_FIELDS.map(f => ({ ...f, value: m[f.key] || '' })), v => {
+    if (!v.object) { toast('Нужно название объекта — оно попадёт в имена файлов и шапки ведомостей'); return false; }
+    data.meta = { ...m, ...v }; save(); syncProject();
+    toast('Паспорт сохранён — он попадёт в выгрузки');
+    if (onDone) setTimeout(onDone, 0);
+  });
+}
+
+/* Объекты: активный план — запись «current» в базе; остальные — записи «p:<id>». Список — pref 'projects' */
+let projectId = pref('project', null);
+function projectList() {
+  let list = pref('projects', []);
+  if (!Array.isArray(list)) list = [];
+  if (!projectId) { projectId = 'p' + uid(); setPref('project', projectId); }
+  if (!list.some(p => p.id === projectId)) list = [{ id: projectId, name: objectName() || 'Объект 1' }, ...list];
+  return list;
+}
+// обновить строку активного объекта в списке (имя, число объектов, дата)
+function syncProject() {
+  const list = projectList().map(p => p.id === projectId ? { ...p, name: objectName() || p.name, n: data.points.length + data.lines.length, at: Date.now() } : p);
+  setPref('projects', list);
+  return list;
+}
+async function switchProject(id, fresh) {
+  if (mode) setMode(null);                                              // недорисованная линия не переезжает в другой объект
+  data.meta = { ...meta(), heights: { hgt, antH } };
+  if (autoDirty) await autoCopy();                                      // копия уходящего объекта — до переключения
+  const list = syncProject();
+  await planTx('readwrite', st => st.put({ id: 'p:' + projectId, at: Date.now(), json: JSON.stringify(data) }));
+  let next = fresh;
+  if (!next) {
+    const rec = await planTx('readonly', st => st.get('p:' + id));
+    if (!rec || !rec.json) throw new Error('объект не найден в памяти телефона');
+    next = JSON.parse(rec.json);
+  }
+  projectId = id; setPref('project', id);
+  data = next;
+  const hs = meta().heights;                                            // свои высота антенны и репер; у нового объекта репера нет
+  hgt = hs && hs.hgt ? hs.hgt : { src: hgt.src, dh: 0, ref: null }; antH = hs && hs.antH != null ? Number(hs.antH) || 0 : antH;
+  setPref('hgt', hgt); setPref('antH', antH);
+  lastSaved = JSON.stringify(data);
+  undoStack.length = 0; undoChars = 0;                                  // «Вернуть» не должен вернуть чужой объект
+  persist(lastSaved); showUndo(); hideCard();
+  setPref('projects', list.some(p => p.id === id) ? list : [...list, { id, name: objectName() || 'Новый объект' }]);
+  syncProject(); MENU.fit();
+}
+function projectsMenu() {
+  const list = syncProject();
+  const when = t => t ? new Date(t).toLocaleDateString('ru-RU') : '';
+  showSheet(`<div class="sh-head"><b>Объекты</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin:4px 0 10px">У каждого объекта свой план и паспорт. Фото и настройки — общие. Название объекта попадает в имена файлов.</div>
+    <div class="list">${list.map(p => `<div class="item${p.id === projectId ? ' on' : ''}" data-proj="${esc(p.id)}"><span class="i">${p.id === projectId ? '●' : '○'}</span>
+      <span>${esc(p.name || 'без названия')}<br><span class="hint">${p.n != null ? `объектов ${p.n}` : ''}${p.at ? ' · ' + when(p.at) : ''}${p.id === projectId ? ' · открыт' : ''}</span></span>
+      ${p.id === projectId ? '' : `<button class="x" data-del="${esc(p.id)}" title="Удалить">×</button>`}</div>`).join('')}</div>
+    <div style="display:grid;gap:6px;margin-top:10px"><button class="btn primary" id="projNew">Новый объект…</button><button class="btn" id="projPass">Паспорт открытого объекта</button></div>`);
+  $('projNew').onclick = () => newProjectWizard();
+  $('projPass').onclick = () => passportForm();
+  $('sheetPanel').querySelectorAll('[data-del]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const p = list.find(x => x.id === b.dataset.del);
+    ask(`Удалить объект «${esc(p.name || 'без названия')}» с телефона? Его план пропадёт; автокопии в «Загрузках» останутся.`, 'Удалить', true).then(async ok => {
+      if (!ok) { projectsMenu(); return; }
+      await planTx('readwrite', st => st.delete('p:' + p.id)).catch(() => {});
+      setPref('projects', pref('projects', []).filter(x => x.id !== p.id)); projectsMenu();
+    });
+  });
+  $('sheetPanel').querySelectorAll('[data-proj]').forEach(row => row.onclick = () => {
+    if (row.dataset.proj === projectId) { closeSheet(); return; }
+    closeSheet();
+    switchProject(row.dataset.proj).then(() => toast('Открыт объект: ' + (objectName() || 'без названия'))).catch(e => toast('Не удалось открыть: ' + e.message));
+  });
+}
+// мастер нового объекта: название и паспорт → высота антенны (обязательно) → привязка к реперу
+function newProjectWizard() {
+  openForm('Новый объект', [{ key: 'object', label: 'Название объекта', placeholder: 'например: Водопровод ул. Ленина, 12' },
+    { key: 'cipher', label: 'Шифр / договор', placeholder: 'необязательно', half: true }, { key: 'customer', label: 'Заказчик', placeholder: 'необязательно', half: true },
+    { key: 'ant', label: 'Высота антенны над точкой, м', type: 'number', value: antH ? mText(antH, 3) : '', placeholder: 'например 2,000',
+      hint: 'Обязательно: без неё все отметки по ГНСС будут завышены на высоту вехи. 0 — если приёмник сам учитывает веху.' }], v => {
+    const a = parseNum(v.ant);
+    if (!v.object) { toast('Введите название объекта'); return false; }
+    if (v.ant === '' || isNaN(a) || a < 0 || a > 10) { toast('Высота антенны — число метров, например 2,000 (или 0)'); return false; }
+    const keep = ['contractor', 'sro', 'performer', 'receiver', 'serial', 'verif', 'ntrip'].reduce((o, k) => meta()[k] ? { ...o, [k]: meta()[k] } : o, {});   // реквизиты исполнителя и приёмника — с прошлого объекта
+    switchProject('p' + uid(), { points: [], lines: [], meta: { ...keep, object: v.object, cipher: v.cipher, customer: v.customer, heights: { hgt: { src: hgt.src, dh: 0, ref: null }, antH: a } } }).then(() => {
+      ask(`Объект «${esc(v.object)}» создан. Привязать отметки к реперу сейчас? Без привязки отметки — по модели геоида, ошибка до дециметров.`, 'Привязать').then(ok => { if (ok) heightsMenu(); });
+    }).catch(e => toast('Объект не создан: ' + e.message));
+  }, 'Создать');
+}
+
+/* Проверка перед сдачей: что заметит камеральщик или приёмщик геофонда */
+const DANGLE_M = 0.3;                                                  // конец сети дальше 30 см от колодца, опоры или другой сети — висит
+function checkPlan() {
+  const out = [], P = data.points, add = (level, text, objs, hint) => { if (objs === true || objs.length) out.push({ level, text, objs: objs === true ? [] : objs, hint }); };
+  const pt = p => ({ kind: 'point', obj: p }), ln = l => ({ kind: 'line', obj: l });
+  const gnssH = P.some(p => p.hSrc === 'gnss') || data.lines.some(l => (l.hs || []).some(z => z && z.src === 'gnss'));
+  add('warn', 'Нет названия объекта и паспорта', !objectName(), 'Меню → «Паспорт объекта»: попадёт в имена файлов и шапки ведомостей');
+  add('bad', 'Высота антенны 0, а отметки сняты по ГНСС', gnssH && !antH, 'Меню → «Отметки»: укажите высоту вехи и пересчитайте отметки');
+  add('warn', 'Отметки не привязаны к реперу', gnssH && !hgt.ref && !hgt.dh, 'Ошибка модели геоида — до дециметров. Меню → «Отметки» → привязка');
+  const nos = new Map(); P.forEach(p => { if (p.no) nos.set(p.no, [...(nos.get(p.no) || []), p]); });
+  add('bad', 'Одинаковые номера точек', [...nos.values()].filter(a => a.length > 1).flat().map(pt));
+  const wells = P.filter(p => /^w_/.test(p.type));
+  add('bad', 'Колодцы без отметки люка', wells.filter(p => !hasH(p.h)).map(pt));
+  add('bad', 'Колодцы без лотков', wells.filter(p => !((p.attr || {}).lot || []).some(l => l && hasH(l.h))).map(pt), 'Нажмите колодец → «Изменить» — отметки лотков и направления');
+  add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !(POINTS[p.type] || {}).svgFor && pointH(p) == null).map(pt));
+  add('warn', 'Точки без знака (простые)', P.filter(p => p.type === GENERIC.point).map(pt), 'Знак выбирается в карточке точки');
+  add('warn', 'Линии без знака (простые)', data.lines.filter(l => l.type === GENERIC.line).map(ln));
+  add('warn', 'Точки по GPS не в FIX', P.filter(p => p.q && p.q.fix && p.q.fix !== 'FIX').map(pt), 'Для 1:500 нужен FIX (до 5 см). FLOAT и автономные — переснять');
+  const nets = data.lines.filter(isNetLine);
+  add('warn', 'Сети без материала / марки', nets.filter(l => !((l.attr || {}).mat || (l.attr || {}).mark)).map(ln));
+  // висящие концы: конец сети не у колодца, опоры, другой точки и не на другой линии сети
+  const xy = a => sk42(a[0], a[1]), near = (c, d) => Math.hypot(c.x - d.x, c.y - d.y) <= DANGLE_M;
+  const anchors = P.map(p => sk42(p.lat, p.lng)), netPts = nets.map(l => ({ l, v: l.latlngs.map(xy) }));
+  const onSeg = (c, a, b) => { const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / L2)) : 0; return near(c, { x: a.x + t * dx, y: a.y + t * dy }); };
+  const dangling = netPts.filter(({ l, v }) => !(LINES[l.type] || {}).closed && [v[0], v[v.length - 1]].some(c =>
+    !anchors.some(a => near(c, a)) && !netPts.some(o => o.l !== l && o.v.some((a, i) => i && onSeg(c, o.v[i - 1], a))))).map(x => ln(x.l));
+  add('warn', 'Висящие концы сетей', dangling, 'Конец сети должен приходить в колодец, опору, ввод или на другую сеть');
+  add('info', 'Нет ни одного контрольного измерения', P.length >= 20 && !P.some(p => p.ctrl && p.ctrl.length), 'Карточка точки → «✓ Контроль» на 5–10 % точек');
+  return out;
+}
+const LEVEL = { bad: ['✗', 'var(--red)'], warn: ['!', '#c77700'], info: ['i', 'var(--muted)'] };
+const objTitle = ({ kind, obj }) => kind === 'point' ? `№ ${obj.no || '—'} ${(POINTS[obj.type] || POINTS.mark).name}${obj.name ? ' ' + obj.name : ''}` : `L${obj.no || ''} ${(LINES[obj.type] || LINES.plain).name}`;
+// onGo — выгрузка, которую проверка предваряет; без него — просто отчёт
+let checkedPlan = null;
+function checkSheet(onGo) {
+  const items = checkPlan(), bad = items.filter(i => i.level === 'bad').length;
+  showSheet(`<div class="sh-head"><b>Проверка перед сдачей</b><button class="x" data-close>×</button></div>
+    ${items.length ? `<div class="hint" style="margin:4px 0 8px">Нажмите строку — список объектов; объект — показать на карте.</div>` : '<div class="meas-verdict ok" style="margin:6px 0 10px"><div class="meas-big">Замечаний нет</div>Паспорт, отметки, колодцы и сети заполнены</div>'}
+    <div class="list">${items.map((it, i) => `<div class="item" data-chk="${i}"><span class="i" style="color:${LEVEL[it.level][1]};font-weight:700">${LEVEL[it.level][0]}</span>
+      <span>${esc(it.text)}${it.objs.length ? ` — <b>${it.objs.length}</b>` : ''}${it.hint ? `<br><span class="hint">${esc(it.hint)}</span>` : ''}</span></div><div id="chkList${i}" style="display:none"></div>`).join('')}</div>
+    ${onGo ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px"><button class="btn" data-close>Исправить</button><button class="btn ${bad ? '' : 'primary'}" id="chkGo">Выгрузить${items.length ? ' всё равно' : ''}</button></div>` : ''}`);
+  if (onGo) $('chkGo').onclick = () => { checkedPlan = lastSaved; closeSheet(); onGo(); };
+  $('sheetPanel').querySelectorAll('[data-chk]').forEach(row => row.onclick = () => {
+    const it = items[row.dataset.chk], box = $('chkList' + row.dataset.chk);
+    if (!it.objs.length) return;
+    if (box.style.display === 'block') { box.style.display = 'none'; return; }
+    const shown = it.objs.slice(0, 50);
+    box.innerHTML = shown.map((o, k) => `<button class="btn" style="width:100%;margin:0 0 4px;text-align:left" data-o="${k}">${esc(objTitle(o))}</button>`).join('') + (it.objs.length > 50 ? `<div class="hint">и ещё ${it.objs.length - 50}</div>` : '');
+    box.style.display = 'block';
+    box.querySelectorAll('[data-o]').forEach(b => b.onclick = () => {
+      const { kind, obj } = shown[b.dataset.o];
+      closeSheet();
+      map.setView(kind === 'point' ? [obj.lat, obj.lng] : obj.latlngs[0], Math.max(map.getZoom(), 19));
+      showCard(kind, obj);
+    });
+  });
+}
+// перед сдаточной выгрузкой: есть замечания — показать; после «Выгрузить всё равно» не спрашивать, пока план не изменится
+function guardExport(go) {
+  let problems;
+  try { problems = checkPlan().some(i => i.level !== 'info'); } catch (e) { problems = false; }   // сбой проверки не мешает выгрузке
+  if (checkedPlan === lastSaved || !problems) { go(); return; }
+  try { checkSheet(go); } catch (e) { go(); }
+}
+
+
 /* ───────────── Копии плана: автокопия в «Загрузки», полная копия с фото, восстановление ───────────── */
 
 // настройки в копию (кроме ключа Яндекса и самого плана) — чтобы на новом телефоне вернулись коды, МСК, допуски
-const PREF_SKIP = /^tk\.(plan\.|ai$)/;
+const PREF_SKIP = /^tk\.(plan\.|ai$|projects?$)/;
 function backupJson() {
   const prefs = {};
   try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('tk.') && !PREF_SKIP.test(k)) prefs[k] = localStorage.getItem(k); } } catch (e) { /* без настроек */ }
@@ -3480,7 +3677,7 @@ async function autoCopy(silent = true) {
   if (silent && !autoDirty) return;
   autoDirty = false;
   try {
-    const r = await FILES.backup({ name: `kopiya_${stamp()}.json`, data: await blobBase64(new Blob([backupJson()])), keep: AUTO_KEEP });
+    const r = await FILES.backup({ name: `kopiya_${fileSlug() ? fileSlug() + '_' : ''}${stamp()}.json`, data: await blobBase64(new Blob([backupJson()])), keep: AUTO_KEEP });
     setPref('lastCopy', { at: Date.now(), path: r.path });
     if (!silent) toast('Копия сохранена: ' + r.path);
   } catch (e) { autoDirty = true; if (!silent) toast((e && e.message) || 'Копия не сохранилась'); }
@@ -3509,7 +3706,7 @@ async function restoreBackup(b, photos) {
   add.bad = plan.points.length + plan.lines.length - add.points.length - add.lines.length;
   showSheet(`<div class="sh-head"><b>Копия плана от ${esc(when)}</b><button class="x" data-close>×</button></div>
     <div class="hint" style="margin:4px 0 12px">В копии: знаков ${add.points.length}, линий ${add.lines.length}${nPhotos ? `, фото ${nPhotos}` : photos ? '' : ' (без фото — фото остаются те, что уже в телефоне)'}.<br>
-    Сейчас на плане: знаков ${data.points.length}, линий ${data.lines.length}.</div>
+    ${plan.meta && plan.meta.object ? `Объект копии: <b>${esc(plan.meta.object)}</b>.<br>` : ''}Открыт объект «${esc(objectName() || 'без названия')}»: знаков ${data.points.length}, линий ${data.lines.length}.</div>
     <div style="display:grid;gap:6px"><button class="btn primary" id="rsReplace">Заменить план копией</button>
     <button class="btn" id="rsMerge">Добавить из копии только новые объекты</button><button class="btn" data-close>Отмена</button></div>
     <div class="hint" style="margin-top:8px">После замены прежний план можно вернуть кнопкой «Вернуть» (пока приложение не закрыто).</div>`);
@@ -3517,7 +3714,7 @@ async function restoreBackup(b, photos) {
   $('rsReplace').onclick = async () => {
     closeSheet();
     const n = await putPhotos(add, photos);
-    data = { ...plan, points: add.points, lines: add.lines }; prefsBack();
+    data = { ...plan, points: add.points, lines: add.lines, meta: plan.meta || data.meta }; prefsBack();
     save(); hideCard(); MENU.fit();
     toast(`План восстановлен: знаков ${add.points.length}, линий ${add.lines.length}` + (n ? `, фото ${n}` : ''));
   };
@@ -3587,7 +3784,7 @@ function toKml(photoDir) {
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
       `<LineString><tessellate>1</tessellate>${l.hs && l.hs.every(z => z && hasH(z.h)) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map((a, i) => { const z = l.hs && l.hs[s.closed ? i % l.latlngs.length : i]; return a[1] + ',' + a[0] + ',' + (z && hasH(z.h) ? Number(z.h) : 0); }).join(' ')}</coordinates></LineString></Placemark>`;
   });
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Полевой план ${today()}</name>\n${pts.concat(lns).join('\n')}\n</Document></kml>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${xml(objectName() || 'Полевой план')} ${today()}</name><description>${xml(passportLines().join('\n'))}</description>\n${pts.concat(lns).join('\n')}\n</Document></kml>`;
 }
 const f3 = v => Number(v).toFixed(3), f8 = v => Number(v).toFixed(8);
 // отметка точки для выгрузок: у дроби бортового камня — верх (на камне), низ — в примечании
@@ -3602,13 +3799,13 @@ const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки' };
 const hInfoCols = hi => { const h = hi || {}, ref = h.ref;
   return [h.acc != null ? f3(h.acc) : '', hasH(h.hEll) ? f3(h.hEll) : '', h.ant != null ? f3(h.ant) : '', ref ? (typeof ref === 'object' ? ref.name || 'репер' : ref) : '']; };
 function toCsv() {
-  const rows = [['№', 'Код', 'Знак', 'Подпись', 'X ' + planeName(), 'Y ' + planeName(), 'H', 'Отметка из', 'Точность в плане, м', 'Решение', 'Время',
+  const rows = [['№', 'Код', 'Знак', 'Подпись', 'X ' + planeName(), 'Y ' + planeName(), 'H', 'Отметка из', 'Точность в плане, м', 'Решение (оценка по точности)', 'Время',
     'Широта WGS-84', 'Долгота WGS-84', 'Зона', 'Примечание', 'Фото', 'СКО измерения, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб',
     'СКО отметки, м', 'Высота над эллипсоидом, м', 'Высота антенны, м', 'Привязка отметки', 'Контроль в плане, м', 'Контроль по высоте, м', 'Контроль: итог']];
   for (const p of data.points) {
     const c = sk42(p.lat, p.lng), m = p.meas, H = pointH(p), q = p.q || {};
     rows.push([p.no || '', p.type, (POINTS[p.type] || POINTS.mark).name, p.name || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(2),
-      H == null ? '' : H_SRC[p.hSrc] || 'вручную', q.acc != null ? f3(q.acc) : '', q.fix || '', q.at ? new Date(q.at).toLocaleString('ru-RU') : '',
+      H == null ? '' : H_SRC[p.hSrc] || 'вручную', q.acc != null ? f3(q.acc) : '', fixText(q.fix), q.at ? new Date(q.at).toLocaleString('ru-RU') : '',
       f8(p.lat), f8(p.lng), c.zone, pointNote(p), (p.photos || []).map(photoFile).join(' '),
       ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', '']),
       ...hInfoCols(p.hInfo), ...ctrlCols(p.ctrl && p.ctrl[p.ctrl.length - 1])]);
@@ -3622,8 +3819,10 @@ function toCtrlSheet() {
   for (const p of data.points) for (const c of p.ctrl || []) { const s = sk42(p.lat, p.lng), H = pointH(p);
     rows.push([p.no || '', (POINTS[p.type] || POINTS.mark).name, f3(s.x), f3(s.y), H == null ? '' : H.toFixed(3), new Date(c.at).toLocaleString('ru-RU'), f3(c.dx), f3(c.dy), f3(c.dS), f3(c.tol),
       c.dH == null ? '' : f3(c.dH), f3(c.hTol), f3(c.m), '1:' + c.scale, CTRL_MARK[c.ok]]); }
-  return csvJoin(rows);
+  return sheetJoin(rows);
 }
+// ведомость для Excel: паспорт объекта строками над таблицей
+const sheetJoin = rows => csvJoin([...passportLines().map(l => [l]), [], ...rows]);
 const csvJoin = rows => '\ufeff' + rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
 // Ведомость колодцев: номер, координаты, отметки люка и лотков, глубина, колодец
 function toWellsSheet() {
@@ -3634,7 +3833,7 @@ function toWellsSheet() {
       ...[0, 1, 2].flatMap(k => [lot[k] && hasH(lot[k].h) ? Number(lot[k].h).toFixed(2) : '', (lot[k] && lot[k].dir) || '']),
       bot != null && hasH(p.h) ? (Number(p.h) - bot).toFixed(2) : '', a.wd || '', a.wm || '', p.note || '']);
   });
-  return csvJoin(rows);
+  return sheetJoin(rows);
 }
 // Ведомость сетей: линия, вид, длина, материал/марка, диаметр, глубина, год, владелец, состояние, футляр
 function toNetsSheet() {
@@ -3645,7 +3844,7 @@ function toNetsSheet() {
     rows.push(['L' + (l.no || ''), sp.name, lineLength(l).toFixed(2), a.mat || a.mark || '', a.d || '', l.count || 1, a.volt || '', hasH(a.depth) ? Number(a.depth).toFixed(2) : '', a.year || '', a.owner || '',
       STATE_NAME[l.state] || 'действующая', a.sleeve ? 'да' + (a.sleeveD ? ', ' + a.sleeveD : '') : '', netCaption(l)]);
   }
-  return csvJoin(rows);
+  return sheetJoin(rows);
 }
 // Ведомость пересечений сетей: точка пересечения в плоской системе, отметки обеих сетей (по вершинам, линейно) и разница
 const isNetLine = l => NET_LINE_KINDS.has((LINES[l.type] || {}).kind) || l.type === 'sleeve';
@@ -3671,7 +3870,7 @@ function toCrossSheet() {
   const rows = [['№', 'Сеть 1', 'Сеть 2', 'X ' + planeName(), 'Y ' + planeName(), 'Отметка сети 1', 'Отметка сети 2', 'Разность, м', 'Глубина 1, м', 'Глубина 2, м']];
   netCrossings().forEach((c, i) => rows.push([i + 1, nm(c.A), nm(c.B), f3(c.x), f3(c.y), c.h1 == null ? '' : c.h1.toFixed(2), c.h2 == null ? '' : c.h2.toFixed(2),
     c.h1 != null && c.h2 != null ? Math.abs(c.h1 - c.h2).toFixed(2) : '', (c.A.attr || {}).depth || '', (c.B.attr || {}).depth || '']));
-  return csvJoin(rows);
+  return sheetJoin(rows);
 }
 // GeoJSON для QGIS и ИСОГД: WGS-84 (так требует формат), отметка третьей координатой, все свойства
 function toGeoJson() {
@@ -3682,7 +3881,7 @@ function toGeoJson() {
   const feats = data.points.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lng, p.lat, ...z(pointH(p))] }, properties: props(p, 'point') }))
     .concat(data.lines.map(l => { const sp = LINES[l.type] || {}, c = l.latlngs.map((a, i) => [a[1], a[0], ...z(l.hs && l.hs[i] && l.hs[i].h)]);
       return { type: 'Feature', geometry: sp.closed ? { type: 'Polygon', coordinates: [c.concat([c[0]])] } : { type: 'LineString', coordinates: c }, properties: props(l, 'line') }; }));
-  return JSON.stringify({ type: 'FeatureCollection', name: 'Полевой план ' + today(), features: feats }, null, 1);
+  return JSON.stringify({ type: 'FeatureCollection', name: (objectName() || 'Полевой план') + ' ' + today(), passport: passportLines(), features: feats }, null, 1);
 }
 // MIF/MID для MapInfo и ГИС Панорама: плоская система (X — восток, Y — север), кириллица 1251
 function toMifMid() {
@@ -3716,7 +3915,7 @@ const cleanCode = s => String(s || '').trim().replace(/[\s;,]+/g, '_').slice(0, 
 // coded — полевое кодирование КРЕДО: у вершин линии «код-номер» и команда p (начать), e (закончить), o (замкнуть) —
 // КРЕДО сам соберёт линии. Кодировка Windows-1251, шапка — строкой комментария «//» (в шаблоне КРЕДО — «Символы комментария: //»)
 function toCatalog(coded) {
-  const out = [`// №;X;Y;H;${coded ? 'Кодовая строка' : 'Код'};Описание — ${planeName()}`];
+  const out = [...passportLines().map(l => '// ' + l), `// №;X;Y;H;${coded ? 'Кодовая строка' : 'Код'};Описание — ${planeName()}`];
   for (const p of data.points) { const c = sk42(p.lat, p.lng), H = pointH(p);
     out.push([p.no || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(3), codeOf(p.type), field([(POINTS[p.type] || POINTS.mark).name, p.name, pointNote(p)].filter(Boolean).join(' '))].join(';')); }
   for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain, n = l.latlngs.length;
