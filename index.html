@@ -291,6 +291,7 @@ const COVERS = [['А', 'А — асфальт, асфальтобетон'], ['�
   ['Г', 'Г — гравий'], ['Щ', 'Щ — щебень'], ['К', 'К — камень колотый'], ['Шл', 'Шл — шлак'], ['Д', 'Д — дерево']];
 const ARM_S = 'stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"';
 // Дефекты сетей — свои знаки (в ГКИНП и «Правилах» их нет), красным, как правки на бумажном плане; устранённый — серым
+const CAD_RED = '#d50000';                                             // вновь образованное в кадастре — красным
 const DEF_RED = '#c62828', DEF_DONE = '#9e9e9e';
 const DEF_S = 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"';
 const ARM_BOW = (lf, rf) => `<path d="M4 7 L12 12 L4 17 Z" fill="${lf}" ${ARM_S}/><path d="M20 7 L12 12 L20 17 Z" fill="${rf}" ${ARM_S}/>`;
@@ -365,6 +366,12 @@ const POINT_GROUPS = [
     { id: 'a_ventil', name: 'Вентиль (клапан) запорный', pipe: true, arm: 'В', shut: true, svg: ARM_BOW('#fff', '#fff') },
     { id: 'a_predohr', name: 'Клапан предохранительный', pipe: true, arm: 'КП', svg: '<path d="M4 11 L12 15.5 L4 20 Z M20 11 L12 15.5 L20 20 Z" fill="#fff" ' + ARM_S + '/><path d="M12 15.5V12 L10 11 L14 9.5 L10 8 L14 6.5 L12 5.5V3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>' },
     { id: 'a_redukc', name: 'Клапан редукционный (регулятор давления)', pipe: true, arm: 'КР', flow: true, svg: '<rect x="4" y="7" width="16" height="10" fill="#fff" ' + ARM_S + '/><path d="M5.5 8.5 L18.5 12 L5.5 15.5" fill="none" ' + ARM_S + '/>' }
+  ]},
+  // Кадастр — «Специальные условные знаки» к требованиям к межевому плану: точка ⌀ 1,5 мм; новая — красным, обозначение «н1»
+  { id: 'cad', title: 'Кадастр', items: [
+    { id: 'c_pt', name: 'Характерная точка (положение однозначно)', cad: true, svg: '<circle cx="12" cy="12" r="6.6" fill="currentColor"/>' },
+    { id: 'c_pt_q', name: 'Характерная точка (положение неоднозначно)', cad: true, svg: '<circle cx="12" cy="12" r="6" fill="var(--symBg)" stroke="currentColor" stroke-width="1.4"/>' },
+    { id: 'c_pt_new', name: 'Вновь образованная точка (н1, н2…)', cad: true, cadNew: true, color: CAD_RED, svg: '<circle cx="12" cy="12" r="6.6" fill="currentColor"/>' }
   ]},
   { id: 'defect', title: 'Дефекты', items: [
     { id: 'd_leak', name: 'Утечка', defect: 'Утечка', color: DEF_RED, svg: '<path d="M12 4 C12 4 6.5 11 6.5 14.5 A5.5 5.5 0 0 0 17.5 14.5 C17.5 11 12 4 12 4 Z" fill="currentColor" stroke="currentColor" stroke-width="1.2"/>' },
@@ -566,6 +573,13 @@ const LINE_GROUPS = [
   { id: 'bparts', title: 'Части зданий', items: [
     { id: 'colonnade', name: 'Колоннада', kind: 'road', w: 0.2, twin: 0.6, cols: true, part: true },
     { id: 'niche', name: 'Ниша, лоджия (по фасаду)', kind: 'road', w: 0.2, dash: [2, 1], part: true }
+  ]},
+  // Кадастр: части границы участка — существующая чёрным, вновь образованная красным; сведений недостаточно — штрих 2 мм, пробел 1 мм
+  { id: 'cad', title: 'Кадастр', items: [
+    { id: 'cad_ex', name: 'Граница существующая (сведений достаточно)', kind: 'cad', w: 0.2 },
+    { id: 'cad_new', name: 'Граница вновь образованная (сведений достаточно)', kind: 'cad', w: 0.2, color: CAD_RED },
+    { id: 'cad_ex_q', name: 'Граница существующая (сведений недостаточно)', kind: 'cad', w: 0.2, dash: [2, 1] },
+    { id: 'cad_new_q', name: 'Граница вновь образованная (сведений недостаточно)', kind: 'cad', w: 0.2, dash: [2, 1], color: CAD_RED }
   ]},
   { id: 'own', title: 'Своё', items: [
     { id: 'route', name: 'Трасса демонтажа (пикеты)', kind: 'route', w: 0.3, color: '#c62828' },
@@ -1337,7 +1351,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 40;
+const APP_BUILD = 41;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -1569,7 +1583,7 @@ function drawPoints() {
     if (generalized && MINOR_POINTS.has(p.type) && !(selected && selected.obj === p)) continue;
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [TAP_PX, TAP_PX], iconAnchor: [TAP_PX / 2, TAP_PX / 2],
-      html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}"${s.defect ? ` style="color:${objColor(p, 'point')}"` : ''}>${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
+      html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}"${s.defect || s.cadNew ? ` style="color:${objColor(p, 'point')}"` : ''}>${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
     const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(snapOn ? L.latLng(p.lat, p.lng) : e.latlng, null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
     pointMarkers.push({ p, marker, lbl });
   }
@@ -1800,6 +1814,7 @@ const DRAW = {
   // Воздушная связь: опоры кружками на своих местах, тонкая линия между ними
   air(g, path, spec, line, w, pts) { poleLine(g, spec, line, w, pts, 'circle', false); },
   plain(g, path, spec, line, w) { segment(g, path, 0, path.getTotalLength(), w); },
+  cad(g, path, spec, line, w) { segment(g, path, 0, path.getTotalLength(), w, 0, spec.dash ? spec.dash.map(d => d * MM).join(' ') : null); },
   // Ограждения: рисунок по ГКИНП (зн. 472–477), размеры в «мм» знака; засечки — на сторону территории (по ходу слева, «flip» — справа)
   fence(g, path, spec, line, w) {
     const total = path.getTotalLength(), a = line.attr || {}, sg = a.flip ? 1 : -1;
@@ -1967,7 +1982,7 @@ function screenPts(line) {
   if ((LINES[line.type] || {}).closed && pts.length > 2) pts.push(pts[0]);
   return pts;
 }
-const NO_STATE = new Set(['building', 'fence', 'road', 'relief', 'veg']);
+const NO_STATE = new Set(['building', 'fence', 'road', 'relief', 'veg', 'cad']);
 function drawLines() {
   const size = map.getSize();
   L.DomUtil.setPosition(netSvg, map.containerPointToLayerPoint([0, 0]));
@@ -2120,6 +2135,7 @@ function linePreview(spec, w, h, color) {
   else if (spec.kind === 'indexed' && spec.sleeve) body = `<path d="M2 ${m}H${w * 0.3}M${w * 0.7} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.6"/><path d="M2 ${m - 5}H${w - 2}M2 ${m + 5}H${w - 2}" stroke="currentColor" stroke-width="1" stroke-dasharray="5 3"/><text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.index}</text>`;
   else if (spec.kind === 'indexed' && spec.numberedIndex) body = `<path d="M2 ${m}H${w * 0.36}M${w * 0.64} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.2"/><text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.defCount}</text>`;
   else if (spec.kind === 'route') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="2.2" stroke-dasharray="7 3"/><path d="M${w * 0.3} ${m - 5}V${m + 5}M${w * 0.7} ${m - 5}V${m + 5}" stroke="currentColor" stroke-width="2"/>`;
+  else if (spec.kind === 'cad') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="1.4"${spec.dash ? ` stroke-dasharray="${spec.dash[0] * 3} ${spec.dash[1] * 3}"` : ''}/>`;
   else if (spec.kind === 'plain') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="1.8"/>`;
   else if (spec.kind === 'relief') {
     const st = spec.style, y = m - 3, ticks = (len, step, k) => Array.from({ length: Math.floor((w - 8) / step) }, (_, i) => `M${5 + i * step} ${y}v${(k && i % 2) ? len / 2 : len}`).join('');
@@ -2181,6 +2197,7 @@ function showCard(kind, obj) {
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
     if (obj.no) kv.unshift(['№', String(obj.no)]);
+    if (s.cad) { const mt = cadMt(obj), cat = landCat(); kv.push(['Mt', mt == null ? 'нет — поставлена касанием' : `${mText(mt, 2)} м${cat ? (mt <= cat.mt ? ' — в допуске' : ' — <b style="color:#c62828">хуже допуска ' + mText(cat.mt, 2) + '</b>') : ''}`], ['Закрепление', esc((obj.attr || {}).fix || CAD_FIX[0])]); }
     if (/^w_/.test(obj.type) && obj.attr) {
       const a = obj.attr, bot = wellBottom(obj);
       (a.lot || []).forEach((l, i) => kv.push([`Лоток ${i + 1}`, `${hasH(l.h) ? mText(Number(l.h), 2) + ' м' : '—'}${l.dir ? ' · ' + esc(l.dir) : ''}`]));
@@ -2333,6 +2350,7 @@ function editPoint(p) {
   if (/^w_/.test(p.type)) return editWell(p, s);
   if (s.arm) return editArm(p, s);
   if (s.defect) return editDefect(p, s);
+  if (s.cad) return editCadPoint(p, s);
   openForm(s.name, [
     ...(s.spot ? [] : [{ key: 'name', label: s.nameLabel || 'Подпись у знака (номер)', value: p.name, placeholder: s.nameLabel ? 'например 1.6' : 'например 12' }]),
     { key: 'h', label: 'Отметка, м', type: 'number', value: p.h, placeholder: 'например 245.51' },
@@ -2541,6 +2559,7 @@ function editLine(line, isNew) {
   if (spec.kind === 'road') return editRoad(line, isNew);
   if (spec.kind === 'veg') return editVeg(line, isNew);
   if (spec.kind === 'relief') return editRelief(line, isNew);
+  if (spec.kind === 'cad') return editCadLine(line, isNew, spec);
   const fields = [];
   if (spec.kind === 'route') {
     fields.push({ key: 'pk0', label: 'Начальный ПК', type: 'number', value: line.pk0, placeholder: 'например 39', half: true },
@@ -3037,6 +3056,156 @@ function toVolumesSummary() {
   return sheetJoin(rows);
 }
 
+/* ───────────── Кадастр: характерные точки (н1, н2…), Mt и допуск, участок из частей границы, площадь и ΔP, ведомости ───────────── */
+
+// Допуски Mt — приказ Росреестра № П/0393, прил. 1 (средняя квадратическая погрешность характерной точки, м)
+const LAND_CATS = [
+  { id: 'np', name: 'Земли населённых пунктов', mt: 0.10 },
+  { id: 'ljh', name: 'С/х: ЛПХ, садоводство, огородничество, ИЖС, гаражи', mt: 0.20 },
+  { id: 'prom', name: 'Промышленности, энергетики, транспорта, связи, обороны, спецназначения', mt: 0.50 },
+  { id: 'sh', name: 'Прочие с/х назначения', mt: 2.50 },
+  { id: 'oopt', name: 'Особо охраняемых территорий и объектов', mt: 2.50 },
+  { id: 'les', name: 'Лесного фонда, водного фонда, запаса', mt: 5.00 },
+  { id: 'other', name: 'Прочие земельные участки', mt: 2.50 }];
+const CAD_FIX = ['закрепление отсутствует', 'металлический штырь', 'межевой знак', 'деревянный столб', 'столб ограждения', 'угол здания, сооружения', 'угол забора'];
+const CAD_JOIN_M = 0.01;                                                // концы частей границы ближе 1 см — одна точка
+const CAD_PT_M = 0.05;                                                  // характерная точка у вершины — до 5 см
+const CAD_DP_K = 3.5;                                                   // ΔP = 3,5 · Mt · √P (как в Полигон Про и ТехноКаде)
+const landCat = () => LAND_CATS.find(c => c.id === meta().landCat) || null;
+const isCadLine = l => (LINES[l.type] || {}).kind === 'cad';
+const isCadPt = p => !!(POINTS[p.type] || {}).cad;
+const cadMt = p => p.q && p.q.acc != null && (p.q.src === 'gps' || p.q.src === 'measure') ? Math.ceil(+(Number(p.q.acc) * 100).toFixed(6)) / 100 : null;   // СКО измерения — вверх до сантиметра
+const cadMethod = p => cadMt(p) != null ? 'метод спутниковых геодезических измерений (определений)' : '';
+function nextNewName() {                                                // н1, н2… — следующий свободный номер
+  let n = 0; for (const p of data.points) { const m = /^н(\d+)$/.exec(p.name || ''); if (m) n = Math.max(n, +m[1]); }
+  return 'н' + (n + 1);
+}
+function editCadLine(line, isNew, spec) {
+  openForm(spec.name, [{ key: 'parcel', label: 'Участок (обозначение)', value: (line.attr || {}).parcel, placeholder: ':ЗУ1 или 50:20:0010203:15',
+    hint: 'Части границы, сомкнутые концами, приложение соберёт в участок: площадь, ΔP и ведомости — Меню → «Кадастр».' }], v => {
+    line.attr = { ...(line.attr || {}), parcel: v.parcel || '' };
+    if (isNew) data.lines.push(line);
+    save(); showCard('line', line);
+  }, isNew ? 'Готово' : 'Сохранить');
+}
+function editCadPoint(p, s) {
+  const a = p.attr || {}, mt = cadMt(p), cat = landCat();
+  openForm(s.name, [
+    { key: 'name', label: s.cadNew ? 'Обозначение (н1, н2…)' : 'Номер точки из ЕГРН', value: p.name, placeholder: s.cadNew ? nextNewName() : 'например 14', half: true },
+    { key: 'fix', label: 'Закрепление', type: 'select', value: a.fix || CAD_FIX[0], options: CAD_FIX.map(x => [x, x]), half: true },
+    { key: 'note', label: 'Примечание', value: p.note, placeholder: 'необязательно',
+      hint: mt != null ? `Mt = ${mText(mt, 2)} м${cat ? (mt <= cat.mt ? ` — в допуске ${mText(cat.mt, 2)} м` : ` — ХУЖЕ допуска ${mText(cat.mt, 2)} м`) : ' (категорию земель — Меню → «Кадастр»)'}` : 'Mt нет: точка поставлена касанием. Для межевого плана — «По GPS» или «Измерить».' }
+  ], v => {
+    p.name = v.name || (s.cadNew ? nextNewName() : ''); p.note = v.note; p.attr = { ...a, fix: v.fix };
+    save(); drawPoints(); frame(); showCard('point', p);
+  });
+}
+// участки: части границы (линии «Кадастр»), сомкнутые концами; общая граница соседних участков (раздел) — тоже.
+// Плоский граф: на каждом узле — следующая часть по часовой стрелке; каждая замкнутая грань — участок, внешняя грань — прочь
+function cadParcels() {
+  const lines = data.lines.filter(l => isCadLine(l) && l.latlngs.length >= 2);
+  if (!lines.length) return { rings: [], open: [] };
+  const z0 = sk42(lines[0].latlngs[0][0], lines[0].latlngs[0][1]).zone, def = gkDef(z0);
+  const xy = a => { const [e, n] = proj4('WGS84', def, [a[1], a[0]]); return { x: n, y: e }; };
+  const nodes = [], nodeOf = c => { let k = nodes.findIndex(q => Math.hypot(q.x - c.x, q.y - c.y) <= CAD_JOIN_M); if (k < 0) { nodes.push({ ...c }); k = nodes.length - 1; } return k; };
+  let parts = lines.map(l => { const v = l.latlngs.map(xy); return { l, v, a: nodeOf(v[0]), b: nodeOf(v[v.length - 1]) }; });
+  // висящие хвосты (конец ни к чему не примкнул) — убрать, пока есть; их части — «не замкнуты»
+  const open = [];
+  for (let changed = true; changed;) { changed = false;
+    const deg = new Map(); parts.forEach(p => { deg.set(p.a, (deg.get(p.a) || 0) + 1); deg.set(p.b, (deg.get(p.b) || 0) + 1); });
+    const keep = parts.filter(p => deg.get(p.a) > 1 && deg.get(p.b) > 1 || (p.a === p.b && p.v.length > 2));
+    if (keep.length < parts.length) { open.push(...parts.filter(p => !keep.includes(p)).map(p => p.l)); parts = keep; changed = true; } }
+  // полурёбра: часть в прямом (d = 0) и обратном (d = 1) направлении; угол выхода из узла — по первому отрезку
+  const H = parts.flatMap((p, i) => [0, 1].map(d => { const v = d ? p.v.slice().reverse() : p.v, from = d ? p.b : p.a, to = d ? p.a : p.b;
+    return { i, d, v, from, to, ang: Math.atan2(v[1].x - v[0].x, v[1].y - v[0].y) }; }));   // угол на плоскости «восток — север»
+  const out = new Map(); H.forEach((h, k) => { if (!out.has(h.from)) out.set(h.from, []); out.get(h.from).push(k); });
+  for (const ks of out.values()) ks.sort((a, b) => H[a].ang - H[b].ang);
+  const twin = k => k ^ 1;
+  const next = k => { const ks = out.get(H[k].to), back = H[twin(k)].ang;     // ближайшая по часовой от направления «назад»
+    let best = -1; for (const j of ks) if (j !== twin(k) && H[j].ang < back - 1e-12 && (best < 0 || H[j].ang > H[best].ang)) best = j;
+    if (best < 0) for (const j of ks) if (j !== twin(k) && (best < 0 || H[j].ang > H[best].ang)) best = j;
+    return best < 0 ? twin(k) : best; };
+  const seen = new Set(), faces = [];
+  H.forEach((_, k0) => { if (seen.has(k0)) return;
+    const verts = [], seq = []; let k = k0, guard = 0;
+    while (!seen.has(k) && guard++ < H.length + 1) { seen.add(k); verts.push(...H[k].v.slice(0, -1).map(c => ({ ...c, line: parts[H[k].i].l }))); seq.push(parts[H[k].i].l); k = next(k); }
+    let s2 = 0; verts.forEach((c, i) => { const q = verts[(i + 1) % verts.length]; s2 += c.x * q.y - q.x * c.y; });
+    if (verts.length >= 3) faces.push({ verts, lines: seq, area: Math.abs(s2) / 2, comp: parts[H[k0].i].a });
+  });
+  // в каждой связной группе внешняя грань — наибольшая (у одиночного кольца обе грани — один и тот же участок)
+  const up = new Map(), root = n => { while (up.has(n) && up.get(n) !== n) n = up.get(n); return n; };
+  parts.forEach(p => { const ra = root(p.a), rb = root(p.b); if (ra !== rb) up.set(ra, rb); });
+  const groups = new Map(); faces.forEach(f => { const r = root(f.comp); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(f); });
+  const rings = [];
+  for (const fs of groups.values()) { let big = 0; fs.forEach((f, i) => { if (f.area > fs[big].area) big = i; });
+    fs.forEach((f, i) => { if (i !== big && f.area > 0) rings.push({ lines: [...new Set(f.lines)], verts: f.verts, z0 }); }); }
+  // имя участка: из частей, которые принадлежат только ему (общая граница соседей имени не даёт)
+  const uses = new Map(); rings.forEach(r => r.lines.forEach(l => uses.set(l, (uses.get(l) || 0) + 1)));
+  rings.forEach(r => { r.name = (r.lines.filter(l => uses.get(l) === 1).map(l => (l.attr || {}).parcel).find(Boolean)) || (r.lines.map(l => (l.attr || {}).parcel).find(Boolean)) || ''; });
+  return { rings, open: open.length ? [open] : [], z0, xy };
+}
+// сведения об участке: точки по вершинам, площадь, ΔP, части границы
+function cadParcelInfo(ring, xy) {
+  const pts = data.points.filter(isCadPt).map(p => ({ p, c: xy([p.lat, p.lng]) }));
+  const V = ring.verts.map((c, i) => { let best = null, bd = CAD_PT_M; for (const q of pts) { const d = Math.hypot(q.c.x - c.x, q.c.y - c.y); if (d <= bd) { bd = d; best = q.p; } } return { ...c, pt: best, i }; });
+  let s2 = 0; V.forEach((c, i) => { const q = V[(i + 1) % V.length]; s2 += c.x * q.y - q.x * c.y; });
+  if (s2 < 0) V.reverse();                                             // обход по часовой (X — север, Y — восток: площадь со знаком > 0)
+  const nw = V.reduce((b, c, i) => c.x - c.y > V[b].x - V[b].y ? i : b, 0); V.push(...V.splice(0, nw));   // начало — с северо-западной точки
+  const area = Math.abs(s2) / 2, cat = landCat(), dP = cat ? CAD_DP_K * cat.mt * Math.sqrt(area) : null;
+  const name = ring.name || '';
+  V.forEach((c, k) => { c.i = k; if (c.pt) { const q = xy([c.pt.lat, c.pt.lng]); c.x = q.x; c.y = q.y; } });   // номер вершины — по порядку обхода
+  const sides = V.map((c, i) => { const q = V[(i + 1) % V.length], dx = q.x - c.x, dy = q.y - c.y; return { from: c, to: q, len: Math.hypot(dx, dy), az: (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360 }; });
+  return { V, area, dP, name, sides, perim: sides.reduce((n, s) => n + s.len, 0) };
+}
+const ptName = c => c.pt ? c.pt.name || '(без номера)' : `вершина ${c.i + 1}`;
+const dms = a => { let d = Math.floor(a), m = Math.floor((a - d) * 60), s = Math.round(((a - d) * 60 - m) * 60); if (s === 60) { s = 0; m++; } if (m === 60) { m = 0; d = (d + 1) % 360; } return `${d}°${String(m).padStart(2, '0')}′${String(s).padStart(2, '0')}″`; };
+function cadSheet() {
+  const { rings, open, xy } = cadParcels(), cat = landCat(), inMsk = crsId === 'msk' && !!msk;
+  const infos = rings.map(r => cadParcelInfo(r, xy));
+  showSheet(`<div class="sh-head"><b>Кадастр</b><button class="x" data-close>×</button></div>
+    <div class="form"><div><label for="cadCat">Категория земель (допуск Mt — приказ П/0393)</label><select id="cadCat"><option value="">— выберите —</option>${LAND_CATS.map(c => `<option value="${c.id}"${cat && cat.id === c.id ? ' selected' : ''}>${esc(c.name)} — ${mText(c.mt, 2)} м</option>`).join('')}</select></div></div>
+    ${inMsk ? '' : `<div class="hint" style="color:#c62828;margin:6px 0"><b>Сейчас ${esc(planeName())}, а для межевого плана нужна МСК региона.</b> Меню → система координат → МСК (параметры — у кадастрового инженера или в территориальном Роскадастре).</div>`}
+    <div style="max-height:44vh;overflow:auto">
+    ${infos.length ? infos.map((r, k) => { const bad = r.V.filter(c => c.pt && cat && cadMt(c.pt) != null && cadMt(c.pt) > cat.mt), noPt = r.V.filter(c => !c.pt), noMt = r.V.filter(c => c.pt && cadMt(c.pt) == null);
+      return `<div class="meas-row" style="display:block"><b>${esc(r.name || 'Участок ' + (k + 1))}</b>: S = ${Math.round(r.area).toLocaleString('ru-RU')}${r.dP != null ? ` ± ${Math.round(r.dP)}` : ''} м², периметр ${mText(r.perim, 2)} м, точек ${r.V.length}
+        ${noPt.length ? `<br><small style="color:#c62828">вершин без характерной точки: ${noPt.length}</small>` : ''}${noMt.length ? `<br><small style="color:#c62828">точек без Mt (поставлены касанием): ${noMt.map(c => esc(ptName(c))).join(', ')}</small>` : ''}${bad.length ? `<br><small style="color:#c62828">Mt хуже допуска: ${bad.map(c => esc(ptName(c)) + ' ' + mText(cadMt(c.pt), 2)).join(', ')}</small>` : ''}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px"><button class="btn" data-cad="pts:${k}">Сведения о точках</button><button class="btn" data-cad="sides:${k}">Части границы</button></div></div>`; }).join('')
+      : '<div class="hint">Замкнутых участков нет. Нарисуйте границу линиями группы «Кадастр» так, чтобы концы сомкнулись (привязка к точкам и вершинам делает это сама). При разделе общая граница рисуется один раз — приложение отнесёт её к обоим участкам.</div>'}
+    ${open.length ? `<div class="hint" style="color:#c62828;margin-top:6px">Не замкнуты: ${open.map(g => g.map(l => 'L' + (l.no || '')).join(', ')).join('; ')} — конец части границы ни к чему не примкнул.</div>` : ''}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px"><button class="btn" id="cadTxt">Каталог для Полигон Про / ТехноКада</button><button class="btn" id="cadAll">Все точки (CSV)</button></div>
+    <div class="hint" style="margin-top:6px;color:var(--muted)">Новые точки — «Знак…» → «Кадастр» → «Вновь образованная точка»: обозначение н1, н2… ставится само. Mt — СКО измерения «По GPS» / «Измерить», округлено вверх до сантиметра.</div>`);
+  $('cadCat').onchange = e => { data.meta = { ...meta(), landCat: e.target.value }; save(); cadSheet(); };
+  $('sheetPanel').querySelectorAll('[data-cad]').forEach(b => b.onclick = () => { const [kind, k] = b.dataset.cad.split(':'), r = infos[k];
+    download(`${kind === 'pts' ? 'tochki' : 'chasti_granicy'}_${fileSafe(r.name) || 'uchastok' + (+k + 1)}_${today()}.csv`, kind === 'pts' ? toCadPointsSheet(r) : toCadSidesSheet(r), 'text/csv;charset=utf-8'); });
+  $('cadTxt').onclick = () => { if (!data.points.some(isCadPt)) { toast('Характерных точек нет'); return; } download(`katalog_kadastr_${today()}.txt`, new Blob([toCadCatalog()], { type: 'text/plain' }), 'text/plain'); };
+  $('cadAll').onclick = () => { if (!data.points.some(isCadPt)) { toast('Характерных точек нет'); return; } download(`harakternye_tochki_${today()}.csv`, toCadPointsSheet(null), 'text/csv;charset=utf-8'); };
+}
+const fileSafe = s => String(s || '').replace(/[\\/:*?"<>|«»\s]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30);
+// «Сведения о характерных точках границы»: обозначение, X, Y, Mt, метод, закрепление (r — участок; null — все точки плана)
+function toCadPointsSheet(r) {
+  const cat = landCat(), rows = [...(r ? [[`Участок ${r.name || ''}`.trim(), `S = ${Math.round(r.area)}${r.dP != null ? ' ± ' + Math.round(r.dP) : ''} м²`]] : []),
+    ['Категория земель', cat ? `${cat.name}, допуск Mt ${cat.mt.toFixed(2)} м` : 'не выбрана'], ['Система координат', planeName()], [],
+    ['Обозначение характерной точки', 'X, м', 'Y, м', 'Mt, м', 'Метод определения координат', 'Описание закрепления точки', 'Mt в допуске']];
+  const list = r ? r.V.map(c => ({ c, p: c.pt })) : data.points.filter(isCadPt).map(p => ({ p, c: sk42(p.lat, p.lng) }));
+  for (const { c, p } of list) { const mt = p ? cadMt(p) : null;
+    rows.push([p ? p.name || '' : `вершина ${c.i + 1}`, c.x.toFixed(2), c.y.toFixed(2), mt != null ? mt.toFixed(2) : '', p ? cadMethod(p) : '', p ? (p.attr || {}).fix || CAD_FIX[0] : '',
+      mt == null || !cat ? '' : mt <= cat.mt ? 'да' : 'нет']); }
+  if (r) rows.push([list[0].p ? list[0].p.name || '' : 'вершина 1', list[0].c.x.toFixed(2), list[0].c.y.toFixed(2)]);   // контур замыкается на первую точку
+  return sheetJoin(rows);
+}
+function toCadSidesSheet(r) {
+  const rows = [[`Участок ${r.name || ''}`.trim(), `S = ${Math.round(r.area)}${r.dP != null ? ' ± ' + Math.round(r.dP) : ''} м²`, `периметр ${r.perim.toFixed(2)} м`], [],
+    ['Обозначение части границы', 'Горизонтальное проложение (S), м', 'Дирекционный угол', 'Описание прохождения части границы']];
+  for (const s of r.sides) rows.push([`${ptName(s.from)} – ${ptName(s.to)}`, s.len.toFixed(2), dms(s.az), (LINES[(s.from.line || {}).type] || {}).name || '']);
+  return sheetJoin(rows);
+}
+// каталог для Полигон Про и ТехноКада: «Имя;X;Y;Mt;Закрепление», 1251, без шапки (её задают в шаблоне импорта)
+function toCadCatalog() {
+  const out = data.points.filter(isCadPt).map(p => { const c = sk42(p.lat, p.lng), mt = cadMt(p);
+    return [field(p.name || '', ';'), c.x.toFixed(2), c.y.toFixed(2), mt != null ? mt.toFixed(2) : '', field((p.attr || {}).fix || CAD_FIX[0], ';')].join(';'); });
+  return cp1251(out.join('\r\n') + '\r\n');
+}
+
 /* ───────────── Точка по расстоянию и углу от базы (смещение): база — GPS, если свежий, иначе последняя поставленная ───────────── */
 function offsetPoint() {
   const fresh = gps && Date.now() - gps.at < GPS_FRESH_MS;
@@ -3163,6 +3332,7 @@ function addAt(ll, meas, src) {
     if ((POINTS[mode.type] || {}).wall) { const r = wallAngle(L.latLng(ll)); if (r != null) pt.rot = r; }   // крыльцо — стеной к ближнему зданию
     if ((POINTS[mode.type] || {}).pipe) { const r = pipeAngle(L.latLng(ll)); if (r) pt.rot = r.rot; }      // арматура — вдоль трубы
     if (meas) pt.meas = meas;
+    if ((POINTS[mode.type] || {}).cadNew) pt.name = nextNewName();      // н1, н2… — следующий свободный
     if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll, ...(hz.src === 'gnss' ? { ant: antH } : {}) }; }
     data.points.push(pt);
     save(); drawPoints();
@@ -3356,7 +3526,8 @@ function changeType(kind, obj, id) {
     const r = s.wall ? wallAngle(L.latLng(obj.lat, obj.lng)) : pa ? pa.rot + (s.flow && obj.attr && obj.attr.rev ? 180 : 0) : null;
     if (r != null) obj.rot = r; else delete obj.rot;
     save(); drawPoints(); frame(); showCard('point', obj);
-    if (s.svgFor || s.frac || s.wall || s.arm || s.defect || /^w_/.test(id)) editPoint(obj);
+    if (s.cadNew && !obj.name) { obj.name = nextNewName(); save(); drawPoints(); }
+    if (s.svgFor || s.frac || s.wall || s.arm || s.defect || s.cad || /^w_/.test(id)) editPoint(obj);
     return;
   }
   const s = LINES[id];
@@ -3400,6 +3571,7 @@ $('fabLayers').onclick = () => {
 };
 $('btnMenu').onclick = () => openList('Меню', [
   { header: 'На объекте' },
+  { id: 'cad', icon: '⬠', text: 'Кадастр: участки, площадь и ΔP, сведения о точках' },
   { id: 'so', icon: '⌖', text: soList().length ? `Разбивка: проектные точки (вынесено ${soList().filter(p => p.done).length} из ${soList().length})` : 'Разбивка: загрузить проектные точки (TXT, CSV)' },
   { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || 'без названия') + ' — сменить, новый' },
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
@@ -3462,6 +3634,7 @@ const MENU = {
   volkeys: () => { const on = !pref('volKeys', true); setPref('volKeys', on); toast(on ? 'В режиме съёмки: громкость «−» — точка по GPS, «+» — Измерить' : 'Кнопки громкости работают как обычно'); },
   stake: () => stakeByCoords(),
   so: () => soList().length ? soSheet() : soImport(),
+  cad: () => cadSheet(),
   project: () => projectsMenu(),
   passport: () => passportForm(),
   check: () => checkSheet(),
@@ -3996,6 +4169,7 @@ async function exportReport() {
   const files = [{ name: 'pasport_obekta.txt', data: enc.encode(passportText()) }, { name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
     { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `catalog_kody_${today()}.txt`, data: toCatalog(true) },{ name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) },
     ...(data.points.some(p => (POINTS[p.type] || {}).arm) ? [{ name: `armatura_${today()}.csv`, data: enc.encode(toArmSheet()) }] : []),
+    ...(data.points.some(isCadPt) ? [{ name: `harakternye_tochki_${today()}.csv`, data: enc.encode(toCadPointsSheet(null)) }] : []),
     ...(data.lines.some(l => l.vol) ? [{ name: `obyomy_${today()}.csv`, data: enc.encode(toVolumesSummary()) }] : []),
     ...(soList().some(p => p.done) ? [{ name: `vynos_v_naturu_${today()}.csv`, data: enc.encode(toSoSheet()) }] : []),
     ...(data.points.some(p => (POINTS[p.type] || {}).defect) ? [{ name: `defekty_${today()}.csv`, data: enc.encode(toDefectSheet()) }] : []),
@@ -4142,12 +4316,22 @@ function checkPlan() {
   const wells = P.filter(p => /^w_/.test(p.type));
   add('bad', 'Колодцы без отметки люка', wells.filter(p => !hasH(p.h)).map(pt));
   add('bad', 'Колодцы без лотков', wells.filter(p => !((p.attr || {}).lot || []).some(l => l && hasH(l.h))).map(pt), 'Нажмите колодец → «Изменить» — отметки лотков и направления');
-  add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !(POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).arm && !(POINTS[p.type] || {}).defect && pointH(p) == null).map(pt));
+  add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !(POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).arm && !(POINTS[p.type] || {}).defect && !isCadPt(p) && pointH(p) == null).map(pt));
   add('warn', 'Арматура не на сети (дальше 3 м от линии сети)', P.filter(p => (POINTS[p.type] || {}).arm && !pipeLine(p)).map(pt));
   add('info', 'Аварийные дефекты не устранены', P.filter(p => (POINTS[p.type] || {}).defect && (p.attr || {}).urgent && !(p.attr || {}).fixed).map(pt), 'Сообщите эксплуатирующей организации; ведомость — Меню → «Ведомость дефектов»');
   { const left = soList().filter(p => !p.done).length, bad = soList().filter(p => p.done && !p.done.ok).length;
     if (left) out.push({ level: 'info', text: `Разбивка: не вынесено точек — ${left}`, objs: [], hint: 'Меню → «Разбивка»' });
     if (bad) out.push({ level: 'warn', text: `Разбивка: вне допуска — ${bad}`, objs: [], hint: 'Меню → «Разбивка»: вынести заново' }); }
+  const cadP = P.filter(isCadPt), cat = landCat();
+  if (cadP.length || data.lines.some(isCadLine)) {
+    add('bad', 'Кадастр: координаты не в МСК региона', crsId !== 'msk' || !msk, 'Меню → система координат → МСК');
+    add('warn', 'Кадастр: не выбрана категория земель (допуск Mt)', !cat, 'Меню → «Кадастр»');
+    add('warn', 'Кадастр: точки без Mt (поставлены касанием)', cadP.filter(p => cadMt(p) == null).map(pt), 'Переснять «По GPS» или «Измерить»');
+    if (cat) add('bad', `Кадастр: Mt хуже допуска ${cat.mt.toFixed(2)} м`, cadP.filter(p => cadMt(p) != null && cadMt(p) > cat.mt).map(pt), 'Переснять с FIX, дольше «Измерить»');
+    const nm = new Map(); cadP.forEach(p => { if (p.name) nm.set(p.name, [...(nm.get(p.name) || []), p]); });
+    add('bad', 'Кадастр: одинаковые обозначения точек', [...nm.values()].filter(a => a.length > 1).flat().map(pt));
+    const { open } = cadParcels(); add('warn', 'Кадастр: граница не замкнута', open.flat().map(ln), 'Концы частей границы должны сходиться (привязка к точке)');
+  }
   add('warn', 'Точки без знака (простые)', P.filter(p => p.type === GENERIC.point).map(pt), 'Знак выбирается в карточке точки');
   add('warn', 'Линии без знака (простые)', data.lines.filter(l => l.type === GENERIC.line).map(ln));
   add('warn', 'Точки по GPS не в FIX', P.filter(p => p.q && p.q.fix && p.q.fix !== 'FIX').map(pt), 'Для 1:500 нужен FIX (до 5 см). FLOAT и автономные — переснять');
