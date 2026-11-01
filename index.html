@@ -1502,7 +1502,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 53;
+const APP_BUILD = 54;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2318,7 +2318,7 @@ function drawHits() {
       : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode && pickTool) { pickTap(e.latlng); return; } if (mode) addAt(e.latlng); else { lineTap = { line, ll: e.latlng }; showCard('line', line); } }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
 }
 map.on('moveend resize viewreset', frame);                              // после изменения масштаба тоже придёт moveend
-map.on('zoomend', () => { const was = MM; planSizes(); if (MM !== was || generalized !== planDenom() > GEN_DENOM) drawPoints(); });   // размер знаков — по масштабу (как на плане 1:500); линии — в frame по moveend
+map.on('zoomend', () => { const was = MM; planSizes(); if (MM !== was || generalized !== planDenom() > GEN_DENOM) { drawPoints(); if (soList().length) drawSo(); } });   // размер знаков — по масштабу (как на плане 1:500); линии — в frame по moveend
 // Во время приближения (кнопки, щипок) линии не прячем, а растягиваем вместе с картой; после — перерисовываем начисто
 netSvg.classList.add('leaflet-zoom-animated');
 netSvg.style.transformOrigin = '0 0';
@@ -2919,11 +2919,14 @@ const soTol = () => ({ ...SO_TOL, ...pref('soTol', {}) });
 function drawSo() {                                                     // слой создаётся при первом вызове: redrawAll зовут и при запуске
   const soLayer = drawSo.layer || (drawSo.layer = L.layerGroup().addTo(map));
   soLayer.clearLayers();
+  planSizes();                                                          // крестик и номер — в размере плана, как остальные знаки
+  const arm = Math.max(2, SYM_PX / 2), box = Math.max(TAP_PX, arm * 2 + 8), half = box / 2;
   for (const p of soList()) {
     const col = !p.done ? '#e65100' : p.done.ok ? '#2e7d32' : '#c62828', cur = !!(stake && stake.so && stake.so.id === p.id);
-    L.marker([p.lat, p.lng], { interactive: true, icon: L.divIcon({ className: 'so-mark', iconSize: [28, 28], iconAnchor: [14, 14],
-      html: `<svg width="28" height="28" viewBox="-14 -14 28 28"><path d="M-7 0H7M0 -7V7" stroke="${col}" stroke-width="${cur ? 3 : 2}"/>${cur ? `<circle r="10" fill="none" stroke="${col}" stroke-width="2"/>` : ''}</svg>` +
-        `<span style="position:absolute;left:22px;top:2px;white-space:nowrap;font:italic 12px var(--draft);color:${col}">${esc(p.no)}${p.done ? (p.done.ok ? ' ✓' : ' ✗') : ''}</span>` }) })
+    if (SYM_PX < PLAN_HIDE_PX && !cur) continue;                        // на мелком масштабе не видно — как на бумаге
+    L.marker([p.lat, p.lng], { interactive: true, icon: L.divIcon({ className: 'so-mark', iconSize: [box, box], iconAnchor: [half, half],
+      html: `<svg width="${box}" height="${box}" viewBox="${-half} ${-half} ${box} ${box}"><path d="M${-arm} 0H${arm}M0 ${-arm}V${arm}" stroke="${col}" stroke-width="${cur ? 3 : 2}"/>${cur ? `<circle r="${arm + 3}" fill="none" stroke="${col}" stroke-width="2"/>` : ''}</svg>` +
+        (LBL_PX < LBL_HIDE_PX ? '' : `<span style="position:absolute;left:${half + arm + 3}px;top:${half - LBL_PX * 0.6}px;white-space:nowrap;font:italic ${LBL_PX.toFixed(1)}px var(--draft);color:${col}">${esc(p.no)}${p.done ? (p.done.ok ? ' ✓' : ' ✗') : ''}</span>`) }) })
       .on('click', e => { L.DomEvent.stop(e); if (mode) return; soGo(p); }).addTo(soLayer);
   }
 }
