@@ -1045,6 +1045,36 @@ function measVerdict(m, tol, scale) {
   return ['bad', `Не годится для 1:${scale}: допуск ${cmText(tol)}, предельная ${cmText(2 * tol)}`];
 }
 
+// Контрольное измерение: повторно встать на точку, сравнить с записанным — координаты точки не меняются.
+// Оценка по СП 47.13330: до средней ошибки — хорошо, до удвоенной (предельной) — на пределе, больше — брак
+const CTRL_MARK = { ok: '✓ в допуске', mid: '≈ на пределе', bad: '✗ больше предельной' };
+function ctrlVerdict(d, tol) { return d == null ? null : d <= tol ? 'ok' : d <= 2 * tol ? 'mid' : 'bad'; }
+function controlPoint(p) {
+  openMeasure((ll, meas) => {
+    const a = sk42(p.lat, p.lng), b = sk42(ll.lat, ll.lng), H0 = pointH(p), H1 = normalHeight(ll.lat, ll.lng, meas.hEll);
+    const dS = Math.hypot(b.x - a.x, b.y - a.y), dH = H0 != null && H1 != null ? H1 - H0 : null, hTol = heightTol(meas.scale);
+    const vs = ctrlVerdict(dS, meas.tol), vh = ctrlVerdict(dH == null ? null : Math.abs(dH), hTol);
+    const ok = [vs, vh].includes('bad') ? 'bad' : [vs, vh].includes('mid') ? 'mid' : 'ok';
+    const rec = { at: meas.at, dS: +dS.toFixed(3), dH: dH == null ? null : +dH.toFixed(3), dx: +(b.x - a.x).toFixed(3), dy: +(b.y - a.y).toFixed(3),
+      m: meas.m, hm: meas.hm, scale: meas.scale, tol: meas.tol, hTol, ok };
+    p.ctrl = [...(p.ctrl || []), rec];
+    save();
+    showSheet(`<div class="sh-head"><b>Контроль точки${p.no ? ' № ' + p.no : ''}</b><button class="x" data-close>×</button></div>
+      <div class="meas-verdict ${ok}"><div class="meas-big">в плане ${cmText(dS)}</div>${CTRL_MARK[vs]} (средняя ${cmText(meas.tol)}, предельная ${cmText(2 * meas.tol)} для 1:${meas.scale})</div>
+      ${dH != null ? `<div class="meas-h">по высоте ${dH >= 0 ? '+' : '−'}${cmText(Math.abs(dH))} <span>${CTRL_MARK[vh]} (допуск ${cmText(hTol)})</span></div>`
+        : `<div class="meas-sub">${H0 == null ? 'У точки нет отметки — высоту сравнить не с чем' : 'Приёмник не дал высоту — сравнение только в плане'}</div>`}
+      <div class="meas-sub">ΔX ${mText(rec.dx, 3)} м · ΔY ${mText(rec.dy, 3)} м · новое измерение ±${cmText(meas.m)}. Координаты точки не изменены, контроль записан в карточку и в выгрузки.</div>
+      <button class="btn primary" data-close style="width:100%;margin-top:10px">Готово</button>`);
+    if (selected && selected.obj === p) showCard('point', p);
+  });
+}
+function ctrlText(p) {
+  const c = p.ctrl && p.ctrl[p.ctrl.length - 1];
+  if (!c) return '';
+  return `${cmText(c.dS)} в плане${c.dH != null ? `, ${c.dH >= 0 ? '+' : '−'}${cmText(Math.abs(c.dH))} по высоте` : ''} · ${CTRL_MARK[c.ok]}` +
+    `<br><span style="color:var(--muted)">${new Date(c.at).toLocaleString('ru-RU')}${p.ctrl.length > 1 ? ` · всего контролей ${p.ctrl.length}` : ''}</span>`;
+}
+
 function openMeasure(onAccept) {
   const o = pref('meas', { sec: 30, kind: 'clear', scale: 500 });
   const seg = (key, items, label) => `<div class="seg" data-key="${key}">${items.map(([v, t]) =>
@@ -1135,7 +1165,7 @@ function runMeasure(o, onAccept) {
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 30;
+const APP_BUILD = 31;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -1956,6 +1986,7 @@ function showCard(kind, obj) {
       const m = obj.meas, mark = { ok: '✓ годится', mid: '≈ на пределе', bad: '✗ не годится' }[m.ok] || '';
       kv.push(['Измерение', `±${cmText(m.m)} за ${m.sec} с, отсчётов ${m.n}${m.hdop != null ? ', HDOP ' + m.hdop : ''}<br>${mark} для 1:${m.scale} (допуск ${cmText(m.tol)})`]);
     }
+    if (obj.ctrl && obj.ctrl.length) kv.push(['Контроль', ctrlText(obj)]);
     ll = [obj.lat, obj.lng];
   } else {
     const s = LINES[obj.type] || LINES.plain;
@@ -1986,7 +2017,7 @@ function showCard(kind, obj) {
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
-    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn" data-act="stake" style="grid-column:span 4">◎ Вынести в натуру</button><button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
+    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn" data-act="stake" style="grid-column:span ${kind === 'point' ? 2 : 3}">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn" data-act="ctrl" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : ''}<button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -2004,6 +2035,7 @@ function showCard(kind, obj) {
     if (act === 'verts') showVertices(obj);
     if (act === 'stake') startStake(kind === 'point' ? [obj.lat, obj.lng] : obj.latlngs[0], kind === 'point' ? (pointLabel(obj) || (POINTS[obj.type] || POINTS.mark).name) : 'L' + (obj.no || '') + '.1');
     if (act === 'photo') addPhoto(kind, obj);
+    if (act === 'ctrl') controlPoint(obj);
     if (act === 'ai') { if (obj.ai) showSuggestion(kind, obj, obj.ai); else suggestSign(kind, obj); }
     if (act === 'del') {                                              // без лишнего вопроса — случайное удаление отменяет «Вернуть»
       if (kind === 'point') data.points = data.points.filter(x => x !== obj); else data.lines = data.lines.filter(x => x !== obj);
@@ -2706,6 +2738,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'wells', icon: '⇩', text: 'Ведомость колодцев (CSV для Excel)' },
   { id: 'nets', icon: '⇩', text: 'Ведомость сетей (CSV для Excel)' },
   { id: 'cross', icon: '⇩', text: 'Ведомость пересечений сетей (CSV)' },
+  { id: 'ctrlsheet', icon: '⇩', text: 'Ведомость контрольных измерений (CSV)' },
   { id: 'geojson', icon: '⇩', text: 'GeoJSON для QGIS (WGS-84, все свойства)' },
   { id: 'mif', icon: '⇩', text: `MIF/MID для MapInfo и Панорамы (${planeName()})` },
   { id: 'kmz', icon: '⇩', text: 'Выгрузить KMZ с фото (Google Earth, ГИС)' },
@@ -2731,6 +2764,7 @@ const MENU = {
   stake: () => stakeByCoords(),
   kmz: () => exportKmz(),
   cross: () => { const n = netCrossings().length; if (!n) { toast('Пересечений сетей не найдено'); return; } download(`peresecheniya_${today()}.csv`, toCrossSheet(), 'text/csv;charset=utf-8'); },
+  ctrlsheet: () => { if (!data.points.some(p => p.ctrl && p.ctrl.length)) { toast('Контрольных измерений нет — карточка точки → «✓ Контроль»'); return; } download(`kontrol_${today()}.csv`, toCtrlSheet(), 'text/csv;charset=utf-8'); },
   geojson: () => download(`plan_${today()}.geojson`, toGeoJson(), 'application/geo+json'),
   mif: () => { const { mif, mid } = toMifMid(); download(`plan_mapinfo_${today()}.zip`, makeZip([{ name: `plan_${today()}.mif`, data: mif }, { name: `plan_${today()}.mid`, data: mid }]), 'application/zip'); },
   wells: () => download(`kolodcy_${today()}.csv`, toWellsSheet(), 'text/csv;charset=utf-8'),
@@ -3248,7 +3282,8 @@ async function exportReport() {
   toast('Собираю архив для отчёта…');
   const enc = new TextEncoder();
   const files = [{ name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
-    { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `catalog_kody_${today()}.txt`, data: toCatalog(true) },{ name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) }, { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
+    { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `catalog_kody_${today()}.txt`, data: toCatalog(true) },{ name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) },
+    ...(data.points.some(p => p.ctrl && p.ctrl.length) ? [{ name: `kontrol_${today()}.csv`, data: enc.encode(toCtrlSheet()) }] : []), { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
 
@@ -3261,7 +3296,7 @@ function toKml(photoDir) {
   const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
   const pts = data.points.map(p => {
     const s = POINTS[p.type] || POINTS.mark;
-    return `<Placemark><name>${xml(p.name || s.name)}</name>${desc(p)}${ext({ tk_photos: p.photos ? JSON.stringify(p.photos) : '', tk_no: p.no, tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '' })}<Point>${hasH(p.h) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${p.lng},${p.lat},${hasH(p.h) ? Number(p.h) : 0}</coordinates></Point></Placemark>`;
+    return `<Placemark><name>${xml(p.name || s.name)}</name>${desc(p)}${ext({ tk_photos: p.photos ? JSON.stringify(p.photos) : '', tk_no: p.no, tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '', tk_ctrl: p.ctrl ? JSON.stringify(p.ctrl) : '' })}<Point>${hasH(p.h) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${p.lng},${p.lat},${hasH(p.h) ? Number(p.h) : 0}</coordinates></Point></Placemark>`;
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
@@ -3288,16 +3323,25 @@ const hInfoCols = hi => { const h = hi || {}, ref = h.ref;
 function toCsv() {
   const rows = [['№', 'Код', 'Знак', 'Подпись', 'X ' + planeName(), 'Y ' + planeName(), 'H', 'Отметка из', 'Точность в плане, м', 'Решение', 'Время',
     'Широта WGS-84', 'Долгота WGS-84', 'Зона', 'Примечание', 'Фото', 'СКО измерения, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб',
-    'СКО отметки, м', 'Высота над эллипсоидом, м', 'Высота антенны, м', 'Привязка отметки']];
+    'СКО отметки, м', 'Высота над эллипсоидом, м', 'Высота антенны, м', 'Привязка отметки', 'Контроль в плане, м', 'Контроль по высоте, м', 'Контроль: итог']];
   for (const p of data.points) {
     const c = sk42(p.lat, p.lng), m = p.meas, H = pointH(p), q = p.q || {};
     rows.push([p.no || '', p.type, (POINTS[p.type] || POINTS.mark).name, p.name || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(2),
       H == null ? '' : H_SRC[p.hSrc] || 'вручную', q.acc != null ? f3(q.acc) : '', q.fix || '', q.at ? new Date(q.at).toLocaleString('ru-RU') : '',
       f8(p.lat), f8(p.lng), c.zone, pointNote(p), (p.photos || []).map(photoFile).join(' '),
       ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', '']),
-      ...hInfoCols(p.hInfo)]);
+      ...hInfoCols(p.hInfo), ...ctrlCols(p.ctrl && p.ctrl[p.ctrl.length - 1])]);
   }
   return '\ufeff' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+}
+const ctrlCols = c => c ? [f3(c.dS), c.dH == null ? '' : f3(c.dH), CTRL_MARK[c.ok]] : ['', '', ''];
+// Ведомость контрольных измерений: каждое повторное измерение отдельной строкой
+function toCtrlSheet() {
+  const rows = [['№ точки', 'Знак', 'X ' + planeName(), 'Y ' + planeName(), 'H', 'Дата контроля', 'ΔX, м', 'ΔY, м', 'В плане, м', 'Допуск средний, м', 'По высоте, м', 'Допуск по высоте, м', 'СКО контроля, м', 'Масштаб', 'Итог']];
+  for (const p of data.points) for (const c of p.ctrl || []) { const s = sk42(p.lat, p.lng), H = pointH(p);
+    rows.push([p.no || '', (POINTS[p.type] || POINTS.mark).name, f3(s.x), f3(s.y), H == null ? '' : H.toFixed(3), new Date(c.at).toLocaleString('ru-RU'), f3(c.dx), f3(c.dy), f3(c.dS), f3(c.tol),
+      c.dH == null ? '' : f3(c.dH), f3(c.hTol), f3(c.m), '1:' + c.scale, CTRL_MARK[c.ok]]); }
+  return csvJoin(rows);
 }
 const csvJoin = rows => '\ufeff' + rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
 // Ведомость колодцев: номер, координаты, отметки люка и лотков, глубина, колодец
@@ -3470,6 +3514,7 @@ function readExtras(ext) {
   Object.assign(out, readJson(ext.tk_meas, 'meas', v => v && typeof v === 'object' && v.m != null));
   if (/^#[0-9a-f]{6}$/i.test(ext.tk_color || '')) out.color = ext.tk_color;
   Object.assign(out, readJson(ext.tk_hinfo, 'hInfo', v => v && typeof v === 'object'));
+  Object.assign(out, readJson(ext.tk_ctrl, 'ctrl', v => Array.isArray(v) && v.every(c => c && c.dS != null && c.at)));
   return out;
 }
 function readJson(str, key, ok) { try { const v = str ? JSON.parse(str) : null; return ok(v) ? { [key]: v } : {}; } catch (e) { return {}; } }
