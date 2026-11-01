@@ -38,6 +38,7 @@
     display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
   #top .r1 { display:none; }                                         /* система координат — касанием по координатам */
   #coords { flex:1 1 130px; min-width:0; cursor:pointer; }
+  #coords .xy .nw { white-space:nowrap; }
   #coords .xy { margin:0; font-size:14px; line-height:1.25; white-space:normal; }
   #top > #updLine { flex-basis:100%; }
   .seg { display:flex; background:var(--line); border-radius:9px; padding:2px; }
@@ -127,6 +128,9 @@
   #mode .quick button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #mode .quick button.on { border:2px solid var(--accent); font-weight:700; }
   #stake { position:absolute; left:8px; right:8px; z-index:1000; background:var(--panel); color:var(--ink); border-radius:16px; box-shadow:var(--shadow); padding:10px 12px; display:none; }
+  #pick { position:absolute; left:8px; right:8px; z-index:1001; background:var(--panel); color:var(--ink); border-radius:16px; box-shadow:var(--shadow); padding:10px 12px; display:none; }
+  #pick .row { display:flex; align-items:center; }
+  .pick-mk { position:relative; } .pick-mk svg { position:absolute; left:0; top:0; } .pick-mk span { position:absolute; left:24px; top:4px; font:700 15px system-ui; color:#e65100; text-shadow:0 0 3px #fff, 0 0 3px #fff; white-space:nowrap; }
   #stake .big { font-size:1.9em; font-weight:700; font-variant-numeric:tabular-nums; }
   #stake .row { display:flex; gap:10px; align-items:center; }
   #stake .ok { color:#2e7d32; }
@@ -290,7 +294,7 @@
 
 <div id="scale"><span id="scaleText"></span><i id="scaleBar"></i></div>
 
-<div id="stake"></div><div id="mode"><div class="hd"><div class="title" id="modeTitle"></div><div class="quick" id="modeQuick"></div><button class="mx" id="modeMore" aria-label="Ещё">⋯</button><button class="mx" id="modeX" aria-label="Закрыть">×</button></div><div class="btns" id="modeBtns"></div></div>
+<div id="stake"></div><div id="pick"></div><div id="mode"><div class="hd"><div class="title" id="modeTitle"></div><div class="quick" id="modeQuick"></div><button class="mx" id="modeMore" aria-label="Ещё">⋯</button><button class="mx" id="modeX" aria-label="Закрыть">×</button></div><div class="btns" id="modeBtns"></div></div>
 <div id="card"></div>
 
 <div id="bar">
@@ -804,7 +808,7 @@ function layout() {
 function plural(n, one, few, many) { const a = n % 10, b = n % 100; return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many; }
 function toast(msg) {
   const t = $('toast'), vis = id => $(id) && $(id).style.display !== 'none' && $(id).offsetHeight;
-  const above = vis('sheet') ? $('sheetPanel').offsetHeight : vis('mode') || vis('card') || 0;
+  const above = vis('sheet') ? $('sheetPanel').offsetHeight : vis('mode') || vis('pick') || vis('card') || 0;
   t.style.top = 'auto';
   t.style.bottom = (above ? above + ($('sheet').style.display === 'block' ? 0 : $('bar').offsetHeight + 8) + 10 : $('bar').offsetHeight + 56) + 'px';
   t.textContent = String(msg).replace(/(\d) (см|мм|м|с|км)(?![а-яё])/g, '$1\u00a0$2').replace(/± /g, '±');
@@ -882,7 +886,7 @@ function updateInfo() {
   const c = coordText(map.getCenter());
   $('zone').textContent = crs().zoned ? planeName() + ', зона ' + c.s.zone : planeName();
   $('segPlane').textContent = planeName();
-  const sk = `<div class="xy">X ${f2(c.s.x)} <small>м</small>&nbsp; Y ${f2(c.s.y)} <small>м</small></div>`;
+  const sk = `<div class="xy"><span class="nw">X ${f2(c.s.x)} <small>м</small></span> <span class="nw">Y ${f2(c.s.y)} <small>м</small></span></div>`;
   const wgs = `<div class="xy">${c.wgs}</div>`;
   $('coords').innerHTML = coordMode === 'wgs' ? wgs : coordMode === 'both' ? wgs + sk : sk;
   for (const b of $('coordSeg').children) b.classList.toggle('on', b.dataset.c === coordMode);
@@ -1489,7 +1493,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 49;
+const APP_BUILD = 50;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1762,7 +1766,7 @@ function drawPoints() {
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : '') + (p.wait ? ' wait' : ''), iconSize: [TAP_PX, TAP_PX], iconAnchor: [TAP_PX / 2, TAP_PX / 2],
       html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}"${s.defect || s.cadNew ? ` style="color:${objColor(p, 'point')}"` : ''}>${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
-    const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(snapOn ? L.latLng(p.lat, p.lng) : e.latlng, null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
+    const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode && pickTool) { pickTap(L.latLng(p.lat, p.lng)); return; } if (mode) addAt(snapOn ? L.latLng(p.lat, p.lng) : e.latlng, null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
     pointMarkers.push({ p, marker, lbl });
   }
 }
@@ -2277,7 +2281,7 @@ function drawHits() {
   hitLayer.clearLayers();
   for (const line of data.lines)
     ((LINES[line.type] || {}).closed ? L.polygon(line.latlngs, { opacity: 0, fillOpacity: 0, weight: 24, interactive: true })
-      : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(e.latlng); else { lineTap = { line, ll: e.latlng }; showCard('line', line); } }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
+      : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode && pickTool) { pickTap(e.latlng); return; } if (mode) addAt(e.latlng); else { lineTap = { line, ll: e.latlng }; showCard('line', line); } }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
 }
 map.on('moveend zoomend resize viewreset', frame);
 map.on('zoomend', () => { if ((planDenom() > GEN_DENOM) !== generalized) { drawPoints(); frame(); } });   // перешли через 1:3000 — пересобрать знаки
@@ -3544,7 +3548,7 @@ function redoRecord(id) {
 /* ───────────── Журнал съёмки: все точки таблицей — как снята, точность, отметка; фильтры — ошибки видны до отъезда ───────────── */
 
 let lastPlacedId = null;                                               // для «отменить последнюю» кнопкой громкости
-const HOW_NAME = { gps: 'по GPS', measure: 'Измерить', offset: 'смещение', center: 'перекрестье', tap: 'касанием' };
+const HOW_NAME = { gps: 'по GPS', measure: 'Измерить', offset: 'смещение', center: 'перекрестье', tap: 'касанием', resect: 'засечка', axisoff: 'створ' };
 const pointHow = p => p.q && p.q.redone ? 'доснята' : p.q ? HOW_NAME[p.q.src] || 'по GPS' : HOW_NAME[p.how] || 'касанием';
 const JOURNAL_FILTERS = [
   ['all', 'Все', () => true],
@@ -3607,6 +3611,112 @@ function offsetPoint() {
   }, 'Поставить');
 }
 
+/* ───────────── Ручная съёмка без GPS: засечка по двум промерам, створ и перпендикуляр, рулетка ───────────── */
+
+// Выбор точек касанием: ближняя точка или вершина плана (до 30 px) — её координаты; мимо — место касания (с предупреждением)
+const PICK_PX = 30;
+let pickTool = null;                                                    // { kind: 'resect'|'line'|'tape', step, A, B, names }
+const pickLayer = L.layerGroup().addTo(map);
+function pickNearest(ll) {
+  const c = map.latLngToContainerPoint(ll); let best = null, bd = PICK_PX;
+  const take = (lat, lng, name) => { const q = map.latLngToContainerPoint([lat, lng]), d = Math.hypot(q.x - c.x, q.y - c.y); if (d < bd) { bd = d; best = { ll: L.latLng(lat, lng), name }; } };
+  for (const p of data.points) take(p.lat, p.lng, pointLabel(p) || ((POINTS[p.type] || POINTS.mark).name + (p.no ? ' № ' + p.no : '')));
+  for (const l of data.lines) l.latlngs.forEach((a, i) => take(a[0], a[1], `L${l.no || ''}.${i + 1}`));
+  if (mode && mode.latlngs) mode.latlngs.forEach((a, i) => take(a[0], a[1], 'вершина ' + (i + 1)));
+  return best || { ll: L.latLng(ll), name: 'место касания', free: true };
+}
+const PICK_TEXT = {
+  resect: ['Засечка: нажмите первую известную точку (А)', 'Нажмите вторую известную точку (Б)'],
+  line: ['Створ: нажмите точку А — начало створа', 'Нажмите точку Б — направление створа'],
+  tape: ['Рулетка: нажмите первую точку', 'Нажмите вторую точку']
+};
+function pickStart(kind) {
+  pickTool = { kind, step: 0 }; pickLayer.clearLayers();
+  $('mode').style.display = 'none'; pickPanel(); cue('tick');
+}
+function pickPanel(html) {
+  const box = $('pick');
+  box.innerHTML = `<div class="row" style="justify-content:space-between;gap:8px"><b style="flex:1">${html || PICK_TEXT[pickTool.kind][pickTool.step]}</b><button class="x" id="pickX" aria-label="Закрыть">×</button></div><div id="pickBody"></div>`;
+  box.style.display = 'block'; box.style.bottom = $('mode').style.bottom || 'calc(8px + env(safe-area-inset-bottom))';
+  $('pickX').onclick = pickEnd;
+}
+function pickEnd() { pickTool = null; pickLayer.clearLayers(); $('pick').style.display = 'none'; if (mode) setMode(mode); }
+const pickMark = (ll, txt, color) => L.marker(ll, { interactive: false, icon: L.divIcon({ className: 'pick-mk', iconSize: [28, 28], iconAnchor: [14, 14],
+  html: `<svg width="28" height="28" viewBox="-14 -14 28 28"><circle r="9" fill="none" stroke="${color || '#e65100'}" stroke-width="3"/></svg><span>${esc(txt)}</span>` }) }).addTo(pickLayer);
+// касание карты, знака или линии, пока выбирается точка инструмента
+function pickTap(ll) {
+  if (!pickTool) return false;
+  if (pickTool.step >= 2) return true;                                 // уже выбираем результат — касание мимо ничего не меняет
+  const p = pickNearest(ll);
+  if (pickTool.kind !== 'tape' && p.free) toast('Не на точке плана — взято место касания. Лучше нажать на известную точку');
+  if (pickTool.step === 0) { pickTool.A = p; pickTool.step = 1; pickMark(p.ll, 'А'); pickPanel(); cue('tick'); return true; }
+  pickLayer.clearLayers(); pickMark(pickTool.A.ll, 'А');                // Б выбирается заново — старую метку убрать
+  pickTool.B = p; pickMark(p.ll, 'Б'); cue('tick');
+  const A = sk42(pickTool.A.ll.lat, pickTool.A.ll.lng), B = sk42(p.ll.lat, p.ll.lng), AB = Math.hypot(B.x - A.x, B.y - A.y);
+  if (A.zone !== B.zone) { toast('А и Б в разных зонах системы координат — выберите точки ближе'); return true; }
+  if (AB < 0.01 && pickTool.kind !== 'tape') { toast('А и Б — одна и та же точка, нажмите другую'); pickTool.step = 1; pickLayer.clearLayers(); pickMark(pickTool.A.ll, 'А'); pickPanel(); return true; }
+  if (pickTool.kind === 'tape') tapeShow(A, B, AB);
+  if (pickTool.kind === 'resect') resectForm(A, B, AB);
+  if (pickTool.kind === 'line') lineForm(A, B, AB);
+  return true;
+}
+const placeCalc = (ll, how, msg) => {                                   // поставить вычисленную точку (или вершину линии)
+  const m = mode; if (!m) { pickEnd(); return; }
+  pickEnd(); addAt(ll, null, how); toast(msg); say('Поставлено');
+};
+// засечка: два промера рулеткой от А и Б → два пересечения окружностей, выбирается одно
+function resectForm(A, B, AB) {
+  openForm('Засечка по двум промерам', [
+    { key: 'a', label: `От ${pickTool.A.name} (А), м`, type: 'number', placeholder: '12.40', half: true },
+    { key: 'b', label: `От ${pickTool.B.name} (Б), м`, type: 'number', placeholder: '8.15', half: true, hint: `Между А и Б по плану ${mText(AB, 2)} м.` }
+  ], v => {
+    const ra = parseNum(v.a), rb = parseNum(v.b);
+    if (!(ra > 0) || !(rb > 0)) { toast('Промеры — числа больше нуля'); return false; }
+    if (ra + rb < AB - 0.005 || Math.abs(ra - rb) > AB + 0.005) { toast(`Промеры не сходятся: между А и Б ${mText(AB, 2)} м, а ${mText(ra, 2)} + ${mText(rb, 2)} ${ra + rb < AB ? 'меньше' : 'не дают треугольника'}`); return false; }
+    const ux = (B.x - A.x) / AB, uy = (B.y - A.y) / AB, t = (ra * ra - rb * rb + AB * AB) / (2 * AB), h = Math.sqrt(Math.max(0, ra * ra - t * t));
+    const sols = [1, -1].map(sg =>   // 1-я — справа от А→Б (стоя в А лицом к Б), 2-я — слева
+      ({ x: A.x + ux * t - uy * h * sg, y: A.y + uy * t + ux * h * sg }));
+    setTimeout(() => resectChoose(sols, A.zone, ra, rb, h), 0);
+  }, 'Посчитать');
+}
+function resectChoose(sols, zone, ra, rb, h) {
+  if (h < 0.01) { placeCalc(fromSk42(sols[0].x, sols[0].y, zone), 'resect', `Засечка: точка на линии А–Б (${mText(ra, 2)} и ${mText(rb, 2)} м)`); return; }
+  const lls = sols.map(s => fromSk42(s.x, s.y, zone));
+  pickTool.step = 2;
+  pickPanel('Засечка: какая из двух? Нажмите кружок на карте или кнопку');
+  $('pickBody').innerHTML = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px"><button class="btn primary" data-s="1">Слева от А→Б (2)</button><button class="btn primary" data-s="0">Справа от А→Б (1)</button></div>';
+  lls.forEach((ll, i) => L.marker(ll, { icon: L.divIcon({ className: 'pick-mk', iconSize: [44, 44], iconAnchor: [22, 22], html: `<svg width="44" height="44" viewBox="-22 -22 44 44"><circle r="12" fill="rgba(230,81,0,.18)" stroke="#e65100" stroke-width="3"/></svg><span style="left:36px;top:12px;font-size:17px">${i + 1}</span>` }) })
+    .on('click', e => { L.DomEvent.stop(e); go(i); }).addTo(pickLayer));
+  map.fitBounds(L.latLngBounds(lls.concat([pickTool.A.ll, pickTool.B.ll])).pad(0.6), { maxZoom: 21 });
+  const go = i => placeCalc(lls[i], 'resect', `Засечка: ${mText(ra, 2)} м от А, ${mText(rb, 2)} м от Б`);
+  $('pickBody').onclick = e => { const b = e.target.closest('[data-s]'); if (b) go(Number(b.dataset.s)); };
+}
+// створ: от А в сторону Б на «вдоль», затем вправо (+) или влево (−) под прямым углом
+function lineForm(A, B, AB) {
+  openForm('Створ и перпендикуляр', [
+    { key: 's', label: `От ${pickTool.A.name} в сторону ${pickTool.B.name}, м`, type: 'number', placeholder: '12.40', half: true },
+    { key: 'o', label: 'Вправо (+) / влево (−), м', type: 'number', value: '0', placeholder: '3.10 или −3.10', half: true,
+      hint: `«Вправо» — если стоять в А лицом к Б. Между А и Б по плану ${mText(AB, 2)} м.` }
+  ], v => {
+    const minus = t => String(t).replace(/[−–—]/g, '-');
+    const along = v.s === '' ? NaN : parseNum(minus(v.s)), off = v.o === '' ? 0 : parseNum(minus(v.o));
+    if (isNaN(along) || isNaN(off)) { toast('Расстояние вдоль — обязательно; оба — числа'); return false; }
+    const ux = (B.x - A.x) / AB, uy = (B.y - A.y) / AB;                  // X — север, Y — восток; «вправо» от направления — (−uy, ux)
+    const x = A.x + ux * along - uy * off, y = A.y + uy * along + ux * off;
+    setTimeout(() => placeCalc(fromSk42(x, y, A.zone), 'axisoff', `Створ: ${mText(along, 2)} м от А${off ? `, ${off > 0 ? 'вправо' : 'влево'} ${mText(Math.abs(off), 2)} м` : ''}`), 0);
+  }, 'Поставить');
+}
+// рулетка: расстояние и дирекционный угол между двумя касаниями
+function tapeShow(A, B, AB) {
+  L.polyline([pickTool.A.ll, pickTool.B.ll], { color: '#e65100', weight: 3, dashArray: '6 4', interactive: false }).addTo(pickLayer);
+  const az = (Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI + 360) % 360;
+  pickTool.step = 2;
+  pickPanel(`Рулетка: ${mText(AB, 2)} м`);
+  $('pickBody').innerHTML = `<div style="color:var(--muted);margin-top:4px">${esc(pickTool.A.name)} → ${esc(pickTool.B.name)} · угол ${dms(az)}</div><button class="btn" id="tapeAgain" style="width:100%;margin-top:8px">Измерить ещё</button>`;
+  say(`${String(AB.toFixed(2)).replace('.', ',')} метра`);
+  $('tapeAgain').onclick = () => pickStart('tape');
+}
+
 /* ───────────── Режимы: ставим знак / рисуем линию ───────────── */
 
 let mode = null;          // { kind: 'point'|'line', type, latlngs, temp }
@@ -3622,6 +3732,7 @@ function setBarState() {
   layout();
 }
 function setMode(m) {
+  if (!m && pickTool) { pickTool = null; pickLayer.clearLayers(); $('pick').style.display = 'none'; }   // вышли из съёмки — инструмент закрыть
   if (mode && mode.temp && (!m || m !== mode)) { map.removeLayer(mode.temp); mode.temp = null; }
   mode = m;
   if (typeof updateRubber === 'function') updateRubber();
@@ -3639,7 +3750,8 @@ function setMode(m) {
   const btns = isPt
     ? [['center', 'В перекрестье'], ...gpsBtns, ['photo', '📷 Фото'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']]
     : [['center', 'В перекрестье'], ...gpsBtns, ['undo', '↶ Убрать'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']];
-  mode.more = isPt ? [['offset', '↗ Смещение от точки'], snapBtn] : [['offset', '↗ Смещение от точки'], snapBtn];
+  mode.more = [['resect', '📐 Засечка: два промера рулеткой от известных точек'], ['axisline', '⟂ Створ: от А в сторону Б и вправо/влево'], ['tape', '📏 Рулетка: расстояние между точками'], ['offset', '↗ Смещение: расстояние и угол от последней точки'], snapBtn];
+  if (pickTool) box.style.display = 'none';                           // идёт выбор точек инструмента — панель инструмента вместо панели съёмки
   // «Знак…» — выбрать условный знак заранее; без него ставится простая точка или линия, знак выбирается потом в карточке
   // ряд «последних» знаков: смена знака одним касанием, без списка
   const recent = pref('recent.' + mode.kind, []).filter(id => (isPt ? POINTS : LINES)[id]).slice(0, 6);
@@ -3652,6 +3764,7 @@ function setMode(m) {
 // в окне измерения: «+» — Начать / Стоп — принять / Принять, «−» — Отмена / Повторить; в вопросе: «+» — да, «−» — нет
 addEventListener('volumeKey', e => {
   const key = e.key || (e.detail && e.detail.key), sheetOpen = $('sheet').style.display === 'block';
+  if (pickTool && !sheetOpen) return;                                  // идёт засечка / створ / рулетка
   if (/Long$/.test(key)) {                                             // долгое нажатие (полсекунды): «+» — Готово, «−» — отменить последнюю
     if (!mode || sheetOpen) return;
     cue('tick');
@@ -3706,6 +3819,9 @@ $('modeBtns').addEventListener('click', e => {
     });
   }
   if (act === 'offset') offsetPoint();
+  if (act === 'resect') pickStart('resect');
+  if (act === 'axisline') pickStart('line');
+  if (act === 'tape') pickStart('tape');
   if (act === 'snap') { snapOn = !snapOn; setPref('snap', snapOn); setMode(mode); toast(snapOn ? 'Привязка к точкам, вершинам и линиям включена' : 'Привязка выключена — точка ставится ровно куда нажали'); }
   if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode !== m) return; const pt = addAt(ll, meas);
@@ -3717,6 +3833,7 @@ $('modeBtns').addEventListener('click', e => {
 let rainHintAt = 0;
 map.on('click', e => {
   if (!mode) return;
+  if (pickTool) { pickTap(e.latlng); return; }                          // выбор точки для засечки / створа / рулетки
   if (rainOn) { if (Date.now() - rainHintAt > 4000) { rainHintAt = Date.now(); toast('Режим «дождь»: касание карты точку не ставит — «В перекрестье», «По GPS» или «Измерить»'); } return; }
   addAt(e.latlng);
 });
