@@ -289,6 +289,8 @@ const P_STEPS = [3, 4.6, 6.2].map(x => `<path d="M${x} 7.5V16.5" ${P_S}/>`).join
 const COVER_SVG = t => `<text x="12" y="17.5" font-size="${t.length > 1 ? 12 : 16}" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-style="italic" fill="currentColor">${t}</text>`;
 const COVERS = [['А', 'А — асфальт, асфальтобетон'], ['Ц', 'Ц — цементобетон'], ['Б', 'Б — булыжник'], ['Бр', 'Бр — брусчатка'], ['Бм', 'Бм — битумоминеральная смесь'],
   ['Г', 'Г — гравий'], ['Щ', 'Щ — щебень'], ['К', 'К — камень колотый'], ['Шл', 'Шл — шлак'], ['Д', 'Д — дерево']];
+const ARM_S = 'stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"';
+const ARM_BOW = (lf, rf) => `<path d="M4 7 L12 12 L4 17 Z" fill="${lf}" ${ARM_S}/><path d="M20 7 L12 12 L20 17 Z" fill="${rf}" ${ARM_S}/>`;
 const POINT_GROUPS = [
   { id: 'geo', title: 'Геодезия', items: [
     { id: 'ggs', name: 'Пункт ГГС', svg: '<path d="M12 3 L21.5 20 H2.5 Z" fill="#fff" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="14.3" r="1.6" fill="currentColor"/>' },
@@ -349,6 +351,17 @@ const POINT_GROUPS = [
     { id: 'grp', name: 'Газорегуляторный пункт', svg: BOXK('К'), suffix: 'ГРП' },
     { id: 'chamber', name: 'Камера на теплосети', svg: '<path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="6" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + Ln(6.2, 10, 17.8, 10) + Ln(12, 10, 12, 18) },
     { id: 'shurf', name: 'Шурф', svg: '<rect x="7" y="7" width="10" height="10" fill="#fff" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/>' }
+  ]},
+  // Арматура на сетях — ГОСТ 2.785-70 (в «Правилах» и ГКИНП её нет); одобрено 01.11.2026. Знак лежит вдоль трубы, подпись «З-12 Ø150 откр.»
+  { id: 'arm', title: 'Арматура', items: [
+    { id: 'a_zadv', name: 'Задвижка', pipe: true, arm: 'З', shut: true, svg: ARM_BOW('#fff', '#fff') + '<path d="M12 6V18" ' + ARM_S + '/><circle cx="12" cy="12" r="1.5" fill="currentColor"/>' },
+    { id: 'a_zatv', name: 'Затвор поворотный (дисковый)', pipe: true, arm: 'Зт', shut: true, svg: '<rect x="4" y="7" width="16" height="10" fill="#fff" ' + ARM_S + '/><path d="M9.5 9.5 L12.5 12.5" ' + ARM_S + '/><circle cx="12.8" cy="12.8" r="1.5" fill="currentColor"/>' },
+    { id: 'a_obrat', name: 'Клапан обратный', pipe: true, arm: 'КО', flow: true, svg: ARM_BOW('#fff', 'currentColor') },
+    { id: 'a_vantuz', name: 'Вантуз (клапан воздушный)', pipe: true, arm: 'Вз', svg: '<path d="M5 2H19" ' + ARM_S + '/><path d="M6.5 2 Q12 10 17.5 2" fill="#fff" ' + ARM_S + '/><path d="M12 6V12M8 12H16" ' + ARM_S + '/>' },
+    { id: 'a_kran', name: 'Кран проходной', pipe: true, arm: 'Кр', shut: true, svg: ARM_BOW('#fff', '#fff') + '<circle cx="12" cy="12" r="1.7" fill="currentColor"/>' },
+    { id: 'a_ventil', name: 'Вентиль (клапан) запорный', pipe: true, arm: 'В', shut: true, svg: ARM_BOW('#fff', '#fff') },
+    { id: 'a_predohr', name: 'Клапан предохранительный', pipe: true, arm: 'КП', svg: '<path d="M4 11 L12 15.5 L4 20 Z M20 11 L12 15.5 L20 20 Z" fill="#fff" ' + ARM_S + '/><path d="M12 15.5V12 L10 11 L14 9.5 L10 8 L14 6.5 L12 5.5V3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>' },
+    { id: 'a_redukc', name: 'Клапан редукционный (регулятор давления)', pipe: true, arm: 'КР', flow: true, svg: '<rect x="4" y="7" width="16" height="10" fill="#fff" ' + ARM_S + '/><path d="M5.5 8.5 L18.5 12 L5.5 15.5" fill="none" ' + ARM_S + '/>' }
   ]},
   // Улицы, крыльца и входы — ГКИНП, табл. 8 и 39 (зн. 33–40, 189; п. 77–82, 262, 268). wall — знак разворачивается стеной (справа) к ближнему зданию
   { id: 'street', title: 'Улицы, крыльца', items: [
@@ -1310,7 +1323,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 34;
+const APP_BUILD = 35;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -1473,6 +1486,7 @@ function pointLabel(p) {
   if (s.spot) return p.h == null || p.h === '' ? '' : planNum(p.h, 2);
   if (p.type === GENERIC.point && p.h != null && p.h !== '') return [p.name, planNum(p.h, 2)].filter(Boolean).join(' ');
   if (/^w_/.test(p.type) && hasH(p.h) && wellBottom(p) != null) return [p.name, `${planNum(p.h, 2)}/${planNum(wellBottom(p), 2)}`].filter(Boolean).join(' ');            // отметка высоты — сама отметка, два знака (1:500)
+  if (s.arm) { const a = p.attr || {}; return [s.arm + (p.name ? '-' + p.name : ''), hasH(a.d) ? 'Ø' + a.d : '', a.state || ''].filter(Boolean).join(' '); }
   return [s.prefix, p.name, s.suffix].filter(Boolean).join(' ');
 }
 // рисунок знака: у надписи покрытия — своя буква, у крылец — поворот стеной к зданию
@@ -1499,10 +1513,26 @@ function wallAngle(ll) {
   }
   return best && best.d * mpp <= WALL_SNAP_M ? Math.round(best.ang * 180 / Math.PI * 10) / 10 : null;
 }
+// угол трубы под знаком арматуры: направление ближнего отрезка сети в пределах 3 м (по ходу рисования линии)
+const PIPE_SNAP_M = 3;
+function pipeAngle(ll) {
+  const c = map.latLngToContainerPoint(ll), mpp = ll.distanceTo(map.containerPointToLatLng([c.x + 10, c.y])) / 10;
+  let best = null;
+  for (const line of data.lines) {
+    if (!isNetLine(line)) continue;
+    const pts = screenPts(line);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / L2)), d = Math.hypot(a.x + t * dx - c.x, a.y + t * dy - c.y);
+      if (!best || d < best.d) best = { d, ang: Math.atan2(dy, dx), line };
+    }
+  }
+  return best && best.d * mpp <= PIPE_SNAP_M ? { rot: Math.round(best.ang * 180 / Math.PI * 10) / 10, line: best.line } : null;
+}
 let pointMarkers = [];
 // Мельче 1:3000 мелкие подробности 1:500 (крыльца, буквы покрытий, отметки, засечки оград, надписи зданий) не рисуются — иначе каша;
 // сети, здания, геодезические пункты остаются
-const GEN_DENOM = 3000, MINOR_GROUPS = new Set(['street', 'reliefpt', 'bpartpt']);
+const GEN_DENOM = 3000, MINOR_GROUPS = new Set(['street', 'reliefpt', 'bpartpt', 'arm']);
 const MINOR_POINTS = new Set(POINT_GROUPS.filter(g => MINOR_GROUPS.has(g.id)).flatMap(g => g.items.map(i => i.id)));
 function planDenom() { return metersPerPx() * 1000 / PX_MM; }
 let generalized = false;
@@ -1536,6 +1566,12 @@ function placePointLabels() {
       { x: c.x + SYM_R - 2, y: c.y - SYM_R - h + 2 }, { x: c.x + SYM_R - 2, y: c.y + SYM_R - 2 },
       { x: c.x - SYM_R + 2 - w, y: c.y - SYM_R - h + 2 }, { x: c.x - SYM_R + 2 - w, y: c.y + SYM_R - 2 }
     ];
+    // знак на трубе: подпись — сбоку от трубы, ровно настолько, чтобы рамка её не касалась (сначала над трубой, потом под ней)
+    if ((POINTS[p.type] || {}).pipe && p.rot != null) {
+      const a = Number(p.rot) * Math.PI / 180, nx = Math.sin(a), ny = -Math.cos(a), d = w / 2 * Math.abs(nx) + h / 2 * Math.abs(ny) + Math.max(3, SYM_R * 0.5);
+      const side = k => ({ x: c.x + k * nx * d - w / 2, y: c.y + k * ny * d - h / 2 }), up = ny <= 0 ? 1 : -1;
+      tries.unshift(side(up), side(-up));
+    }
     const box = tries.map(t => ({ x: t.x, y: t.y, w, h })).find(b => labelsAll || !hits(b, null)) || (labelsAll ? { x: tries[0].x, y: tries[0].y, w, h } : null);
     span.classList.toggle('off', !box);
     if (!box) continue;
@@ -2252,6 +2288,7 @@ function editPoint(p) {
     save(); drawPoints(); frame(); showCard('point', p);
   });
   if (/^w_/.test(p.type)) return editWell(p, s);
+  if (s.arm) return editArm(p, s);
   openForm(s.name, [
     ...(s.spot ? [] : [{ key: 'name', label: s.nameLabel || 'Подпись у знака (номер)', value: p.name, placeholder: s.nameLabel ? 'например 1.6' : 'например 12' }]),
     { key: 'h', label: 'Отметка, м', type: 'number', value: p.h, placeholder: 'например 245.51' },
@@ -2286,6 +2323,28 @@ function editWell(p, s) {
     if (hv !== p.h) { delete p.hSrc; delete p.hInfo; }
     p.name = v.name || ''; p.note = v.note; p.h = hv;
     p.attr = { ...a, lot: lots, wd: num('wd'), wm: v.wm };
+    save(); drawPoints(); frame(); showCard('point', p);
+  });
+}
+// Арматура: номер, диаметр, положение (у запорной), в каком колодце, направление потока (у обратного и редукционного)
+function editArm(p, s) {
+  const a = p.attr || {}, fields = [
+    { key: 'name', label: 'Номер', value: p.name, placeholder: '12', half: true },
+    { key: 'd', label: 'Диаметр, мм', type: 'number', value: a.d, placeholder: '150', half: true }];
+  if (s.shut) fields.push({ key: 'state', label: 'Положение', type: 'select', value: a.state || '', options: [['', '—'], ['откр.', 'открыта'], ['закр.', 'закрыта']], half: true });
+  if (s.flow) fields.push({ key: 'flow', label: 'Направление', type: 'select', value: a.rev ? 1 : 0, half: true,
+    options: [[0, s.id === 'a_obrat' ? 'поток по ходу линии' : 'высокое давление по ходу'], [1, 'наоборот']] });
+  fields.push({ key: 'well', label: 'В колодце №', value: a.well, placeholder: 'ВК-3, если внутри колодца', half: true },
+    { key: 'h', label: 'Отметка оси, м', type: 'number', value: p.h, placeholder: 'необязательно', half: true },
+    { key: 'note', label: 'Примечание', value: p.note, placeholder: 'марка, тип привода, число оборотов', hint: 'Знак сам лёг вдоль ближней сети (до 3 м). Повернуть вручную — поставьте знак ближе к линии.' });
+  openForm(s.name, fields, v => {
+    const d = v.d === '' ? '' : parseNum(v.d), h = v.h === '' ? null : parseNum(v.h);
+    if ((d !== '' && isNaN(d)) || (h != null && isNaN(h))) { toast('Диаметр и отметка — числа'); return false; }
+    const rev = v.flow === '1', pa = pipeAngle(L.latLng(p.lat, p.lng));
+    if (pa) p.rot = pa.rot + (s.flow && rev ? 180 : 0); else delete p.rot;   // угол — всегда от трубы; «наоборот» — разворот на 180°
+    if (h !== p.h) { delete p.hSrc; delete p.hInfo; }
+    p.name = v.name || ''; p.note = v.note; p.h = h;
+    p.attr = { ...a, d, state: v.state || '', well: v.well || '', ...(s.flow ? { rev } : {}) };
     save(); drawPoints(); frame(); showCard('point', p);
   });
 }
@@ -2458,6 +2517,7 @@ function netCaption(line) {
   return [main, a.sleeve ? 'футл.' + (a.sleeveD ? ' ' + a.sleeveD : '') : ''].filter(Boolean).join(', ');
 }
 const NET_LINE_KINDS = new Set(['indexed', 'cable', 'power', 'air']);
+const H_KINDS = [['', '— не указано'], ['земля', 'земля над сетью'], ['верх трубы', 'верх трубы'], ['лоток', 'лоток (низ трубы)'], ['ось', 'ось трубы / кабеля']];
 function netFields(line, spec) {
   const a = line.attr || {}, pipe = spec.kind === 'indexed';
   const f = pipe
@@ -2467,13 +2527,17 @@ function netFields(line, spec) {
   f.push({ key: 'depth', label: 'Глубина заложения, м', type: 'number', value: a.depth, placeholder: '1.8', half: true },
     { key: 'year', label: 'Год прокладки', type: 'number', value: a.year, placeholder: '2026', half: true },
     { key: 'owner', label: 'Владелец (балансодержатель)', value: a.owner, placeholder: 'например Водоканал' });
+  f.push({ key: 'hKind', label: 'Отметки вершин — это', type: 'select', value: a.hKind || '', half: true, options: H_KINDS },
+    { key: 'trench', label: 'Съёмка', type: 'select', value: a.trench ? 1 : 0, half: true, options: [[0, 'по засыпанной трассе'], [1, 'по открытой траншее']],
+      hint: 'Приёмщики геофонда просят верх трубы, снятый в открытой траншее, — отметьте это и приложите фото.' });
   if (pipe) f.push({ key: 'sleeve', label: 'В футляре', type: 'select', value: a.sleeve ? 1 : 0, options: [[0, 'нет'], [1, 'да — штриховые линии по бокам']], half: true },
     { key: 'sleeveD', label: 'Футляр (материал, Ø)', value: a.sleeveD, placeholder: 'ст. 325', half: true });
   return f;
 }
 function readNetFields(v, a) {
   const next = { ...a };
-  for (const k of ['mat', 'mark', 'volt', 'owner', 'sleeveD']) if (k in v) next[k] = v[k];
+  for (const k of ['mat', 'mark', 'volt', 'owner', 'sleeveD', 'hKind']) if (k in v) next[k] = v[k];
+  if ('trench' in v) { next.trench = v.trench === '1'; next.trenchAt = next.trench ? a.trenchAt || today() : ''; }
   for (const k of ['d', 'depth', 'year']) if (k in v) { const n = v[k] === '' ? '' : parseNum(v[k]); if (n !== '' && isNaN(n)) return null; next[k] = n; }
   if ('sleeve' in v) next.sleeve = v.sleeve === '1';
   return next;
@@ -2623,7 +2687,7 @@ $('modeBtns').addEventListener('click', e => {
   if (act === 'snap') { snapOn = !snapOn; setPref('snap', snapOn); setMode(mode); toast(snapOn ? 'Привязка к точкам, вершинам и линиям включена' : 'Привязка выключена — точка ставится ровно куда нажали'); }
   if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode !== m) return; const pt = addAt(ll, meas);
-    if (pt && pt.type === GENERIC.point) openPicker('point', id => { changeType('point', pt, id); if (/^w_/.test(id)) editPoint(pt); }, 'Закройте — останется простой точкой'); }); }
+    if (pt && pt.type === GENERIC.point) openPicker('point', id => changeType('point', pt, id), 'Закройте — останется простой точкой'); }); }
   if (act === 'undo') { mode.latlngs.pop(); if (mode.hs) mode.hs.pop(); refreshTemp(); setMode(mode); }
   if (act === 'cancel') { const m = mode; if (m.latlngs.length < 2) setMode(null); else ask(`Бросить линию из ${m.latlngs.length} точек?`, 'Бросить', true).then(ok => { if (ok && mode === m) setMode(null); }); }
   if (act === 'done') finishMode();
@@ -2647,6 +2711,7 @@ function addAt(ll, meas, src) {
     if (src === 'gps' || src === 'measure') pt.q = meas ? { acc: meas.m, fix: fixKind(meas.acc), at: meas.at, src } : { acc: +gps.acc.toFixed(3), fix: fixKind(gps.acc), at: new Date(gps.at).toISOString(), src };
     if (pt.type === GENERIC.point) pt.color = pref('color', VIS_COLOR);   // простая точка — заметным цветом (последним выбранным)
     if ((POINTS[mode.type] || {}).wall) { const r = wallAngle(L.latLng(ll)); if (r != null) pt.rot = r; }   // крыльцо — стеной к ближнему зданию
+    if ((POINTS[mode.type] || {}).pipe) { const r = pipeAngle(L.latLng(ll)); if (r) pt.rot = r.rot; }      // арматура — вдоль трубы
     if (meas) pt.meas = meas;
     if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll, ...(hz.src === 'gnss' ? { ant: antH } : {}) }; }
     data.points.push(pt);
@@ -2654,7 +2719,7 @@ function addAt(ll, meas, src) {
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
       (hz ? `, H ${mText(hz.h, 2)}` : src === 'tap' || src === 'center' ? ' без отметки' : ', приёмник не дал высоту'));
     const ps = POINTS[pt.type] || {};
-    if (ps.frac || ps.svgFor || /^w_/.test(pt.type)) editPoint(pt);   // у надписи покрытия, отметок и колодца (лотки) — сразу спросить значения
+    if (ps.frac || ps.svgFor || ps.arm || /^w_/.test(pt.type)) editPoint(pt);   // у надписи покрытия, отметок и колодца (лотки) — сразу спросить значения
     return pt;
   } else {
     mode.latlngs.push([ll.lat, ll.lng]);
@@ -2836,9 +2901,11 @@ function changeType(kind, obj, id) {
     obj.type = id;
     if (obj.color && id !== GENERIC.point) delete obj.color;
     const s = POINTS[id];
-    if (s.wall) { const r = wallAngle(L.latLng(obj.lat, obj.lng)); if (r != null) obj.rot = r; } else delete obj.rot;
+    const pa = s.pipe ? pipeAngle(L.latLng(obj.lat, obj.lng)) : null;
+    const r = s.wall ? wallAngle(L.latLng(obj.lat, obj.lng)) : pa ? pa.rot + (s.flow && obj.attr && obj.attr.rev ? 180 : 0) : null;
+    if (r != null) obj.rot = r; else delete obj.rot;
     save(); drawPoints(); frame(); showCard('point', obj);
-    if (s.svgFor || s.frac || s.wall) editPoint(obj);
+    if (s.svgFor || s.frac || s.wall || s.arm || /^w_/.test(id)) editPoint(obj);
     return;
   }
   const s = LINES[id];
@@ -2912,6 +2979,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'pnezd', icon: '⇩', text: 'Точки для Civil 3D (PNEZD через запятую)' },
   { id: 'wells', icon: '⇩', text: 'Ведомость колодцев (CSV для Excel)' },
   { id: 'nets', icon: '⇩', text: 'Ведомость сетей (CSV для Excel)' },
+  { id: 'arms', icon: '⇩', text: 'Ведомость арматуры: задвижки, вантузы, клапаны (CSV)' },
   { id: 'cross', icon: '⇩', text: 'Ведомость пересечений сетей (CSV)' },
   { id: 'ctrlsheet', icon: '⇩', text: 'Ведомость контрольных измерений (CSV)' },
   { id: 'geojson', icon: '⇩', text: 'GeoJSON для QGIS (WGS-84, все свойства)' },
@@ -2951,6 +3019,7 @@ const MENU = {
   geojson: () => guardExport(() => download(`plan_${today()}.geojson`, toGeoJson(), 'application/geo+json')),
   mif: () => guardExport(() => { const { mif, mid } = toMifMid(); download(`plan_mapinfo_${today()}.zip`, makeZip([{ name: `plan_${today()}.mif`, data: mif }, { name: `plan_${today()}.mid`, data: mid }]), 'application/zip'); }),
   wells: () => download(`kolodcy_${today()}.csv`, toWellsSheet(), 'text/csv;charset=utf-8'),
+  arms: () => { if (!data.points.some(p => (POINTS[p.type] || {}).arm)) { toast('Арматуры нет — Знак… → «Арматура»'); return; } download(`armatura_${today()}.csv`, toArmSheet(), 'text/csv;charset=utf-8'); },
   nets: () => download(`seti_${today()}.csv`, toNetsSheet(), 'text/csv;charset=utf-8'),
   dxf: () => guardExport(() => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf')),
   txt: () => guardExport(catalogMenu),
@@ -3376,7 +3445,7 @@ function toDxf() {
     const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
     const blk = codeOf(p.type).toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31);
     blocks.add(blk);
-    ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z);
+    ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z, ...(p.rot ? [50, (-Number(p.rot)).toFixed(1)] : []));   // поворот: на экране — по часовой, в DXF — против
     const val = { НОМЕР: p.no || '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
       ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : '' };
     ATTRS.forEach(([tag, inv], k) => ent(0, 'ATTRIB', 8, lay, 10, (Number(x) + 0.6).toFixed(3), 20, (Number(y) + 0.4 - k * 1.2).toFixed(3), 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE));
@@ -3467,6 +3536,7 @@ async function exportReport() {
   const enc = new TextEncoder();
   const files = [{ name: 'pasport_obekta.txt', data: enc.encode(passportText()) }, { name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
     { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `catalog_kody_${today()}.txt`, data: toCatalog(true) },{ name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) },
+    ...(data.points.some(p => (POINTS[p.type] || {}).arm) ? [{ name: `armatura_${today()}.csv`, data: enc.encode(toArmSheet()) }] : []),
     ...(data.points.some(p => p.ctrl && p.ctrl.length) ? [{ name: `kontrol_${today()}.csv`, data: enc.encode(toCtrlSheet()) }] : []), { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
@@ -3609,11 +3679,13 @@ function checkPlan() {
   const wells = P.filter(p => /^w_/.test(p.type));
   add('bad', 'Колодцы без отметки люка', wells.filter(p => !hasH(p.h)).map(pt));
   add('bad', 'Колодцы без лотков', wells.filter(p => !((p.attr || {}).lot || []).some(l => l && hasH(l.h))).map(pt), 'Нажмите колодец → «Изменить» — отметки лотков и направления');
-  add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !(POINTS[p.type] || {}).svgFor && pointH(p) == null).map(pt));
+  add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !(POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).arm && pointH(p) == null).map(pt));
+  add('warn', 'Арматура не на сети (дальше 3 м от линии сети)', P.filter(p => (POINTS[p.type] || {}).arm && !pipeLine(p)).map(pt));
   add('warn', 'Точки без знака (простые)', P.filter(p => p.type === GENERIC.point).map(pt), 'Знак выбирается в карточке точки');
   add('warn', 'Линии без знака (простые)', data.lines.filter(l => l.type === GENERIC.line).map(ln));
   add('warn', 'Точки по GPS не в FIX', P.filter(p => p.q && p.q.fix && p.q.fix !== 'FIX').map(pt), 'Для 1:500 нужен FIX (до 5 см). FLOAT и автономные — переснять');
   const nets = data.lines.filter(isNetLine);
+  add('warn', 'Сети с отметками: не указано, что это (земля, верх трубы, лоток)', nets.filter(l => (l.hs || []).some(z => z && hasH(z.h)) && !(l.attr || {}).hKind).map(ln), 'Карточка сети → «Изменить» → «Отметки вершин — это»');
   add('warn', 'Сети без материала / марки', nets.filter(l => !((l.attr || {}).mat || (l.attr || {}).mark)).map(ln));
   // висящие концы: конец сети не у колодца, опоры, другой точки и не на другой линии сети
   const xy = a => sk42(a[0], a[1]), near = (c, d) => Math.hypot(c.x - d.x, c.y - d.y) <= DANGLE_M;
@@ -3837,14 +3909,47 @@ function toWellsSheet() {
 }
 // Ведомость сетей: линия, вид, длина, материал/марка, диаметр, глубина, год, владелец, состояние, футляр
 function toNetsSheet() {
-  const rows = [['№', 'Вид сети', 'Длина, м', 'Материал / марка', 'Диаметр, мм', 'Число труб / кабелей', 'Напряжение', 'Глубина, м', 'Год', 'Владелец', 'Состояние', 'Футляр', 'Подпись']];
+  const rows = [['№', 'Вид сети', 'От', 'До', 'Длина, м', 'Материал / марка', 'Диаметр, мм', 'Число труб / кабелей', 'Напряжение', 'Глубина, м', 'Год', 'Владелец', 'Состояние', 'Футляр', 'Отметки вершин', 'Съёмка по открытой траншее', 'Подпись']];
   for (const l of data.lines) { const sp = LINES[l.type] || {};
     if (!NET_LINE_KINDS.has(sp.kind) && l.type !== 'sleeve') continue;
     const a = l.attr || {};
-    rows.push(['L' + (l.no || ''), sp.name, lineLength(l).toFixed(2), a.mat || a.mark || '', a.d || '', l.count || 1, a.volt || '', hasH(a.depth) ? Number(a.depth).toFixed(2) : '', a.year || '', a.owner || '',
-      STATE_NAME[l.state] || 'действующая', a.sleeve ? 'да' + (a.sleeveD ? ', ' + a.sleeveD : '') : '', netCaption(l)]);
+    const [from, to] = netEnds(l);
+    rows.push(['L' + (l.no || ''), sp.name, from, to, lineLength(l).toFixed(2), a.mat || a.mark || '', a.d || '', l.count || 1, a.volt || '', hasH(a.depth) ? Number(a.depth).toFixed(2) : '', a.year || '', a.owner || '',
+      STATE_NAME[l.state] || 'действующая', a.sleeve ? 'да' + (a.sleeveD ? ', ' + a.sleeveD : '') : '', a.hKind || '', a.trench ? 'да' + (a.trenchAt ? ', ' + a.trenchAt : '') : '', netCaption(l)]);
   }
   return sheetJoin(rows);
+}
+// откуда и куда идёт участок сети: ближайший к концу колодец, арматура или другая точка (до 1 м), иначе — координатный «конец»
+const NET_END_M = 1;
+const pointRef = p => /^w_/.test(p.type) ? (p.name ? p.name : 'колодец № ' + (p.no || '')) : (POINTS[p.type] || {}).arm ? pointLabel(p).split(' ')[0] : `${(POINTS[p.type] || POINTS.mark).name.toLowerCase()} № ${p.no || ''}`;
+function netEnds(l) {
+  if (!l.latlngs || !l.latlngs.length) return ['', ''];
+  const ends = [l.latlngs[0], l.latlngs[l.latlngs.length - 1]].map(a => sk42(a[0], a[1]));
+  return ends.map(c => {
+    let best = null, bd = NET_END_M;
+    for (const p of data.points) { const q = sk42(p.lat, p.lng), d = Math.hypot(q.x - c.x, q.y - c.y); if (d <= bd) { bd = d; best = p; } }
+    return best ? pointRef(best) : '';
+  });
+}
+// Ведомость арматуры: вид, номер, диаметр, положение, колодец, на какой сети, координаты
+function toArmSheet() {
+  const rows = [['№ п/п', 'Вид', 'Номер', 'Диаметр, мм', 'Положение', 'В колодце', 'Сеть', 'X ' + planeName(), 'Y ' + planeName(), 'Отметка оси', 'Примечание']];
+  data.points.filter(p => (POINTS[p.type] || {}).arm).forEach((p, i) => {
+    const s = POINTS[p.type], a = p.attr || {}, c = sk42(p.lat, p.lng), on = pipeLine(p);
+    rows.push([i + 1, s.name, p.name || '', a.d || '', a.state === 'откр.' ? 'открыта' : a.state === 'закр.' ? 'закрыта' : '', a.well || '',
+      on ? `L${on.no || ''} ${(LINES[on.type] || {}).name}${netCaption(on) ? ' ' + netCaption(on) : ''}` : '', f3(c.x), f3(c.y), hasH(p.h) ? Number(p.h).toFixed(2) : '', p.note || '']);
+  });
+  return sheetJoin(rows);
+}
+// сеть, на которой стоит знак (в метрах, без экрана — годится и для выгрузки)
+function pipeLine(p) {
+  const c = sk42(p.lat, p.lng);
+  let best = null, bd = PIPE_SNAP_M;
+  for (const l of data.lines) { if (!isNetLine(l)) continue;
+    const v = l.latlngs.map(a => sk42(a[0], a[1]));
+    for (let i = 1; i < v.length; i++) { const a = v[i - 1], b = v[i], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / L2));
+      const d = Math.hypot(a.x + t * dx - c.x, a.y + t * dy - c.y); if (d < bd) { bd = d; best = l; } } }
+  return best;
 }
 // Ведомость пересечений сетей: точка пересечения в плоской системе, отметки обеих сетей (по вершинам, линейно) и разница
 const isNetLine = l => NET_LINE_KINDS.has((LINES[l.type] || {}).kind) || l.type === 'sleeve';
