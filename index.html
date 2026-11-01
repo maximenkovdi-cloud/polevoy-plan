@@ -654,6 +654,8 @@ function netColor(type, fallback) {
   return k ? `var(--c-${k})` : fallback;
 }
 const PICKET_STEP_M = 100;     // пикет — каждые 100 м
+const PK_STEPS = [1, 2, 5, 10, 20, 50, 100, 500, 1000];   // прореживание пикетов при отдалении
+const PK_TICK_MM = 4, PK_LABEL_MM = 14;                     // засечки не чаще 4 мм, подписи не чаще 14 мм на экране
 // Экранных пикселей на 1 мм знака — по настоящему размеру экрана (калибровка линейкой или оценка), как на бумажном плане.
 // Надписи остаются прежнего размера (TEXT_K), чтобы не загромождать план на маленьком экране
 const MM = (() => { let px; try { px = JSON.parse(localStorage.getItem('tk.pxmm')); } catch (e) { px = null; }
@@ -1493,7 +1495,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 50;
+const APP_BUILD = 51;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2138,17 +2140,23 @@ const DRAW = {
   route(g, path, spec, line, w, pts) {
     const total = path.getTotalLength(), dash = 4 * MM, space = 1.5 * MM;
     for (let s = 0; s < total;) { const e = Math.min(s + dash, total); segment(g, path, s, e, w); s = e + space; }
-    // Пикеты через каждые 100 м по местности: переводим метры в пиксели по отрезкам
-    const lls = line.latlngs.map(a => L.latLng(a));
+    // Пикеты через каждые 100 м по местности: переводим метры в пиксели по отрезкам.
+    // При отдалении — как на чертежах мелкого масштаба: засечки только на круглых пикетах (через 5, 10, 50…), подписи — реже, чтобы не слипались
+    const lls = line.latlngs.map(a => L.latLng(a)), pxPer = PICKET_STEP_M / metersPerPx();
+    const tickN = PK_STEPS.find(n => n * pxPer >= PK_TICK_MM * MM) || PK_STEPS[PK_STEPS.length - 1];
+    const lblN = PK_STEPS.find(n => n % tickN === 0 && n * pxPer >= PK_LABEL_MM * MM) || PK_STEPS[PK_STEPS.length - 1];
+    const hasPk = line.pk0 != null && line.pk0 !== '';
     let metersBefore = 0, pxBefore = 0, k = 0;
     for (let i = 1; i < lls.length; i++) {
       const m = lls[i - 1].distanceTo(lls[i]), px = pts[i - 1].distanceTo(pts[i]);
       while ((k * PICKET_STEP_M) <= metersBefore + m + 1e-6) {
         const sPx = pxBefore + (m ? (k * PICKET_STEP_M - metersBefore) / m : 0) * px, p = at(path, Math.min(sPx, total));
-        const a = (p.a + 90) * Math.PI / 180, h = 1.6 * MM;
+        const num = hasPk ? Number(line.pk0) + k * (line.pkDir || 1) : k;   // номер пикета: прореживаем по круглым номерам
+        if (num % tickN !== 0) { k++; continue; }
+        const big = num % lblN === 0, a = (p.a + 90) * Math.PI / 180, h = (big && tickN > 1 ? 2.2 : 1.6) * MM;
         el('line', { x1: p.x - Math.cos(a) * h, y1: p.y - Math.sin(a) * h, x2: p.x + Math.cos(a) * h, y2: p.y + Math.sin(a) * h, stroke: 'currentColor', 'stroke-width': w * 1.4 }, g);
-        if (line.pk0 != null && line.pk0 !== '') {
-          const pk = 'ПК ' + (Number(line.pk0) + k * (line.pkDir || 1)), at_ = Math.min(sPx, total);
+        if (hasPk && big) {
+          const pk = 'ПК ' + num, at_ = Math.min(sPx, total);
           placeText(g, path, at_, pk, { dy: 3.8 * MM, size: 2.8 * MM, italic: false }) || placeText(g, path, at_, pk, { dy: -3.8 * MM, size: 2.8 * MM, italic: false });
         }
         k++;
