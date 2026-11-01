@@ -254,7 +254,7 @@
 
 <div id="sheet"><div class="panel" id="sheetPanel"></div></div>
 <div id="toast"></div>
-<input type="file" id="fileIn" accept=".kml,application/vnd.google-earth.kml+xml,text/xml" style="display:none">
+<input type="file" id="fileIn" accept=".kml,.kmz,.zip,.json,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz,application/zip,application/json,text/xml,application/octet-stream" style="display:none">
 
 <script>
 'use strict';
@@ -612,28 +612,71 @@ function coordText(ll) {
 
 /* ───────────── Данные и хранение ───────────── */
 
-const STORE_KEY = 'tk.plan.v1';
-let data = { points: [], lines: [] };
-try { const raw = localStorage.getItem(STORE_KEY); if (raw) data = JSON.parse(raw); } catch (e) { /* хранилище недоступно — работаем без сохранения */ }
-// История для «Вернуть»: перед каждым сохранением запоминаем прежнее состояние (до 50 шагов, до закрытия приложения)
-const UNDO_MAX = 50, undoStack = [];
-let lastSaved = JSON.stringify(data);
+// План хранится в двух местах: в базе телефона (IndexedDB «tk-plan», без предела ~5 МБ) и, пока помещается, в localStorage —
+// для мгновенного запуска. При запуске берётся более свежая из двух записей.
+const STORE_KEY = 'tk.plan.v1', STORE_AT = 'tk.plan.at';
+let data = { points: [], lines: [] }, dataAt = 0;
+try { const raw = localStorage.getItem(STORE_KEY); if (raw) { data = JSON.parse(raw); dataAt = Number(localStorage.getItem(STORE_AT)) || 0; } } catch (e) { /* хранилище недоступно — возьмём из базы */ }
+const planDb = new Promise(resolve => {
+  try {
+    const req = indexedDB.open('tk-plan', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('plan', { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  } catch (e) { resolve(null); }
+});
+async function planTx(mode, fn) {
+  const db = await planDb;
+  if (!db) throw new Error('база плана недоступна');
+  return new Promise((ok, bad) => { const tx = db.transaction('plan', mode), r = fn(tx.objectStore('plan')); tx.oncomplete = () => ok(r && r.result); tx.onerror = tx.onabort = () => bad(tx.error || new Error('запись прервана')); });
+}
+// История для «Вернуть»: перед каждым сохранением запоминаем прежнее состояние (до 50 шагов и не больше ~40 млн знаков — иначе большой план переполнит память)
+const UNDO_MAX = 50, UNDO_CHARS = 40e6, undoStack = [];
+let lastSaved = JSON.stringify(data), undoChars = 0, lsFull = false, touched = false;
+// автокопия в «Загрузки» (только в приложении): не чаще раза в 3 минуты после изменений и сразу при сворачивании
+const AUTO_EVERY_MS = 3 * 60 * 1000, AUTO_KEEP = 20;
+let autoTimer = null, autoDirty = false;
+function scheduleAutoCopy() { autoDirty = true; if (!autoTimer) autoTimer = setTimeout(() => autoCopy(), AUTO_EVERY_MS); }
+function pushUndo(json) {
+  undoStack.push(json); undoChars += json.length;
+  while (undoStack.length > UNDO_MAX || (undoChars > UNDO_CHARS && undoStack.length > 1)) undoChars -= undoStack.shift().length;
+}
+// записать план: сначала в базу (главное), затем в localStorage, если влезает
+function persist(json) {
+  const at = Date.now(); touched = true;
+  planTx('readwrite', st => st.put({ id: 'current', at, json }))
+    .catch(e => { toast('Не удалось сохранить план в телефоне — делаю копию в «Загрузки». Освободите память'); if (lsFull) autoCopy(false); });
+  try { localStorage.setItem(STORE_KEY, json); localStorage.setItem(STORE_AT, String(at)); lsFull = false; }
+  catch (e) {
+    if (!lsFull) toast('План большой — дальше он хранится только в базе телефона, это нормально');
+    lsFull = true;
+    try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(STORE_AT); } catch (e2) { /* не критично */ }
+  }
+  scheduleAutoCopy();
+}
 function save() {
   const now = JSON.stringify(data);
-  if (now !== lastSaved) { undoStack.push(lastSaved); if (undoStack.length > UNDO_MAX) undoStack.shift(); lastSaved = now; }
-  try { localStorage.setItem(STORE_KEY, now); }
-  catch (e) { toast('Не удалось сохранить на телефоне — выгрузите KML через «Меню»'); }
+  if (now !== lastSaved) { pushUndo(lastSaved); lastSaved = now; }
+  persist(now);
   showUndo();
 }
 function showUndo() { const b = document.getElementById('fabUndo'); if (b) b.style.display = undoStack.length ? 'flex' : 'none'; }
 function undo() {
   if (!undoStack.length) return;
-  lastSaved = undoStack.pop();
+  lastSaved = undoStack.pop(); undoChars -= lastSaved.length;
   data = JSON.parse(lastSaved);
-  try { localStorage.setItem(STORE_KEY, lastSaved); } catch (e) { /* сохранится при следующем изменении */ }
+  persist(lastSaved);
   showUndo(); hideCard();
   toast(undoStack.length ? `Возвращено. Можно вернуть ещё ${undoStack.length}` : 'Возвращено');
 }
+// при запуске: если в базе план свежее (localStorage переполнился или очищен) — берём его; старый план переносим в базу
+planTx('readonly', st => st.get('current')).then(rec => {
+  if (touched) return;                                               // план уже меняли — не затираем свежие правки старой записью
+  if (rec && rec.json && rec.at > dataAt) {
+    data = JSON.parse(rec.json); lastSaved = rec.json;
+    if (typeof redrawAll === 'function') redrawAll();
+  } else if (data.points.length || data.lines.length) planTx('readwrite', st => st.put({ id: 'current', at: dataAt || Date.now(), json: lastSaved })).catch(() => {});
+}).catch(() => { /* базы нет — работаем на localStorage */ });
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 // мелкие настройки (тема, вид координат, «последние») — только для удобства, без них всё работает
 function pref(key, def) { try { const v = localStorage.getItem('tk.' + key); return v == null ? def : JSON.parse(v); } catch (e) { return def; } }
@@ -1114,7 +1157,7 @@ function runMeasure(o, onAccept) {
   loadGeoid().catch(() => toast('Модель геоида не загрузилась — отметки не посчитаются'));
   const fixes = [], t0 = Date.now(), tol = measTol(o);
   let lastTs = 0, timer = null, hdops = [];
-  const stop = () => { clearInterval(timer); measuring = null; };
+  const stop = () => { clearInterval(timer); measuring = null; holdGnss(false); };
   const live = () => {
     if (!$('measBox') || $('sheet').style.display === 'none') { stop(); return; }     // лист закрыли — измерение отменено
     const sec = Math.min(o.sec, Math.round((Date.now() - t0) / 1000));
@@ -1149,6 +1192,7 @@ function runMeasure(o, onAccept) {
     back.onclick = () => openMeasure(onAccept);
   };
   const resetButtons = () => { const go = $('measGo'); go.textContent = 'Начать'; go.disabled = false; go.onclick = () => runMeasure(o, onAccept); };
+  holdGnss(true);
   measuring = { onFix(p) {
     if (p.timestamp === lastTs) return;                                // тот же отсчёт повторно
     lastTs = p.timestamp;
@@ -1165,7 +1209,7 @@ function runMeasure(o, onAccept) {
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 31;
+const APP_BUILD = 32;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -1294,6 +1338,8 @@ function satSheetBody() {
       4. Это убирает пропуски и скачки, но сантиметров телефон не даст — для 1:500 нужен внешний приёмник.</div></details>
     Закрашенные кружки — в решении, пустые — только видны; ниже пунктира (15°) спутникам веры меньше. Сигнал выше 30 дБ·Гц — хороший, ниже 20 — слабый.</div>`;
 }
+// пока идёт «Измерить», свёрнутое приложение не выключает спутники (в остальное время — выключает ради батареи)
+function holdGnss(on) { if (GNSS && GNSS.hold) GNSS.hold({ on }).catch(() => {}); }
 function satMessage(msg) { $('satLine').style.display = 'flex'; $('satText').textContent = msg; }
 function startGnss() {
   if (!NATIVE || gnssOn) return;
@@ -2732,6 +2778,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'rasters', icon: '◐', text: 'Свои растры: прозрачность, удаление' },
   { id: 'offlineinfo', icon: '▤', text: 'Карты в телефоне: сколько сохранено, очистить' },
   { header: 'Файлы' },
+  { id: 'backup', icon: '⟲', text: 'Копии плана: автокопия, полная копия с фото, восстановление' },
   { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z)` },
   { id: 'txt', icon: '⇩', text: 'Каталог TXT для КРЕДО (с кодами линий), коды знаков' },
   { id: 'pnezd', icon: '⇩', text: 'Точки для Civil 3D (PNEZD через запятую)' },
@@ -2745,7 +2792,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + каталог + DXF + фото' },
   { id: 'kml', icon: '⇩', text: 'Выгрузить всё в KML (без фото)' },
   { id: 'csv', icon: '⇩', text: `Выгрузить точки в CSV (WGS-84 и ${planeName()})` },
-  { id: 'import', icon: '⇧', text: 'Загрузить KML' },
+  { id: 'import', icon: '⇧', text: 'Загрузить KML / KMZ с фото / копию плана' },
   { header: 'Прочее' },
   { id: 'fit', icon: '⤢', text: 'Показать все объекты' },
   { id: 'clear', icon: '✕', text: 'Удалить всё с карты' },
@@ -2756,6 +2803,7 @@ const MENU = {
   kml: () => download(`plan_${today()}.kml`, toKml(), 'application/vnd.google-earth.kml+xml'),
   csv: () => download(`points_${today()}.csv`, toCsv(), 'text/csv;charset=utf-8'),
   import: () => $('fileIn').click(),
+  backup: () => backupMenu(),
   grid: () => { if (map.hasLayer(gridLayer)) map.removeLayer(gridLayer); else gridLayer.addTo(map); },
   raster: () => rasterInput.click(),
   rasters: () => rasterMenu(),
@@ -2789,7 +2837,7 @@ const MENU = {
     const all = data.points.map(p => [p.lat, p.lng]).concat(...data.lines.map(l => l.latlngs));
     if (all.length) map.fitBounds(all, { padding: [60, 60], maxZoom: 18 }); else toast('На карте пока ничего нет');
   },
-  clear: () => { if (confirm('Удалить ВСЕ знаки и линии? Сначала лучше выгрузить KML.')) { data = { points: [], lines: [] }; save(); hideCard(); } },
+  clear: () => { if (confirm('Удалить ВСЕ знаки и линии? Их можно будет вернуть кнопкой «Вернуть» или из автокопии.')) { data = { points: [], lines: [] }; save(); hideCard(); } },
   about: () => alert('Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
   crs: () => openList('Система координат', [
     { header: 'Плоские координаты' },
@@ -3287,6 +3335,110 @@ async function exportReport() {
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
 
+/* ───────────── Копии плана: автокопия в «Загрузки», полная копия с фото, восстановление ───────────── */
+
+// настройки в копию (кроме ключа Яндекса и самого плана) — чтобы на новом телефоне вернулись коды, МСК, допуски
+const PREF_SKIP = /^tk\.(plan\.|ai$)/;
+function backupJson() {
+  const prefs = {};
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('tk.') && !PREF_SKIP.test(k)) prefs[k] = localStorage.getItem(k); } } catch (e) { /* без настроек */ }
+  return JSON.stringify({ app: 'Полевой план', kind: 'копия плана', ver: 1, at: new Date().toISOString(), plan: data, prefs });
+}
+const stamp = () => { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${today()}_${z(d.getHours())}-${z(d.getMinutes())}`; };
+async function autoCopy(silent = true) {
+  clearTimeout(autoTimer); autoTimer = null;
+  if (!FILES || !FILES.backup) { if (!silent) toast('Автокопия работает только в приложении на телефоне'); return; }
+  if (silent && !autoDirty) return;
+  autoDirty = false;
+  try {
+    const r = await FILES.backup({ name: `kopiya_${stamp()}.json`, data: await blobBase64(new Blob([backupJson()])), keep: AUTO_KEEP });
+    setPref('lastCopy', { at: Date.now(), path: r.path });
+    if (!silent) toast('Копия сохранена: ' + r.path);
+  } catch (e) { autoDirty = true; if (!silent) toast((e && e.message) || 'Копия не сохранилась'); }
+}
+// при сворачивании приложения — сразу копию, если были изменения
+document.addEventListener('visibilitychange', () => { if (document.hidden && autoDirty) autoCopy(); });
+// полная копия: план + настройки + все фото — для переезда на другой телефон
+async function fullBackup() {
+  toast('Собираю полную копию с фото…');
+  const meta = {};
+  for (const id of [...data.points, ...data.lines].flatMap(o => o.photos || [])) {
+    const rec = await photoGet(id).catch(() => null);
+    if (rec) meta[id] = { at: rec.at, lat: rec.lat, lng: rec.lng, heading: rec.heading };
+  }
+  const enc = new TextEncoder();
+  const files = [{ name: 'plan.json', data: enc.encode(backupJson()) }, { name: 'photos.json', data: enc.encode(JSON.stringify(meta)) }, ...await photoFiles('photos/')];
+  download(`polnaya_kopiya_${stamp()}.zip`, makeZip(files), 'application/zip');
+}
+// восстановление из копии: заменить план (старый можно вернуть кнопкой «Вернуть») или добавить новые объекты
+async function restoreBackup(b, photos) {
+  const plan = b && b.plan;
+  if (!plan || !Array.isArray(plan.points) || !Array.isArray(plan.lines)) throw new Error('это не копия «Полевого плана»');
+  const when = b.at ? new Date(b.at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '?';
+  const nPhotos = photos ? Object.keys(photos.files).length : 0;
+  const add = { points: plan.points.filter(p => p && p.id && isFinite(p.lat) && isFinite(p.lng)), lines: plan.lines.filter(l => l && l.id && Array.isArray(l.latlngs) && l.latlngs.length > 1), bad: 0 };
+  add.bad = plan.points.length + plan.lines.length - add.points.length - add.lines.length;
+  showSheet(`<div class="sh-head"><b>Копия плана от ${esc(when)}</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin:4px 0 12px">В копии: знаков ${add.points.length}, линий ${add.lines.length}${nPhotos ? `, фото ${nPhotos}` : photos ? '' : ' (без фото — фото остаются те, что уже в телефоне)'}.<br>
+    Сейчас на плане: знаков ${data.points.length}, линий ${data.lines.length}.</div>
+    <div style="display:grid;gap:6px"><button class="btn primary" id="rsReplace">Заменить план копией</button>
+    <button class="btn" id="rsMerge">Добавить из копии только новые объекты</button><button class="btn" data-close>Отмена</button></div>
+    <div class="hint" style="margin-top:8px">После замены прежний план можно вернуть кнопкой «Вернуть» (пока приложение не закрыто).</div>`);
+  const prefsBack = () => { for (const [k, v] of Object.entries(b.prefs || {})) if (k.startsWith('tk.') && !PREF_SKIP.test(k) && pref(k.slice(3), undefined) === undefined) try { localStorage.setItem(k, v); } catch (e) { /* не критично */ } };
+  $('rsReplace').onclick = async () => {
+    closeSheet();
+    const n = await putPhotos(add, photos);
+    data = { ...plan, points: add.points, lines: add.lines }; prefsBack();
+    save(); hideCard(); MENU.fit();
+    toast(`План восстановлен: знаков ${add.points.length}, линий ${add.lines.length}` + (n ? `, фото ${n}` : ''));
+  };
+  $('rsMerge').onclick = async () => {
+    closeSheet();
+    const n = await putPhotos(add, photos), before = data.points.length + data.lines.length;
+    mergeObjects(add, 'new'); prefsBack(); save(); redrawAll(); MENU.fit();
+    toast(`Добавлено объектов: ${data.points.length + data.lines.length - before}` + (n ? `, фото ${n}` : ''));
+  };
+}
+// место в телефоне: просим не очищать данные и предупреждаем, когда места мало
+const LOW_SPACE_MB = 200;
+async function storageInfo() {
+  if (!navigator.storage || !navigator.storage.estimate) return null;
+  const e = await navigator.storage.estimate().catch(() => null), persisted = navigator.storage.persisted ? await navigator.storage.persisted().catch(() => false) : false;
+  return e && { used: e.usage / 1048576, free: (e.quota - e.usage) / 1048576, persisted };
+}
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+setTimeout(() => storageInfo().then(s => { if (s && s.free < LOW_SPACE_MB) toast(`В телефоне мало места: около ${Math.round(s.free)} МБ. Сохраните копию плана и освободите память`); }), 5000);
+const mb = v => v < 10 ? v.toFixed(1).replace('.', ',') : String(Math.round(v));
+async function backupMenu() {
+  const s = await storageInfo(), last = pref('lastCopy', null);
+  const lastText = last ? new Date(last.at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : 'ещё не было';
+  showSheet(`<div class="sh-head"><b>Копии плана</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin:4px 0 10px;line-height:1.5">${FILES && FILES.backup ? `Автокопия пишется в «Загрузки/Полевой план/Автокопии» через 3 минуты после изменений и при сворачивании приложения. Хранятся последние ${AUTO_KEEP}. Последняя: <b>${esc(lastText)}</b>.` : 'Автокопия работает в приложении на телефоне. Здесь — только полная копия файлом.'}
+    ${s ? `<br>Занято приложением: ${mb(s.used)} МБ, свободно около ${mb(s.free)} МБ${s.free < LOW_SPACE_MB ? ' — <b>мало!</b>' : ''}.` : ''}</div>
+    <div style="display:grid;gap:6px">${FILES && FILES.backup ? '<button class="btn primary" id="bkNow">Сохранить копию сейчас</button>' : ''}
+    <button class="btn" id="bkFull">Полная копия с фото (ZIP) — для переезда на другой телефон</button>
+    <button class="btn" id="bkFile">Восстановить из файла (копия, KMZ, KML)…</button></div>
+    <div id="bkList" style="margin-top:10px"></div>`);
+  if ($('bkNow')) $('bkNow').onclick = async () => { await autoCopy(false); backupMenu(); };
+  $('bkFull').onclick = () => { closeSheet(); fullBackup().catch(e => toast('Копия не собрана: ' + e.message)); };
+  $('bkFile').onclick = () => { closeSheet(); $('fileIn').click(); };
+  if (!FILES || !FILES.listBackups) return;
+  const list = await FILES.listBackups().then(r => r.files || []).catch(() => []);
+  const box = $('bkList');
+  if (!box) return;
+  box.innerHTML = list.length ? `<div class="hint" style="margin-bottom:4px">Автокопии (нажмите, чтобы восстановить):</div>` +
+    list.map((f, i) => `<button class="btn" style="width:100%;margin-bottom:4px;text-align:left" data-i="${i}">${esc(new Date(f.date).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }))} · ${mb(f.size / 1024)} КБ</button>`).join('')
+    : '<div class="hint">Автокопий этого приложения пока нет. После переустановки старые копии видны только через «Восстановить из файла».</div>';
+  box.querySelectorAll('[data-i]').forEach(b => b.onclick = async () => {
+    try {
+      const r = await FILES.readBackup({ id: list[b.dataset.i].id });
+      const bytes = Uint8Array.from(atob(r.data), c => c.charCodeAt(0));
+      await restoreBackup(JSON.parse(new TextDecoder().decode(bytes)), null);
+    } catch (e) { toast('Копия не прочиталась: ' + ((e && e.message) || '')); }
+  });
+}
+
+
 /* ───────────── KML и CSV ───────────── */
 
 const xml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
@@ -3296,13 +3448,13 @@ function toKml(photoDir) {
   const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
   const pts = data.points.map(p => {
     const s = POINTS[p.type] || POINTS.mark;
-    return `<Placemark><name>${xml(p.name || s.name)}</name>${desc(p)}${ext({ tk_photos: p.photos ? JSON.stringify(p.photos) : '', tk_no: p.no, tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '', tk_ctrl: p.ctrl ? JSON.stringify(p.ctrl) : '' })}<Point>${hasH(p.h) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${p.lng},${p.lat},${hasH(p.h) ? Number(p.h) : 0}</coordinates></Point></Placemark>`;
+    return `<Placemark><name>${xml(p.name || s.name)}</name>${desc(p)}${ext({ tk_id: p.id, tk_photos: p.photos ? JSON.stringify(p.photos) : '', tk_no: p.no, tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '', tk_ctrl: p.ctrl ? JSON.stringify(p.ctrl) : '' })}<Point>${hasH(p.h) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${p.lng},${p.lat},${hasH(p.h) ? Number(p.h) : 0}</coordinates></Point></Placemark>`;
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
     const hex = l.color || (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || (s.color === REL ? REL_HEX : s.color === VEG ? VEG_HEX : s.color) || '#111111';
     const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
-    return `<Placemark><name>${xml(l.caption || s.name)}</name>${desc(l)}${ext({ tk_photos: l.photos ? JSON.stringify(l.photos) : '', tk_no: l.no, tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '', tk_color: l.color })}` +
+    return `<Placemark><name>${xml(l.caption || s.name)}</name>${desc(l)}${ext({ tk_id: l.id, tk_photos: l.photos ? JSON.stringify(l.photos) : '', tk_no: l.no, tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '', tk_color: l.color })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
       `<LineString><tessellate>1</tessellate>${l.hs && l.hs.every(z => z && hasH(z.h)) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map((a, i) => { const z = l.hs && l.hs[s.closed ? i % l.latlngs.length : i]; return a[1] + ',' + a[0] + ',' + (z && hasH(z.h) ? Number(z.h) : 0); }).join(' ')}</coordinates></LineString></Placemark>`;
   });
@@ -3518,41 +3670,134 @@ function readExtras(ext) {
   return out;
 }
 function readJson(str, key, ok) { try { const v = str ? JSON.parse(str) : null; return ok(v) ? { [key]: v } : {}; } catch (e) { return {}; } }
+const objId = s => typeof s === 'string' && /^[\w-]{4,40}$/.test(s) ? s : uid();
+// KML → { points, lines, bad }; id объектов сохраняются (tk_id) — по ним повторная загрузка не плодит дубли
+function parseKml(text) {
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('это не KML');
+  const add = { points: [], lines: [], bad: 0 };
+  for (const pm of doc.getElementsByTagName('Placemark')) try {
+    const ext = {};
+    for (const d of pm.getElementsByTagName('Data')) ext[d.getAttribute('name')] = (d.getElementsByTagName('value')[0] || {}).textContent;
+    const name = (pm.getElementsByTagName('name')[0] || {}).textContent || '';
+    const pt = pm.getElementsByTagName('Point')[0], ls = pm.getElementsByTagName('LineString')[0];
+    const coords = el => (el.getElementsByTagName('coordinates')[0] || {}).textContent.trim().split(/\s+/).map(c => c.split(',').map(Number)).filter(c => c.length >= 2 && !isNaN(c[0]));
+    if (pt) {
+      const c0 = coords(pt)[0];
+      if (!c0) throw new Error('нет координат');
+      const [lng, lat] = c0;
+      const type = POINTS[ext.tk_type] ? ext.tk_type : 'mark';
+      add.points.push({ id: objId(ext.tk_id), type, lat, lng, name: ext.tk_type ? (ext.tk_name || '') : name,
+        h: ext.tk_h != null && ext.tk_h !== '' ? Number(ext.tk_h) : null, note: ext.tk_note || '', ...readExtras(ext) });
+    } else if (ls) {
+      const type = LINES[ext.tk_type] ? ext.tk_type : 'plain';
+      let latlngs = coords(ls).map(c => [c[1], c[0]]), attr;
+      if (latlngs.length < 2) throw new Error('мало точек');
+      if (LINES[type].closed && latlngs.length > 3 && latlngs[0][0] === latlngs[latlngs.length - 1][0] && latlngs[0][1] === latlngs[latlngs.length - 1][1]) latlngs = latlngs.slice(0, -1);   // контур в KML замкнут повтором первой точки
+      try { attr = ext.tk_attr ? JSON.parse(ext.tk_attr) : undefined; } catch (e) { attr = undefined; }   // повреждённые свойства — просто без них
+      add.lines.push({ id: objId(ext.tk_id), type, latlngs, caption: ext.tk_type ? (ext.tk_caption || '') : name,
+        count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1,
+        state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray), ...readJson(ext.tk_photos, 'photos', Array.isArray), ...(Number(ext.tk_no) > 0 ? { no: Number(ext.tk_no) } : {}), ...(/^#[0-9a-f]{6}$/i.test(ext.tk_color || '') ? { color: ext.tk_color } : {}) });
+    }
+  } catch (e) { add.bad++; }                                          // повреждённый объект — пропускаем, остальные грузим
+  return add;
+}
+// чтение ZIP/KMZ: { имя → Uint8Array }; сжатые записи распаковывает сам браузер (deflate-raw)
+async function readZip(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), dec = new TextDecoder();
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('архив повреждён');
+  const out = {}, count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  for (let k = 0; k < count; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('архив повреждён');
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nlen = dv.getUint16(p + 28, true),
+      xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true), lho = dv.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nlen)).replace(/\\/g, '/');
+    p += 46 + nlen + xlen + clen;
+    if (name.endsWith('/')) continue;
+    const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true), raw = u8.subarray(start, start + csize);
+    if (method === 0) out[name] = raw;
+    else if (method === 8) out[name] = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  }
+  return out;
+}
+// одинаковые объекты: по id, а у загруженных без id (чужой KML) — по знаку и координатам
+const objSig = o => o.latlngs ? o.type + '|' + o.latlngs.map(a => Number(a[0]).toFixed(7) + ',' + Number(a[1]).toFixed(7)).join(';') : o.type + '|' + Number(o.lat).toFixed(7) + ',' + Number(o.lng).toFixed(7);
+// номер совпадающего объекта на плане или -1 (указатели строятся один раз — быстро и на тысячах объектов)
+function sameFinder(key) {
+  const ids = new Map(), sigs = new Map();
+  data[key].forEach((x, i) => { ids.set(x.id, i); sigs.set(objSig(x), i); });
+  return o => ids.has(o.id) ? ids.get(o.id) : sigs.has(objSig(o)) ? sigs.get(objSig(o)) : -1;
+}
+const countDups = add => ['points', 'lines'].reduce((n, key) => { const find = sameFinder(key); return n + add[key].filter(o => find(o) >= 0).length; }, 0);
+// mode: 'new' — только новые, 'replace' — совпадающие заменить, 'all' — всё, совпадающие копиями
+function mergeObjects(add, mode) {
+  for (const key of ['points', 'lines']) {
+    const find = sameFinder(key), next = data[key].slice();
+    for (const o of add[key]) {
+      const i = find(o);
+      if (i < 0) next.push(o);
+      else if (mode === 'all') next.push({ ...o, id: uid() });
+      else if (mode === 'replace') next[i] = { ...o, id: data[key][i].id };
+    }
+    data[key] = next;
+  }
+}
+// спросить, что делать с совпадающими объектами, и загрузить; photos — { id → Uint8Array } из KMZ/полной копии
+async function importObjects(add, photos, what) {
+  const nDup = countDups(add), total = add.points.length + add.lines.length;
+  if (!total) { toast('В файле нет знаков и линий'); return; }
+  const done = async mode => {
+    const nPh = await putPhotos(add, photos);
+    mergeObjects(add, mode); save(); redrawAll(); MENU.fit();
+    toast(`${what}: знаков ${add.points.length}, линий ${add.lines.length}` + (nPh ? `, фото ${nPh}` : '') + (add.bad ? `, пропущено повреждённых: ${add.bad}` : '') + (nDup && mode === 'new' ? `, уже были на плане: ${nDup}` : ''));
+  };
+  if (!nDup) { await done('new'); return; }
+  showSheet(`<div class="sh-head"><b>${esc(what)}</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin:4px 0 12px">В файле объектов: ${total}. Из них уже есть на плане: <b>${nDup}</b> — видимо, этот файл уже загружали.</div>
+    <div style="display:grid;gap:6px"><button class="btn primary" data-mode="new">Загрузить только новые (${total - nDup})</button>
+    <button class="btn" data-mode="replace">Совпадающие заменить из файла</button>
+    <button class="btn" data-mode="all">Загрузить всё — совпадающие копиями</button><button class="btn" data-close>Отмена</button></div>`);
+  $('sheet').querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { closeSheet(); done(b.dataset.mode).catch(e => alert('Не удалось загрузить: ' + e.message)); });
+}
+// фото из архива — в базу фото телефона (только те, на которые ссылаются объекты)
+async function putPhotos(add, photos) {
+  if (!photos) return 0;
+  let n = 0;
+  for (const o of [...add.points, ...add.lines]) for (const id of o.photos || []) {
+    const bytes = photos.files[id];
+    if (!bytes) continue;
+    const meta = (photos.meta && photos.meta[id]) || {};
+    try { await photoPut({ at: new Date().toISOString(), lat: null, lng: null, heading: null, ...meta, id, obj: o.id, blob: new Blob([bytes], { type: 'image/jpeg' }) }); n++; } catch (e) { /* без этого фото */ }
+  }
+  return n;
+}
+// фото в архиве: …/photo_<id>.jpg → { files: { id → байты }, meta }
+function zipPhotos(files) {
+  const out = {};
+  for (const [name, bytes] of Object.entries(files)) { const m = /(?:^|\/)photo_([\w-]+)\.jpe?g$/i.exec(name); if (m) out[m[1]] = bytes; }
+  let meta = null;
+  try { meta = files['photos.json'] ? JSON.parse(new TextDecoder().decode(files['photos.json'])) : null; } catch (e) { /* без подробностей о снимках */ }
+  return { files: out, meta };
+}
 $('fileIn').onchange = async e => {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
   try {
-    const doc = new DOMParser().parseFromString(await f.text(), 'application/xml');
-    if (doc.querySelector('parsererror')) throw new Error('это не KML');
-    let np = 0, nl = 0, bad = 0;
-    const add = { points: [], lines: [] };
-    for (const pm of doc.getElementsByTagName('Placemark')) try {
-      const ext = {};
-      for (const d of pm.getElementsByTagName('Data')) ext[d.getAttribute('name')] = (d.getElementsByTagName('value')[0] || {}).textContent;
-      const name = (pm.getElementsByTagName('name')[0] || {}).textContent || '';
-      const pt = pm.getElementsByTagName('Point')[0], ls = pm.getElementsByTagName('LineString')[0];
-      const coords = el => (el.getElementsByTagName('coordinates')[0] || {}).textContent.trim().split(/\s+/).map(c => c.split(',').map(Number)).filter(c => c.length >= 2 && !isNaN(c[0]));
-      if (pt) {
-        const c0 = coords(pt)[0];
-        if (!c0) throw new Error('нет координат');
-        const [lng, lat] = c0;
-        const type = POINTS[ext.tk_type] ? ext.tk_type : 'mark';
-        add.points.push({ id: uid(), type, lat, lng, name: ext.tk_type ? (ext.tk_name || '') : name,
-          h: ext.tk_h != null && ext.tk_h !== '' ? Number(ext.tk_h) : null, note: ext.tk_note || '', ...readExtras(ext) }); np++;
-      } else if (ls) {
-        const type = LINES[ext.tk_type] ? ext.tk_type : 'plain';
-        let latlngs = coords(ls).map(c => [c[1], c[0]]), attr;
-        if (latlngs.length < 2) throw new Error('мало точек');
-        if (LINES[type].closed && latlngs.length > 3 && latlngs[0][0] === latlngs[latlngs.length - 1][0] && latlngs[0][1] === latlngs[latlngs.length - 1][1]) latlngs = latlngs.slice(0, -1);   // контур в KML замкнут повтором первой точки
-        try { attr = ext.tk_attr ? JSON.parse(ext.tk_attr) : undefined; } catch (e) { attr = undefined; }   // повреждённые свойства — просто без них
-        add.lines.push({ id: uid(), type, latlngs, caption: ext.tk_type ? (ext.tk_caption || '') : name,
-          count: Number(ext.tk_count) || 1, pk0: ext.tk_pk0 != null && ext.tk_pk0 !== '' ? Number(ext.tk_pk0) : null, pkDir: Number(ext.tk_pkdir) || 1,
-          state: STATE_NAME[ext.tk_state] ? ext.tk_state : '', ...(attr && typeof attr === 'object' ? { attr } : {}), ...readJson(ext.tk_hs, 'hs', Array.isArray), ...readJson(ext.tk_photos, 'photos', Array.isArray), ...(Number(ext.tk_no) > 0 ? { no: Number(ext.tk_no) } : {}), ...(/^#[0-9a-f]{6}$/i.test(ext.tk_color || '') ? { color: ext.tk_color } : {}) }); nl++;
-      }
-    } catch (e) { bad++; }                                            // повреждённый объект — пропускаем, остальные грузим
-    data.points.push(...add.points); data.lines.push(...add.lines);
-    save(); redrawAll(); MENU.fit();
-    toast(`Загружено: знаков ${np}, линий ${nl}` + (bad ? `, пропущено повреждённых: ${bad}` : ''));
+    const u8 = new Uint8Array(await f.arrayBuffer());
+    if (u8[0] === 0x50 && u8[1] === 0x4b) {                           // ZIP: KMZ или полная копия плана
+      const files = await readZip(u8), dec = new TextDecoder();
+      if (files['plan.json']) { await restoreBackup(JSON.parse(dec.decode(files['plan.json'])), zipPhotos(files)); return; }
+      const kml = Object.keys(files).find(n => /\.kml$/i.test(n));
+      if (!kml) throw new Error('в архиве нет KML');
+      await importObjects(parseKml(dec.decode(files[kml])), zipPhotos(files), 'Загружено из KMZ');
+      return;
+    }
+    const text = new TextDecoder().decode(u8).replace(/^﻿/, '');
+    if (text.trimStart().startsWith('{')) { await restoreBackup(JSON.parse(text), null); return; }
+    await importObjects(parseKml(text), null, 'Загружено из KML');
   } catch (err) { alert('Не удалось загрузить файл: ' + err.message); }
 };
 
