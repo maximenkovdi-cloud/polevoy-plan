@@ -290,6 +290,9 @@ const COVER_SVG = t => `<text x="12" y="17.5" font-size="${t.length > 1 ? 12 : 1
 const COVERS = [['А', 'А — асфальт, асфальтобетон'], ['Ц', 'Ц — цементобетон'], ['Б', 'Б — булыжник'], ['Бр', 'Бр — брусчатка'], ['Бм', 'Бм — битумоминеральная смесь'],
   ['Г', 'Г — гравий'], ['Щ', 'Щ — щебень'], ['К', 'К — камень колотый'], ['Шл', 'Шл — шлак'], ['Д', 'Д — дерево']];
 const ARM_S = 'stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"';
+// Дефекты сетей — свои знаки (в ГКИНП и «Правилах» их нет), красным, как правки на бумажном плане; устранённый — серым
+const DEF_RED = '#c62828', DEF_DONE = '#9e9e9e';
+const DEF_S = 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"';
 const ARM_BOW = (lf, rf) => `<path d="M4 7 L12 12 L4 17 Z" fill="${lf}" ${ARM_S}/><path d="M20 7 L12 12 L20 17 Z" fill="${rf}" ${ARM_S}/>`;
 const POINT_GROUPS = [
   { id: 'geo', title: 'Геодезия', items: [
@@ -362,6 +365,15 @@ const POINT_GROUPS = [
     { id: 'a_ventil', name: 'Вентиль (клапан) запорный', pipe: true, arm: 'В', shut: true, svg: ARM_BOW('#fff', '#fff') },
     { id: 'a_predohr', name: 'Клапан предохранительный', pipe: true, arm: 'КП', svg: '<path d="M4 11 L12 15.5 L4 20 Z M20 11 L12 15.5 L20 20 Z" fill="#fff" ' + ARM_S + '/><path d="M12 15.5V12 L10 11 L14 9.5 L10 8 L14 6.5 L12 5.5V3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>' },
     { id: 'a_redukc', name: 'Клапан редукционный (регулятор давления)', pipe: true, arm: 'КР', flow: true, svg: '<rect x="4" y="7" width="16" height="10" fill="#fff" ' + ARM_S + '/><path d="M5.5 8.5 L18.5 12 L5.5 15.5" fill="none" ' + ARM_S + '/>' }
+  ]},
+  { id: 'defect', title: 'Дефекты', items: [
+    { id: 'd_leak', name: 'Утечка', defect: 'Утечка', color: DEF_RED, svg: '<path d="M12 4 C12 4 6.5 11 6.5 14.5 A5.5 5.5 0 0 0 17.5 14.5 C17.5 11 12 4 12 4 Z" fill="currentColor" stroke="currentColor" stroke-width="1.2"/>' },
+    { id: 'd_sink', name: 'Провал / просадка грунта', defect: 'Провал', color: DEF_RED, svg: '<circle cx="12" cy="12" r="7" ' + DEF_S + ' stroke-dasharray="2.4 1.8"/><path d="M12 5V8.5M12 15.5V19M5 12H8.5M15.5 12H19" ' + DEF_S + '/>' },
+    { id: 'd_hatch', name: 'Люк повреждён / нет люка', defect: 'Люк', color: DEF_RED, svg: '<circle cx="12" cy="12" r="6" ' + DEF_S + '/><path d="M5 19L19 5" ' + DEF_S + '/>' },
+    { id: 'd_bare', name: 'Оголение / размыв трубы', defect: 'Оголение', color: DEF_RED, svg: '<path d="M4 9 Q8 6 12 9 T20 9" ' + DEF_S + '/><path d="M4 15 Q8 18 12 15 T20 15" ' + DEF_S + '/>' },
+    { id: 'd_block', name: 'Засор / подпор', defect: 'Засор', color: DEF_RED, svg: '<path d="M5 12H19" ' + DEF_S + '/><path d="M9 7V17M15 7V17" ' + DEF_S + '/>' },
+    { id: 'd_corr', name: 'Коррозия, повреждение изоляции', defect: 'Изоляция', color: DEF_RED, svg: '<path d="M5 12 L8 8 L11 15 L14 9 L17 14 L19 12" ' + DEF_S + '/>' },
+    { id: 'd_other', name: 'Прочий дефект', defect: 'Дефект', color: DEF_RED, svg: '<path d="M12 4.5 L20 18.5 H4 Z" ' + DEF_S + '/><path d="M12 9.5V13.5" ' + DEF_S + '/><circle cx="12" cy="16" r="0.9" fill="currentColor"/>' }
   ]},
   // Улицы, крыльца и входы — ГКИНП, табл. 8 и 39 (зн. 33–40, 189; п. 77–82, 262, 268). wall — знак разворачивается стеной (справа) к ближнему зданию
   { id: 'street', title: 'Улицы, крыльца', items: [
@@ -1323,7 +1335,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 36;
+const APP_BUILD = 37;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -1480,12 +1492,23 @@ $('fabMe').onclick = () => {
 const pointLayer = L.layerGroup().addTo(map);
 let selected = null;                          // { kind: 'point'|'line', obj }
 function symbolSvg(svg, px, color) { return `<svg viewBox="0 0 24 24" width="${px}" height="${px}" style="color:${color || 'var(--sym)'};display:block">${svg}</svg>`; }
+// «2026-11-01» → «01.11»
+const dayMonth = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return m ? m[3] + '.' + m[2] : d || ''; };
+// дата из формы: «01.11.2026», «1.11.26» или «2026-11-01» → «2026-11-01»; пусто — пусто; иначе null
+function parseDay(t) {
+  t = String(t || '').trim(); if (!t) return '';
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t), y, mo, d;
+  if (m) [, y, mo, d] = m; else { m = /^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2}|\d{4})$/.exec(t); if (!m) return null; [, d, mo, y] = m; if (y.length === 2) y = '20' + y; }
+  const dt = new Date(Date.UTC(+y, +mo - 1, +d));
+  return dt.getUTCMonth() === +mo - 1 && dt.getUTCDate() === +d ? dt.toISOString().slice(0, 10) : null;
+}
 function pointLabel(p) {
   const s = POINTS[p.type] || POINTS.mark;
   if (s.frac) { const [t, b] = fracParts(p); return t || b ? `${t}/${b}` : ''; }
   if (s.spot) return p.h == null || p.h === '' ? '' : planNum(p.h, 2);
   if (p.type === GENERIC.point && p.h != null && p.h !== '') return [p.name, planNum(p.h, 2)].filter(Boolean).join(' ');
   if (/^w_/.test(p.type) && hasH(p.h) && wellBottom(p) != null) return [p.name, `${planNum(p.h, 2)}/${planNum(wellBottom(p), 2)}`].filter(Boolean).join(' ');            // отметка высоты — сама отметка, два знака (1:500)
+  if (s.defect) { const a = p.attr || {}; return a.fixed ? [p.name || s.defect, 'устр.' + (a.fixedAt ? ' ' + dayMonth(a.fixedAt) : '')].join(' ') : [p.name || s.defect, dayMonth(a.found)].filter(Boolean).join(' ') + (a.urgent ? ', авар.' : ''); }
   if (s.arm) { const a = p.attr || {}; return [s.arm + (p.name ? '-' + p.name : ''), hasH(a.d) ? 'Ø' + a.d : '', a.state || ''].filter(Boolean).join(' '); }
   return [s.prefix, p.name, s.suffix].filter(Boolean).join(' ');
 }
@@ -1544,7 +1567,7 @@ function drawPoints() {
     if (generalized && MINOR_POINTS.has(p.type) && !(selected && selected.obj === p)) continue;
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [TAP_PX, TAP_PX], iconAnchor: [TAP_PX / 2, TAP_PX / 2],
-      html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}">${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
+      html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}"${s.defect ? ` style="color:${objColor(p, 'point')}"` : ''}>${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
     const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(snapOn ? L.latLng(p.lat, p.lng) : e.latlng, null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
     pointMarkers.push({ p, marker, lbl });
   }
@@ -2301,6 +2324,7 @@ function editPoint(p) {
   });
   if (/^w_/.test(p.type)) return editWell(p, s);
   if (s.arm) return editArm(p, s);
+  if (s.defect) return editDefect(p, s);
   openForm(s.name, [
     ...(s.spot ? [] : [{ key: 'name', label: s.nameLabel || 'Подпись у знака (номер)', value: p.name, placeholder: s.nameLabel ? 'например 1.6' : 'например 12' }]),
     { key: 'h', label: 'Отметка, м', type: 'number', value: p.h, placeholder: 'например 245.51' },
@@ -2339,6 +2363,23 @@ function editWell(p, s) {
   });
 }
 // Арматура: номер, диаметр, положение (у запорной), в каком колодце, направление потока (у обратного и редукционного)
+function editDefect(p, s) {
+  const a = p.attr || {}, fields = [
+    { key: 'name', label: 'Подпись на плане', value: p.name, placeholder: s.defect + (s.id === 'd_sink' ? ' 2×1 м' : ''), half: true },
+    { key: 'found', label: 'Обнаружен', value: a.found != null ? a.found : today(), placeholder: '01.11.2026', half: true },
+    { key: 'urgent', label: 'Срочность', type: 'select', value: a.urgent ? 1 : 0, options: [[0, 'в плановом порядке'], [1, 'аварийно']], half: true },
+    { key: 'fixed', label: 'Состояние', type: 'select', value: a.fixed ? 1 : 0, options: [[0, 'не устранён'], [1, 'устранён — знак серый']], half: true },
+    { key: 'fixedAt', label: 'Дата устранения', value: a.fixedAt, placeholder: 'сама — сегодня', half: true },
+    { key: 'note', label: 'Описание', value: p.note, placeholder: 'что видно, размеры, кто сообщил',
+      hint: s.id === 'd_hatch' ? 'Ставьте рядом с колодцем, а не поверх — иначе знак закроет колодец.' : 'Сеть и ближний колодец ведомость найдёт сама. Фото — кнопкой «📷 Фото» в карточке.' }];
+  openForm(s.name, fields, v => {
+    const found = parseDay(v.found), fixedAt = parseDay(v.fixedAt), fixed = v.fixed === '1';
+    if (found == null || fixedAt == null) { toast('Дата — например 01.11.2026'); return false; }
+    p.name = v.name || ''; p.note = v.note;
+    p.attr = { ...a, found, urgent: v.urgent === '1', fixed, fixedAt: fixed ? fixedAt || today() : '' };
+    save(); drawPoints(); frame(); showCard('point', p);
+  });
+}
 function editArm(p, s) {
   const a = p.attr || {}, fields = [
     { key: 'name', label: 'Номер', value: p.name, placeholder: '12', half: true },
@@ -2739,7 +2780,7 @@ function addAt(ll, meas, src) {
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
       (hz ? `, H ${mText(hz.h, 2)}` : src === 'tap' || src === 'center' ? ' без отметки' : ', приёмник не дал высоту'));
     const ps = POINTS[pt.type] || {};
-    if (ps.frac || ps.svgFor || ps.arm || /^w_/.test(pt.type)) editPoint(pt);   // у надписи покрытия, отметок и колодца (лотки) — сразу спросить значения
+    if (ps.frac || ps.svgFor || ps.arm || ps.defect || /^w_/.test(pt.type)) editPoint(pt);   // у надписи покрытия, отметок и колодца (лотки) — сразу спросить значения
     return pt;
   } else {
     mode.latlngs.push([ll.lat, ll.lng]);
@@ -2911,7 +2952,8 @@ const COLORS = [['', 'по ГКИНП'], [VIS_COLOR, 'малиновый — в�
 function objColor(obj, kind) {
   if (obj.color) return obj.color;
   if (kind === 'line') { const s = LINES[obj.type] || LINES.plain; return netColor(obj.type, s.color || 'var(--sym)'); }
-  const s = POINTS[obj.type] || POINTS.mark; return netColor(obj.type, s.color);
+  const s = POINTS[obj.type] || POINTS.mark; if (s.defect) return (obj.attr || {}).fixed ? DEF_DONE : s.color;
+  return netColor(obj.type, s.color);
 }
 $('btnPoint').onclick = () => { setMode({ kind: 'point', type: GENERIC.point }); toast('Ставьте точки касанием или кнопками ниже. Знак — «Знак…» или потом, нажав на точку'); };
 $('btnLine').onclick = () => { setMode({ kind: 'line', type: GENERIC.line, latlngs: [] }); toast('Ставьте точки линии. Условный знак выберете после «Готово»'); };
@@ -2925,7 +2967,7 @@ function changeType(kind, obj, id) {
     const r = s.wall ? wallAngle(L.latLng(obj.lat, obj.lng)) : pa ? pa.rot + (s.flow && obj.attr && obj.attr.rev ? 180 : 0) : null;
     if (r != null) obj.rot = r; else delete obj.rot;
     save(); drawPoints(); frame(); showCard('point', obj);
-    if (s.svgFor || s.frac || s.wall || s.arm || /^w_/.test(id)) editPoint(obj);
+    if (s.svgFor || s.frac || s.wall || s.arm || s.defect || /^w_/.test(id)) editPoint(obj);
     return;
   }
   const s = LINES[id];
@@ -3000,6 +3042,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'wells', icon: '⇩', text: 'Ведомость колодцев (CSV для Excel)' },
   { id: 'nets', icon: '⇩', text: 'Ведомость сетей (CSV для Excel)' },
   { id: 'arms', icon: '⇩', text: 'Ведомость арматуры: задвижки, вантузы, клапаны (CSV)' },
+  { id: 'defects', icon: '⇩', text: 'Ведомость дефектов: утечки, провалы, люки (CSV)' },
   { id: 'cross', icon: '⇩', text: 'Ведомость пересечений сетей (CSV)' },
   { id: 'tracer', icon: '⇩', text: 'Протокол трассоискателя: глубины по прибору (CSV)' },
   { id: 'ctrlsheet', icon: '⇩', text: 'Ведомость контрольных измерений (CSV)' },
@@ -3043,6 +3086,7 @@ const MENU = {
   shp: () => guardExport(() => { const files = toShpFiles(); if (!files.length) { toast('На плане пока нет объектов'); return; } download(`plan_shp_${today()}.zip`, makeZip(files), 'application/zip'); }),
   tracer: () => { if (!data.lines.some(l => isNetLine(l) && (l.tdep || []).some(hasH))) { toast('Глубин по прибору нет — карточка сети → «Вершины»'); return; } download(`trassoiskatel_${today()}.csv`, toTracerSheet(), 'text/csv;charset=utf-8'); },
   wells: () => download(`kolodcy_${today()}.csv`, toWellsSheet(), 'text/csv;charset=utf-8'),
+  defects: () => { if (!data.points.some(p => (POINTS[p.type] || {}).defect)) { toast('Дефектов нет — Знак… → «Дефекты»'); return; } download(`defekty_${today()}.csv`, toDefectSheet(), 'text/csv;charset=utf-8'); },
   arms: () => { if (!data.points.some(p => (POINTS[p.type] || {}).arm)) { toast('Арматуры нет — Знак… → «Арматура»'); return; } download(`armatura_${today()}.csv`, toArmSheet(), 'text/csv;charset=utf-8'); },
   nets: () => download(`seti_${today()}.csv`, toNetsSheet(), 'text/csv;charset=utf-8'),
   dxf: () => guardExport(() => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf')),
@@ -3418,7 +3462,7 @@ const LINE_GROUP_OF = Object.fromEntries(LINE_GROUPS.flatMap(g => g.items.map(i 
 const layerName = (prefix, title) => (prefix + title).toUpperCase().replace(/[^A-ZА-ЯЁ0-9_]+/g, '_').replace(/_+$/, '');
 function dxfLayerOfLine(l) { const g = LINE_GROUP_OF[l.type] || { id: 'own', title: 'Прочее' }; return layerName(NET_GROUPS.has(g.id) ? 'СЕТИ_' : 'ТОПО_', g.title); }
 function dxfLayerOfPoint(p) { const g = POINT_GROUPS.find(x => x.items.some(i => i.id === p.type)) || { title: 'Прочее' }; return layerName('ТОЧКИ_', g.title); }
-function dxfColorOfLayer(name, kind) { if (kind && DXF_COLOR[kind]) return DXF_COLOR[kind]; return /РЕЛЬЕФ/.test(name) ? 34 : /РАСТИТ|ДЕРЕВ/.test(name) ? 3 : 7; }
+function dxfColorOfLayer(name, kind) { if (kind && DXF_COLOR[kind]) return DXF_COLOR[kind]; return /ДЕФЕКТ/i.test(name) ? 1 : /РЕЛЬЕФ/.test(name) ? 34 : /РАСТИТ|ДЕРЕВ/.test(name) ? 3 : 7; }
 // кодировка Windows-1251 для кириллицы в DXF R12, каталоге и MIF; dxf — символы вне 1251 кодом \U+XXXX (AutoCAD его понимает), иначе «?»
 function cp1251(str, dxf) {
   const extra = { 0x401: 0xA8, 0x451: 0xB8, 0x2116: 0xB9, 0x2013: 0x96, 0x2014: 0x97, 0xAB: 0xAB, 0xBB: 0xBB, 0xB0: 0xB0, 0xB1: 0xB1 };
@@ -3561,6 +3605,7 @@ async function exportReport() {
   const files = [{ name: 'pasport_obekta.txt', data: enc.encode(passportText()) }, { name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
     { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `catalog_kody_${today()}.txt`, data: toCatalog(true) },{ name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) },
     ...(data.points.some(p => (POINTS[p.type] || {}).arm) ? [{ name: `armatura_${today()}.csv`, data: enc.encode(toArmSheet()) }] : []),
+    ...(data.points.some(p => (POINTS[p.type] || {}).defect) ? [{ name: `defekty_${today()}.csv`, data: enc.encode(toDefectSheet()) }] : []),
     ...(data.points.some(p => p.ctrl && p.ctrl.length) ? [{ name: `kontrol_${today()}.csv`, data: enc.encode(toCtrlSheet()) }] : []),
     ...(data.lines.some(l => isNetLine(l) && (l.tdep || []).some(hasH)) ? [{ name: `trassoiskatel_${today()}.csv`, data: enc.encode(toTracerSheet()) }] : []), ...toShpFiles('shp/'), { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
@@ -3704,8 +3749,9 @@ function checkPlan() {
   const wells = P.filter(p => /^w_/.test(p.type));
   add('bad', 'Колодцы без отметки люка', wells.filter(p => !hasH(p.h)).map(pt));
   add('bad', 'Колодцы без лотков', wells.filter(p => !((p.attr || {}).lot || []).some(l => l && hasH(l.h))).map(pt), 'Нажмите колодец → «Изменить» — отметки лотков и направления');
-  add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !(POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).arm && pointH(p) == null).map(pt));
+  add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !(POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).arm && !(POINTS[p.type] || {}).defect && pointH(p) == null).map(pt));
   add('warn', 'Арматура не на сети (дальше 3 м от линии сети)', P.filter(p => (POINTS[p.type] || {}).arm && !pipeLine(p)).map(pt));
+  add('info', 'Аварийные дефекты не устранены', P.filter(p => (POINTS[p.type] || {}).defect && (p.attr || {}).urgent && !(p.attr || {}).fixed).map(pt), 'Сообщите эксплуатирующей организации; ведомость — Меню → «Ведомость дефектов»');
   add('warn', 'Точки без знака (простые)', P.filter(p => p.type === GENERIC.point).map(pt), 'Знак выбирается в карточке точки');
   add('warn', 'Линии без знака (простые)', data.lines.filter(l => l.type === GENERIC.line).map(ln));
   add('warn', 'Точки по GPS не в FIX', P.filter(p => p.q && p.q.fix && p.q.fix !== 'FIX').map(pt), 'Для 1:500 нужен FIX (до 5 см). FLOAT и автономные — переснять');
@@ -3964,6 +4010,20 @@ function toArmSheet() {
     const s = POINTS[p.type], a = p.attr || {}, c = sk42(p.lat, p.lng), on = pipeLine(p);
     rows.push([i + 1, s.name, p.name || '', a.d || '', a.state === 'откр.' ? 'открыта' : a.state === 'закр.' ? 'закрыта' : '', a.well || '',
       on ? `L${on.no || ''} ${(LINES[on.type] || {}).name}${netCaption(on) ? ' ' + netCaption(on) : ''}` : '', f3(c.x), f3(c.y), hasH(p.h) ? Number(p.h).toFixed(2) : '', p.note || '']);
+  });
+  return sheetJoin(rows);
+}
+// Ведомость дефектов: вид, где (сеть, ближний колодец), координаты, даты, срочность, устранён ли
+const DEF_WELL_M = 10;                                                  // колодец дальше 10 м — уже не «у колодца»
+function toDefectSheet() {
+  const rows = [['№ п/п', 'Вид дефекта', 'Подпись', 'Срочность', 'Обнаружен', 'Сеть', 'Ближний колодец', 'X ' + planeName(), 'Y ' + planeName(), 'Описание', 'Устранён', 'Фото, шт.']];
+  const wells = data.points.filter(p => /^w_/.test(p.type)).map(w => ({ w, c: sk42(w.lat, w.lng) }));
+  data.points.filter(p => (POINTS[p.type] || {}).defect).forEach((p, i) => {
+    const s = POINTS[p.type], a = p.attr || {}, c = sk42(p.lat, p.lng), on = pipeLine(p);
+    let near = null, nd = DEF_WELL_M; for (const { w, c: q } of wells) { const d = Math.hypot(q.x - c.x, q.y - c.y); if (d <= nd) { nd = d; near = w; } }
+    rows.push([i + 1, s.name, p.name || '', a.urgent ? 'аварийно' : 'в плановом порядке', a.found || '',
+      on ? `L${on.no || ''} ${(LINES[on.type] || {}).name}${netCaption(on) ? ' ' + netCaption(on) : ''}` : '', near ? `${pointRef(near)} (${nd.toFixed(1)} м)` : '',
+      f3(c.x), f3(c.y), p.note || '', a.fixed ? 'да' + (a.fixedAt ? ', ' + a.fixedAt : '') : 'нет', (p.photos || []).length || '']);
   });
   return sheetJoin(rows);
 }
