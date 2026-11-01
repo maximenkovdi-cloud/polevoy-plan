@@ -1351,7 +1351,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 43;
+const APP_BUILD = 44;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3108,13 +3108,36 @@ function editCadPoint(p, s) {
 }
 // участки: части границы (линии «Кадастр»), сомкнутые концами; общая граница соседних участков (раздел) — тоже.
 // Плоский граф: на каждом узле — следующая часть по часовой стрелке; каждая замкнутая грань — участок, внешняя грань — прочь
+const PARCEL_NAME_M = 5;                                                // своё обозначение участка ищется по его центру, до 5 м
+function areaCentroid(V) {                                              // центр площади многоугольника (не среднее вершин — оно сдвигается от лишней вершины)
+  let a = 0, x = 0, y = 0; const o = V[0];
+  V.forEach((c, i) => { const q = V[(i + 1) % V.length], p0x = c.x - o.x, p0y = c.y - o.y, p1x = q.x - o.x, p1y = q.y - o.y, w = p0x * p1y - p1x * p0y; a += w; x += (p0x + p1x) * w; y += (p0y + p1y) * w; });
+  return Math.abs(a) < 1e-9 ? { x: o.x, y: o.y } : { x: o.x + x / (3 * a), y: o.y + y / (3 * a) };
+}
 function cadParcels() {
   const lines = data.lines.filter(l => isCadLine(l) && l.latlngs.length >= 2);
   if (!lines.length) return { rings: [], open: [] };
   const z0 = sk42(lines[0].latlngs[0][0], lines[0].latlngs[0][1]).zone, def = gkDef(z0);
   const xy = a => { const [e, n] = proj4('WGS84', def, [a[1], a[0]]); return { x: n, y: e }; };
   const nodes = [], nodeOf = c => { let k = nodes.findIndex(q => Math.hypot(q.x - c.x, q.y - c.y) <= CAD_JOIN_M); if (k < 0) { nodes.push({ ...c }); k = nodes.length - 1; } return k; };
-  let parts = lines.map(l => { const v = l.latlngs.map(xy); return { l, v, a: nodeOf(v[0]), b: nodeOf(v[v.length - 1]) }; });
+  // линия раздела часто примыкает к середине другой части (к вершине или на отрезок) — там часть режется на две
+  const V0 = lines.map(l => l.latlngs.map(xy)), ends = V0.flatMap((v, i) => [{ c: v[0], i }, { c: v[v.length - 1], i }]);
+  let parts = [];
+  V0.forEach((v0, li) => {
+    const v = v0.slice(), cut = new Set();
+    for (const e of ends) { if (e.i === li) continue;
+      for (let j = 1; j < v.length; j++) { const a = v[j - 1], b = v[j], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+        const t = L2 ? Math.max(0, Math.min(1, ((e.c.x - a.x) * dx + (e.c.y - a.y) * dy) / L2)) : 0, px = a.x + t * dx, py = a.y + t * dy;
+        if (Math.hypot(e.c.x - px, e.c.y - py) > CAD_JOIN_M) continue;
+        if (Math.hypot(e.c.x - a.x, e.c.y - a.y) <= CAD_JOIN_M) { if (j - 1 > 0) cut.add(v[j - 1]); }
+        else if (Math.hypot(e.c.x - b.x, e.c.y - b.y) <= CAD_JOIN_M) { if (j < v.length - 1) cut.add(v[j]); }
+        else { const m = { x: px, y: py }; v.splice(j, 0, m); cut.add(m); }
+        break; } }
+    let cur = [v[0]];
+    for (let j = 1; j < v.length; j++) { cur.push(v[j]); if (cut.has(v[j]) && j < v.length - 1) { parts.push({ l: lines[li], v: cur }); cur = [v[j]]; } }
+    parts.push({ l: lines[li], v: cur });
+  });
+  parts = parts.filter(p => p.v.length >= 2).map(p => ({ ...p, a: nodeOf(p.v[0]), b: nodeOf(p.v[p.v.length - 1]) }));
   // висящие хвосты (конец ни к чему не примкнул) — убрать, пока есть; их части — «не замкнуты»
   const open = [];
   for (let changed = true; changed;) { changed = false;
@@ -3147,7 +3170,15 @@ function cadParcels() {
     fs.forEach((f, i) => { if (i !== big && f.area > 0) rings.push({ lines: [...new Set(f.lines)], verts: f.verts, z0 }); }); }
   // имя участка: из частей, которые принадлежат только ему (общая граница соседей имени не даёт)
   const uses = new Map(); rings.forEach(r => r.lines.forEach(l => uses.set(l, (uses.get(l) || 0) + 1)));
-  rings.forEach(r => { r.name = (r.lines.filter(l => uses.get(l) === 1).map(l => (l.attr || {}).parcel).find(Boolean)) || (r.lines.map(l => (l.attr || {}).parcel).find(Boolean)) || ''; });
+  // своё обозначение из листа «Кадастр» (по центру участка, до метра) → имя частей, которые только у него → :ЗУ1, :ЗУ2… по порядку
+  const own = Array.isArray(meta().parcelNames) ? meta().parcelNames : [], taken = new Set(), usedOwn = new Set();
+  rings.forEach(r => { r.key = areaCentroid(r.verts); });
+  rings.forEach(r => { let best = -1, bd = PARCEL_NAME_M;
+    own.forEach((o, i) => { const d = Math.hypot(o.x - r.key.x, o.y - r.key.y); if (!usedOwn.has(i) && d <= bd) { bd = d; best = i; } });
+    r.name = best >= 0 && !taken.has(own[best].name) ? own[best].name : ''; if (r.name) { taken.add(r.name); usedOwn.add(best); } });
+  rings.forEach(r => { if (r.name) return; const nm = r.lines.filter(l => uses.get(l) === 1).map(l => (l.attr || {}).parcel).find(Boolean) || (rings.length === 1 ? r.lines.map(l => (l.attr || {}).parcel).find(Boolean) : '');
+    if (nm && !taken.has(nm)) { r.name = nm; taken.add(nm); } });
+  let auto = 1; rings.forEach(r => { if (r.name) return; while (taken.has(':ЗУ' + auto)) auto++; r.name = ':ЗУ' + auto; taken.add(r.name); });
   return { rings, open: open.length ? [open] : [], z0, xy };
 }
 // сведения об участке: точки по вершинам, площадь, ΔP, части границы
@@ -3173,20 +3204,97 @@ function cadSheet() {
     ${inMsk ? '' : `<div class="hint" style="color:#c62828;margin:6px 0"><b>Сейчас ${esc(planeName())}, а для межевого плана нужна МСК региона.</b> Меню → система координат → МСК (параметры — у кадастрового инженера или в территориальном Роскадастре).</div>`}
     <div style="max-height:44vh;overflow:auto">
     ${infos.length ? infos.map((r, k) => { const bad = r.V.filter(c => c.pt && cat && cadMt(c.pt) != null && cadMt(c.pt) > cat.mt), noPt = r.V.filter(c => !c.pt), noMt = r.V.filter(c => c.pt && cadMt(c.pt) == null);
-      return `<div class="meas-row" style="display:block"><b>${esc(r.name || 'Участок ' + (k + 1))}</b>: S = ${Math.round(r.area).toLocaleString('ru-RU')}${r.dP != null ? ` ± ${Math.round(r.dP)}` : ''} м², периметр ${mText(r.perim, 2)} м, точек ${r.V.length}
+      return `<div class="meas-row" style="display:block"><input data-pk="${k}" value="${esc(r.name)}" aria-label="Обозначение участка" style="width:9em;min-height:36px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font-weight:600"> S = ${Math.round(r.area).toLocaleString('ru-RU')}${r.dP != null ? ` ± ${Math.round(r.dP)}` : ''} м², периметр ${mText(r.perim, 2)} м, точек ${r.V.length}
         ${noPt.length ? `<br><small style="color:#c62828">вершин без характерной точки: ${noPt.length}</small>` : ''}${noMt.length ? `<br><small style="color:#c62828">точек без Mt (поставлены касанием): ${noMt.map(c => esc(ptName(c))).join(', ')}</small>` : ''}${bad.length ? `<br><small style="color:#c62828">Mt хуже допуска: ${bad.map(c => esc(ptName(c)) + ' ' + mText(cadMt(c.pt), 2)).join(', ')}</small>` : ''}
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px"><button class="btn" data-cad="pts:${k}">Сведения о точках</button><button class="btn" data-cad="sides:${k}">Части границы</button></div></div>`; }).join('')
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px"><button class="btn" data-cad="pts:${k}">Сведения о точках</button><button class="btn" data-cad="sides:${k}">Части границы</button><button class="btn" data-cad="svg:${k}">Чертёж А4</button></div></div>`; }).join('')
       : '<div class="hint">Замкнутых участков нет. Нарисуйте границу линиями группы «Кадастр» так, чтобы концы сомкнулись (привязка к точкам и вершинам делает это сама). При разделе общая граница рисуется один раз — приложение отнесёт её к обоим участкам.</div>'}
     ${open.length ? `<div class="hint" style="color:#c62828;margin-top:6px">Не замкнуты: ${open.map(g => g.map(l => 'L' + (l.no || '')).join(', ')).join('; ')} — конец части границы ни к чему не примкнул.</div>` : ''}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px"><button class="btn" id="cadTxt">Каталог для Полигон Про / ТехноКада</button><button class="btn" id="cadAll">Все точки (CSV)</button></div>
     <div class="hint" style="margin-top:6px;color:var(--muted)">Новые точки — «Знак…» → «Кадастр» → «Вновь образованная точка»: обозначение н1, н2… ставится само. Mt — СКО измерения «По GPS» / «Измерить», округлено вверх до сантиметра.</div>`);
   $('cadCat').onchange = e => { data.meta = { ...meta(), landCat: e.target.value }; save(); cadSheet(); };
+  $('sheetPanel').querySelectorAll('[data-pk]').forEach(inp => inp.onchange = () => {   // своё обозначение участка — запоминается по его центру
+    const key = rings[inp.dataset.pk].key, v = inp.value.trim();
+    const names = (Array.isArray(meta().parcelNames) ? meta().parcelNames : []).filter(o => Math.hypot(o.x - key.x, o.y - key.y) > PARCEL_NAME_M);
+    if (v) names.push({ x: +key.x.toFixed(2), y: +key.y.toFixed(2), name: v });
+    data.meta = { ...meta(), parcelNames: names }; save(); infos[inp.dataset.pk].name = v || infos[inp.dataset.pk].name; toast(v ? `Участок: ${v}` : 'Обозначение — по умолчанию'); });
   $('sheetPanel').querySelectorAll('[data-cad]').forEach(b => b.onclick = () => { const [kind, k] = b.dataset.cad.split(':'), r = infos[k];
-    download(`${kind === 'pts' ? 'tochki' : 'chasti_granicy'}_${fileSafe(r.name) || 'uchastok' + (+k + 1)}_${today()}.csv`, kind === 'pts' ? toCadPointsSheet(r) : toCadSidesSheet(r), 'text/csv;charset=utf-8'); });
+    const nm = fileSafe(r.name) || 'uchastok' + (+k + 1);
+    if (kind === 'svg') { download(`chertezh_${nm}_${today()}.svg`, cadDrawing(r, xy), 'image/svg+xml'); return; }
+    download(`${kind === 'pts' ? 'tochki' : 'chasti_granicy'}_${nm}_${today()}.csv`, kind === 'pts' ? toCadPointsSheet(r) : toCadSidesSheet(r), 'text/csv;charset=utf-8'); });
   $('cadTxt').onclick = () => { if (!data.points.some(isCadPt)) { toast('Характерных точек нет'); return; } download(`katalog_kadastr_${today()}.txt`, new Blob([toCadCatalog()], { type: 'text/plain' }), 'text/plain'); };
   $('cadAll').onclick = () => { if (!data.points.some(isCadPt)) { toast('Характерных точек нет'); return; } download(`harakternye_tochki_${today()}.csv`, toCadPointsSheet(null), 'text/csv;charset=utf-8'); };
 }
 const fileSafe = s => String(s || '').replace(/[\\/:*?"<>|«»\s]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30);
+// Чертёж земельного участка — лист А4 (SVG: открывается в браузере, печатается в PDF). Масштаб — наименьший из ряда,
+// при котором участок помещается; знаки — по «Специальным условным знакам» (точка ⌀ 1,5 мм, линия 0,2 мм), подписи — снаружи участка
+const CAD_SCALES = [100, 200, 500, 1000, 2000, 5000, 10000, 25000];
+const CAD_BOX = { x: 22, y: 22, w: 181, h: 190 };                      // поле чертежа на листе, мм
+function cadDrawing(r, xy) {
+  const pad = 12;                                                      // мм под подписи вокруг участка
+  const xs = r.V.map(c => c.x), ys = r.V.map(c => c.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const fits = s => (maxY - minY) * 1000 / s <= CAD_BOX.w - 2 * pad && (maxX - minX) * 1000 / s <= CAD_BOX.h - 2 * pad;
+  const S = CAD_SCALES.find(fits) || CAD_SCALES[CAD_SCALES.length - 1];
+  if (!fits(S)) toast(`Участок не помещается на А4 даже в 1:${S} — чертёж обрезан рамкой`);
+  const k = 1000 / S, cy = (minY + maxY) / 2, cx = (minX + maxX) / 2;
+  const P = c => [CAD_BOX.x + CAD_BOX.w / 2 + (c.y - cy) * k, CAD_BOX.y + CAD_BOX.h / 2 - (c.x - cx) * k];   // X — север вверх
+  const inBox = ([u, v]) => u > CAD_BOX.x && u < CAD_BOX.x + CAD_BOX.w && v > CAD_BOX.y && v < CAD_BOX.y + CAD_BOX.h;
+  const f = v => v.toFixed(2), out = [];
+  // части границы — все линии «Кадастр» на поле листа (и соседей), каждая своим знаком
+  const used = new Set();
+  for (const l of data.lines.filter(isCadLine)) {
+    const pts = l.latlngs.map(a => P(xy(a)));
+    if (Math.max(...pts.map(p => p[0])) < CAD_BOX.x || Math.min(...pts.map(p => p[0])) > CAD_BOX.x + CAD_BOX.w || Math.max(...pts.map(p => p[1])) < CAD_BOX.y || Math.min(...pts.map(p => p[1])) > CAD_BOX.y + CAD_BOX.h) continue;
+    const sp = LINES[l.type]; used.add(l.type);
+    out.push(`<polyline clip-path="url(#field)" points="${pts.map(p => p.map(f).join(',')).join(' ')}" fill="none" stroke="${sp.color || '#000'}" stroke-width="0.2"${sp.dash ? ` stroke-dasharray="${sp.dash.join(' ')}"` : ''}/>`);
+  }
+  // длины сторон участка — посередине, снаружи, вдоль стороны
+  const C = P({ x: cx, y: cy }), ring = r.V.map(c => { const q = P(c); return { x: q[0], y: q[1] }; });
+  for (const sd of r.sides) {
+    const a = P(sd.from), b = P(sd.to), mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+    let nx = -(b[1] - a[1]), ny = b[0] - a[0]; const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+    if (inPoly(mx + nx * 0.5, my + ny * 0.5, ring)) { nx = -nx; ny = -ny; }   // нормаль — наружу (и у вогнутого участка)
+    let ang = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI; if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
+    const tx = mx + nx * 1.6, ty = my + ny * 1.6 + 0.7;
+    const sl = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (sl > 3) out.push(`<text x="${f(tx)}" y="${f(ty)}" font-size="${sl > 8 ? 2 : 1.5}" text-anchor="middle" transform="rotate(${ang.toFixed(1)} ${f(tx)} ${f(ty)})">${sd.len.toFixed(2)}</text>`);
+  }
+  // характерные точки: круг ⌀ 1,5 мм, обозначение — снаружи по направлению от центра участка
+  const usedPt = new Set();
+  for (const p of data.points.filter(isCadPt)) {
+    const q = P(xy([p.lat, p.lng])); if (!inBox(q)) continue;
+    const s = POINTS[p.type], col = s.cadNew ? CAD_RED : '#000'; usedPt.add(p.type);
+    out.push(`<circle cx="${f(q[0])}" cy="${f(q[1])}" r="0.75" fill="${p.type === 'c_pt_q' ? '#fff' : col}" stroke="${col}" stroke-width="0.2"/>`);
+    let dx = q[0] - C[0], dy = q[1] - C[1]; const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+    out.push(`<text x="${f(q[0] + dx * 2.6)}" y="${f(q[1] + dy * 2.6 + 0.9)}" font-size="2.5" font-style="italic" text-anchor="${dx > 0.3 ? 'start' : dx < -0.3 ? 'end' : 'middle'}" fill="${col}">${esc(p.name || '')}</text>`);
+  }
+  // обозначение участка и площадь — в центре
+  out.push(`<text x="${f(C[0])}" y="${f(C[1])}" font-size="3.5" text-anchor="middle" font-weight="bold">${esc(r.name || ':ЗУ')}</text>`);
+  // условные знаки — те, что есть на чертеже
+  const leg = [...[...used].map(t => { const sp = LINES[t]; return [`<line x1="0" y1="0" x2="12" y2="0" stroke="${sp.color || '#000'}" stroke-width="0.2"${sp.dash ? ` stroke-dasharray="${sp.dash.join(' ')}"` : ''}/>`, sp.name]; }),
+    ...[...usedPt].map(t => { const s = POINTS[t], col = s.cadNew ? CAD_RED : '#000'; return [`<circle cx="6" cy="0" r="0.75" fill="${t === 'c_pt_q' ? '#fff' : col}" stroke="${col}" stroke-width="0.2"/>`, s.name]; })];
+  const cat = landCat(), m = meta(), day = new Date().toLocaleDateString('ru-RU');
+  const legY = CAD_BOX.y + CAD_BOX.h + 6;
+  const legend = leg.map(([g, t], i) => `<g transform="translate(${22 + (i % 2) * 92} ${legY + 6 + Math.floor(i / 2) * 5})">${g}<text x="15" y="0.8" font-size="2.3">${esc(t)}</text></g>`).join('');
+  const info = [`Площадь участка ${esc(r.name || '')}: ${Math.round(r.area).toLocaleString('ru-RU')}${r.dP != null ? ` ± ${Math.round(r.dP)}` : ''} м²`,
+    `Категория земель: ${cat ? esc(cat.name) + `, Mt ${cat.mt.toFixed(2)} м` : 'не выбрана'}`, `Система координат: ${esc(planeName())}`,
+    [m.object ? 'Объект: ' + esc(m.object) : '', m.contractor ? esc(m.contractor) : '', m.performer ? 'исполнитель ' + esc(m.performer) : '', day].filter(Boolean).join(' · ')];
+  const infoY = legY + 8 + Math.ceil(leg.length / 2) * 5;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297" font-family="'GOST type A', 'ISOCPEUR', Arial, sans-serif">
+<defs><clipPath id="field"><rect x="${CAD_BOX.x}" y="${CAD_BOX.y}" width="${CAD_BOX.w}" height="${CAD_BOX.h}"/></clipPath></defs>
+<rect x="0" y="0" width="210" height="297" fill="#fff"/>
+<rect x="20" y="5" width="185" height="287" fill="none" stroke="#000" stroke-width="0.5"/>
+<text x="112.5" y="13" font-size="4" text-anchor="middle">Чертёж земельного участка ${esc(r.name || '')}</text>
+<text x="112.5" y="18.5" font-size="3" text-anchor="middle">Масштаб 1:${S}</text>
+<g transform="translate(196 30)"><path d="M0 -6 L2 2 L0 0.5 L-2 2 Z" fill="#000"/><text x="0" y="-7.5" font-size="3" text-anchor="middle">С</text></g>
+${out.join('\n')}
+<line x1="20" y1="${legY - 2}" x2="205" y2="${legY - 2}" stroke="#000" stroke-width="0.25"/>
+<text x="22" y="${legY + 1.5}" font-size="2.8" font-weight="bold">Условные обозначения</text>
+${legend}
+${info.map((t, i) => `<text x="22" y="${infoY + i * 4.5}" font-size="2.6">${t}</text>`).join('\n')}
+</svg>`;
+}
 // «Сведения о характерных точках границы»: обозначение, X, Y, Mt, метод, закрепление (r — участок; null — все точки плана)
 function toCadPointsSheet(r) {
   const cat = landCat(), rows = [...(r ? [[`Участок ${r.name || ''}`.trim(), `S = ${Math.round(r.area)}${r.dP != null ? ' ± ' + Math.round(r.dP) : ''} м²`]] : []),
@@ -3604,7 +3712,8 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'offlineinfo', icon: '▤', text: 'Карты в телефоне: сколько сохранено, очистить' },
   { header: 'Файлы' },
   { id: 'backup', icon: '⟲', text: 'Копии плана: автокопия, полная копия с фото, восстановление' },
-  { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z, рамка и штамп)` },
+  { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z${pref('dxfFrame', true) ? ', рамка и штамп' : ''})` },
+  { id: 'dxfframe', icon: '▭', text: 'В DXF — рамка листа и штамп', on: pref('dxfFrame', true), check: true },
   { id: 'txt', icon: '⇩', text: 'Каталог TXT для КРЕДО (с кодами линий), коды знаков' },
   { id: 'pnezd', icon: '⇩', text: 'Точки для Civil 3D (PNEZD через запятую)' },
   { id: 'wells', icon: '⇩', text: 'Ведомость колодцев (CSV для Excel)' },
@@ -3682,6 +3791,7 @@ const MENU = {
   },
   clear: () => ask('Удалить ВСЕ знаки и линии? Их можно будет вернуть кнопкой «Вернуть» или из автокопии.', 'Удалить всё', true).then(ok => { if (ok) { data = { points: [], lines: [], ...(data.meta ? { meta: data.meta } : {}) }; save(); hideCard(); } }),
   update: () => checkUpdate(true),
+  dxfframe: () => { const on = !pref('dxfFrame', true); setPref('dxfFrame', on); toast(on ? 'DXF — с рамкой листа, сеткой и штампом' : 'DXF — только план, без рамки (для вставки в чужой чертёж)'); },
   about: () => alert(`Полевой план, сборка ${APP_BUILD}.
 
 ` + 'Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
@@ -4175,7 +4285,7 @@ function toDxf() {
     if (label) { const lay2 = useLayer('ТОПО_ПОДПИСИ'), [x, y, z] = xyz(l.latlngs[0], zs && zs[0]); ent(0, 'TEXT', 8, lay2, 10, x, 20, y, 30, z, 40, DXF_TEXT_M, 1, label, 7, DXF_STYLE); }
   }
   if (box[0] === Infinity) box.splice(0, 4, 0, 0, 100, 100);
-  else dxfFrame(box, ent, useLayer);                                   // рамка листа и штамп — на своих слоях
+  else if (pref('dxfFrame', true)) dxfFrame(box, ent, useLayer);                                   // рамка листа и штамп — на своих слоях
   const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2, vh = Math.max(box[3] - box[1], (box[2] - box[0]) / 1.5, 20) * 1.1;
   put(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1009', 9, '$DWGCODEPAGE', 3, 'ANSI_1251', 9, '$INSUNITS', 70, 6,
     9, '$EXTMIN', 10, f3(box[0]), 20, f3(box[1]), 30, 0, 9, '$EXTMAX', 10, f3(box[2]), 20, f3(box[3]), 30, 0,
