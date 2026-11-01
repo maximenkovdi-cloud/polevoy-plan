@@ -1472,7 +1472,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 47;
+const APP_BUILD = 48;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3508,6 +3508,52 @@ function redoRecord(id) {
   });
 }
 
+/* ───────────── Журнал съёмки: все точки таблицей — как снята, точность, отметка; фильтры — ошибки видны до отъезда ───────────── */
+
+let lastPlacedId = null;                                               // для «отменить последнюю» кнопкой громкости
+const HOW_NAME = { gps: 'по GPS', measure: 'Измерить', offset: 'смещение', center: 'перекрестье', tap: 'касанием' };
+const pointHow = p => p.q && p.q.redone ? 'доснята' : p.q ? HOW_NAME[p.q.src] || 'по GPS' : HOW_NAME[p.how] || 'касанием';
+const JOURNAL_FILTERS = [
+  ['all', 'Все', () => true],
+  ['tap', 'Без GPS', p => !p.q],
+  ['nofix', 'Не FIX', p => p.q && p.q.fix && p.q.fix !== 'FIX'],
+  ['noh', 'Без отметки', p => pointH(p) == null && !(POINTS[p.type] || {}).svgFor],
+  ['spoof', 'Рядом с подменой', p => !!(journalSn.has(p) ? journalSn.get(p) : pointSpoofNote(p))],
+  ['wait', 'Ждут GPS', p => !!p.wait]];
+let journalFilter = 'all';
+const journalSn = new WeakMap();                                       // заметка о подмене — на время показа, в план не пишется
+const JOURNAL_MAX = 300;                                               // больше строк телефон рисует медленно — остальные через фильтр
+function journalSheet() {
+  const f = JOURNAL_FILTERS.find(x => x[0] === journalFilter) || JOURNAL_FILTERS[0];
+  const counts = Object.fromEntries(JOURNAL_FILTERS.map(x => [x[0], 0])), all = data.points.slice().reverse(), list = [];
+  for (const p of all) { journalSn.set(p, pointSpoofNote(p)); for (const [id, , fn] of JOURNAL_FILTERS) if (fn(p)) counts[id]++; if (f[2](p)) list.push(p); }   // один проход
+  const count = id => counts[id], shown = list.slice(0, JOURNAL_MAX);
+  const time = p => { const t = Date.parse(p.q ? p.q.at : p.made); return isFinite(t) ? new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : ''; };
+  const bad = p => !p.q || (p.q.fix && p.q.fix !== 'FIX') || p.wait || journalSn.get(p);
+  showSheet(`<div class="sh-head"><b>Журнал съёмки: ${data.points.length}</b><button class="x" data-close>×</button></div>
+    <div class="seg" id="jrnF" style="display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px">${JOURNAL_FILTERS.map(([id, t]) => `<button data-f="${id}" class="${id === journalFilter ? 'on' : ''}">${t} ${count(id)}</button>`).join('')}</div>
+    <div id="jrnRows" style="max-height:52vh;overflow:auto">${list.length ? shown.map(p => { const s = POINTS[p.type] || POINTS.mark, H = pointH(p);
+      return `<div class="meas-row" data-jid="${esc(p.id)}" style="cursor:pointer;gap:8px">${symbolSvg(pointSvg(p), 24, objColor(p, 'point'))}
+        <span style="flex:1;min-width:0"><b>${esc(String(p.no || ''))}</b> ${esc(pointLabel(p) || s.name)}<br>
+        <small style="color:${bad(p) ? '#c62828' : 'var(--muted)'}">${time(p)} · ${pointHow(p)}${p.q ? ` · ±${cmText(p.q.acc)} · ${esc(fixText(p.q.fix))}` : ''}${p.wait ? ' · ждёт GPS' : ''}${journalSn.get(p) ? ' · рядом с подменой' : ''}</small></span>
+        <span style="flex:none;text-align:right;font-variant-numeric:tabular-nums">${H != null ? mText(H, 2) : '—'}${(p.photos || []).length ? '<br>📷' : ''}</span></div>`; }).join('')
+      : '<div class="hint">Таких точек нет.</div>'}${list.length > JOURNAL_MAX ? `<div class="hint" style="margin-top:6px">Показаны ${JOURNAL_MAX} последних из ${list.length} — остальные через фильтр.</div>` : ''}</div>
+    <div class="hint" style="margin-top:6px;color:var(--muted)">Нажмите строку — точка на карте. Красным — что стоит переснять или проверить «✓ Контролем».</div>`);
+  $('jrnF').onclick = e => { const b = e.target.closest('[data-f]'); if (b) { journalFilter = b.dataset.f; journalSheet(); } };
+  $('jrnRows').onclick = e => { const r = e.target.closest('[data-jid]'); if (!r) return; const p = data.points.find(x => x.id === r.dataset.jid); if (!p) return;
+    closeSheet(); map.setView([p.lat, p.lng], Math.max(map.getZoom(), 19)); showCard('point', p); };
+}
+
+/* Перенос свойств: следующий колодец, задвижка, участок сети того же вида — с диаметром, материалом, владельцем прошлого */
+const CARRY = { well: ['wd', 'wm'], arm: ['d'], net: ['mat', 'd', 'mark', 'volt', 'owner', 'hKind'] };
+function carryFrom(list, obj, keys) {
+  const prev = list.slice().reverse().find(o => o !== obj && o.type === obj.type && o.attr && keys.some(k => o.attr[k] !== undefined && o.attr[k] !== ''));
+  if (!prev) return null;
+  const add = {}; for (const k of keys) if (prev.attr[k] !== undefined && prev.attr[k] !== '') add[k] = prev.attr[k];
+  obj.attr = { ...add, ...(obj.attr || {}) };
+  return prev;
+}
+
 /* ───────────── Точка по расстоянию и углу от базы (смещение): база — GPS, если свежий, иначе последняя поставленная ───────────── */
 function offsetPoint() {
   const fresh = gps && Date.now() - gps.at < GPS_FRESH_MS && !spoof;   // при подмене база — последняя точка, не GPS
@@ -3564,7 +3610,18 @@ function setMode(m) {
 // кнопки громкости в режиме съёмки (Android): «−» — точка по GPS, «+» — измерение с усреднением
 // в окне измерения: «+» — Начать / Стоп — принять / Принять, «−» — Отмена / Повторить; в вопросе: «+» — да, «−» — нет
 addEventListener('volumeKey', e => {
-  const up = (e.key || (e.detail && e.detail.key)) === 'up', sheetOpen = $('sheet').style.display === 'block';
+  const key = e.key || (e.detail && e.detail.key), sheetOpen = $('sheet').style.display === 'block';
+  if (/Long$/.test(key)) {                                             // долгое нажатие (полсекунды): «+» — Готово, «−» — отменить последнюю
+    if (!mode || sheetOpen) return;
+    cue('tick');
+    if (key === 'upLong') { const done = mode.kind === 'line' ? mode.latlngs.length : 0; finishMode(); say(mode ? 'Мало точек' : done ? 'Линия готова' : 'Готово'); }
+    else if (mode.kind === 'line') { if (!mode.latlngs.length) { say('Точек нет'); return; } mode.latlngs.pop(); if (mode.hs) mode.hs.pop(); refreshTemp(); setMode(mode); say('Последняя точка отменена'); }
+    else { const last = data.points[data.points.length - 1];          // только что поставленная в этом режиме точка — а не чужая правка
+      if (!last || last.id !== lastPlacedId) { say('Нечего отменять'); return; }
+      data.points.pop(); lastPlacedId = null; save(); drawPoints(); hideCard(); say('Последняя точка убрана'); toast('Последняя точка убрана — кнопка ↶ вернёт'); }
+    return;
+  }
+  const up = key === 'up';
   if (sheetOpen && $('askYes')) { cue('tick'); $(up ? 'askYes' : 'askNo').click(); return; }
   if (sheetOpen && $('measGo')) {
     const b = up ? $('measGo') : $('measGo').previousElementSibling;
@@ -3631,7 +3688,9 @@ function addAt(ll, meas, src) {
   if (snap) { ll = snap.ll; toast('Привязано ' + snap.what); }
   const hz = heightFor(ll, meas, src, snap);
   if (mode.kind === 'point') {
-    const pt = { id: uid(), no: nextNo(data.points), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' };
+    const pt = { id: uid(), no: nextNo(data.points), type: mode.type, lat: ll.lat, lng: ll.lng, name: '', how: src, made: new Date().toISOString() };
+    const carried = /^w_/.test(pt.type) ? carryFrom(data.points, pt, CARRY.well) : (POINTS[pt.type] || {}).arm ? carryFrom(data.points, pt, CARRY.arm) : null;
+    if (carried) setTimeout(() => toast('Диаметр и материал — как у прошлого такого же; поправьте, если не так'), 1200);   // диаметр и материал — как у прошлого такого же
     if (src === 'gps' || src === 'measure') { pt.q = meas ? { acc: meas.m, fix: fixKind(meas.acc), at: meas.at, src } : { acc: +gps.acc.toFixed(3), fix: fixKind(gps.acc), at: new Date(gps.at).toISOString(), src };
       const sn = spoofNear(Date.now()); if (sn) pt.q.spoofNear = sn; }
     if (pt.type === GENERIC.point) pt.color = pref('color', VIS_COLOR);   // простая точка — заметным цветом (последним выбранным)
@@ -3641,7 +3700,7 @@ function addAt(ll, meas, src) {
     if ((POINTS[mode.type] || {}).cadNew) pt.name = nextNewName();      // н1, н2… — следующий свободный
     if (spoof && (src === 'tap' || src === 'center')) { pt.wait = new Date().toISOString(); if (snap) pt.waitSnap = true; }   // на глаз при подмене — доснять по GPS; привязана к чужому объекту — его не двигать      // н1, н2… — следующий свободный
     if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll, ...(hz.src === 'gnss' ? { ant: antH } : {}) }; }
-    data.points.push(pt);
+    data.points.push(pt); lastPlacedId = pt.id;
     save(); drawPoints();
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
       (hz ? `, H ${mText(hz.h, 2)}` : src === 'tap' || src === 'center' ? ' без отметки' : ', приёмник не дал высоту'));
@@ -3735,6 +3794,8 @@ function finishMode() {
     const line = { id: uid(), no: nextNo(data.lines), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: (LINES[mode.type] || {}).defCount || 1, state: '' };
     if (line.type === GENERIC.line) line.color = pref('color', VIS_COLOR);
     if (mode.hs && mode.hs.some(Boolean)) line.hs = mode.hs.slice();
+    const prev = NET_LINE_KINDS.has((LINES[line.type] || {}).kind) ? carryFrom(data.lines, line, CARRY.net) : null;   // материал, диаметр, владелец — как у прошлого участка этой сети
+    if (prev) toast(`Свойства — как у L${prev.no || ''}; поправьте, если не так`);
     setMode(null);
     data.lines.push(line); save();                                    // сохранена сразу: закрытая форма не теряет линию
     if (line.type === GENERIC.line) { showCard('line', line); openPicker('line', id => changeType('line', line, id), 'Закройте — останется простой линией'); return; }
@@ -3813,10 +3874,12 @@ function openPicker(kind, onPick, note) {
 const GENERIC = { point: 'mark', line: 'plain' };
 // Цвета на выбор: первый — хорошо заметный и на схеме, и на снимке; «ГКИНП» — цвет условного знака по умолчанию
 
+const PROJECT_RED = '#d32f2f';
 const COLORS = [['', 'по ГКИНП'], [VIS_COLOR, 'малиновый — виден везде'], ['#ff3b00', 'оранжево-красный'], ['#ffd400', 'жёлтый'], ['#00e5ff', 'голубой'],
   ['#00c853', 'зелёный'], ['#2962ff', 'синий'], ['#000000', 'чёрный'], ['#ffffff', 'белый']];
 function objColor(obj, kind) {
   if (obj.color) return obj.color;
+  if (kind === 'line' && obj.state === 'project') return PROJECT_RED;   // проектируемое — красным, как на проектных планах: в поле не спутать со снятым
   if (kind === 'line') { const s = LINES[obj.type] || LINES.plain; return netColor(obj.type, s.color || 'var(--sym)'); }
   const s = POINTS[obj.type] || POINTS.mark; if (s.defect) return (obj.attr || {}).fixed ? DEF_DONE : s.color;
   return netColor(obj.type, s.color);
@@ -3887,6 +3950,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || 'без названия') + ' — сменить, новый' },
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
   { id: 'check', icon: '✓', text: 'Проверка перед сдачей' },
+  { id: 'journal', icon: '☰', text: `Журнал съёмки: ${data.points.length} ${plural(data.points.length, 'точка', 'точки', 'точек')}, фильтры` },
   { id: 'heights', icon: '△', text: hgt.ref ? `Отметки: привязка к реперу ${hgt.ref.name || ''}`.trim() : hgt.dh ? 'Отметки: с поправкой' : 'Отметки: привязать к реперу' },
   { id: 'cad', icon: '⬠', text: 'Кадастр: участки, площадь и ΔP, сведения о точках' },
   ...(waitList().length ? [{ id: 'redo', icon: '📡', text: `Доснять по GPS: ${waitList().length} ${plural(waitList().length, 'точка', 'точки', 'точек')} (поставлены при подмене)` }] : []),
@@ -4016,6 +4080,7 @@ const MENU = {
   }, 'Удалить всё'),
   update: () => checkUpdate(true),
   export: () => exportMenu(),
+  journal: () => journalSheet(),
   redo: () => redoSheet(),
   settings: () => settingsMenu(),
   dxfframe: () => { const on = !pref('dxfFrame', true); setPref('dxfFrame', on); toast(on ? 'DXF — с рамкой листа, сеткой и штампом' : 'DXF — только план, без рамки (для вставки в чужой чертёж)'); },
