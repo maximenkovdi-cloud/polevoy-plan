@@ -1135,7 +1135,7 @@ function runMeasure(o, onAccept) {
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 29;
+const APP_BUILD = 30;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -2453,7 +2453,7 @@ function addAt(ll, meas, src) {
     if (pt.type === GENERIC.point) pt.color = pref('color', VIS_COLOR);   // простая точка — заметным цветом (последним выбранным)
     if ((POINTS[mode.type] || {}).wall) { const r = wallAngle(L.latLng(ll)); if (r != null) pt.rot = r; }   // крыльцо — стеной к ближнему зданию
     if (meas) pt.meas = meas;
-    if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll }; }
+    if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll, ...(hz.src === 'gnss' ? { ant: antH } : {}) }; }
     data.points.push(pt);
     save(); drawPoints();
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
@@ -2701,7 +2701,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'offlineinfo', icon: '▤', text: 'Карты в телефоне: сколько сохранено, очистить' },
   { header: 'Файлы' },
   { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z)` },
-  { id: 'txt', icon: '⇩', text: 'Каталог TXT «№;X;Y;H;код» для КРЕДО — точки и вершины линий' },
+  { id: 'txt', icon: '⇩', text: 'Каталог TXT для КРЕДО (с кодами линий), коды знаков' },
   { id: 'pnezd', icon: '⇩', text: 'Точки для Civil 3D (PNEZD через запятую)' },
   { id: 'wells', icon: '⇩', text: 'Ведомость колодцев (CSV для Excel)' },
   { id: 'nets', icon: '⇩', text: 'Ведомость сетей (CSV для Excel)' },
@@ -2736,7 +2736,7 @@ const MENU = {
   wells: () => download(`kolodcy_${today()}.csv`, toWellsSheet(), 'text/csv;charset=utf-8'),
   nets: () => download(`seti_${today()}.csv`, toNetsSheet(), 'text/csv;charset=utf-8'),
   dxf: () => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf'),
-  txt: () => download(`catalog_${today()}.txt`, new Blob([toCatalog()], { type: 'text/plain' }), 'text/plain'),
+  txt: () => catalogMenu(),
   pnezd: () => download(`civil3d_PNEZD_${today()}.csv`, new Blob([toPnezd()], { type: 'text/csv' }), 'text/csv'),
   screen: () => { const on = !pref('keepScreen', true); setPref('keepScreen', on); if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); toast(on ? 'Экран не будет гаснуть, пока открыт план' : 'Экран гаснет как обычно'); },
   ai: () => aiSettings(),
@@ -3134,7 +3134,13 @@ function lineZs(l) {
     return hs[a] + (hs[b] - hs[a]) * (d[b] > d[a] ? (d[i] - d[a]) / (d[b] - d[a]) : 0);
   });
 }
-const DXF_STYLE = 'GOST';                                                // стиль подписей: isocpeur.ttf — чертёжный шрифт с кириллицей, есть в AutoCAD и nanoCAD
+// пунктирные знаки — свой тип линии: штрих и пробел в мм плана, как на экране (1 мм на 1:500 = 0,5 м)
+const DXF_M_PER_MM = 0.5;
+function dxfLtype(l, sp) {
+  const d = l.state === 'project' ? [10, 4] : l.state === 'staked' ? [10, 2] : Array.isArray(sp.dash) ? sp.dash : sp.dash ? [2, 1] : sp.kind === 'route' ? [4, 1.5] : null;
+  return d ? { name: `DASH_${d[0]}_${d[1]}`.replace(/\./g, 'P'), d } : null;
+}
+const DXF_STYLE = 'GOST';                                              // стиль подписей: isocpeur.ttf — чертёжный шрифт с кириллицей, есть в AutoCAD и nanoCAD
 function toDxf() {
   const L = [], put = (...kv) => { for (let i = 0; i < kv.length; i += 2) L.push(String(kv[i]), String(kv[i + 1])); };
   const box = [Infinity, Infinity, -Infinity, -Infinity];               // границы чертежа — чтобы AutoCAD сразу показал объекты
@@ -3145,14 +3151,15 @@ function toDxf() {
   const useLayer = (name, kind) => { if (!layers.has(name)) layers.set(name, dxfColorOfLayer(name, kind)); return name; };
   // сущности — сначала, чтобы знать слои и блоки
   const E = [], ent = (...kv) => { for (let i = 0; i < kv.length; i += 2) E.push(String(kv[i]), String(kv[i + 1])); };
-  const blocks = new Set();
+  const blocks = new Set(), ltypes = new Map();
   const ATTRS = [['НОМЕР', 0], ['ОТМ', 0], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]
   for (const p of data.points) {
     // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
-    const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H), blk = p.type.toUpperCase();
+    const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
+    const blk = codeOf(p.type).toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31);
     blocks.add(blk);
     ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z);
-    const val = { НОМЕР: p.no || '', ОТМ: H == null ? '' : H.toFixed(2), КОД: p.type, ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
+    const val = { НОМЕР: p.no || '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
       ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : '' };
     ATTRS.forEach(([tag, inv], k) => ent(0, 'ATTRIB', 8, lay, 10, (Number(x) + 0.6).toFixed(3), 20, (Number(y) + 0.4 - k * 1.2).toFixed(3), 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE));
     ent(0, 'SEQEND', 8, lay);
@@ -3160,8 +3167,9 @@ function toDxf() {
   for (const l of data.lines) {
     const sp = LINES[l.type] || LINES.plain, lay = useLayer(dxfLayerOfLine(l), NET_KIND[l.type] || (sp.color === REL ? 'relief' : sp.color === VEG ? 'veg' : null));
     // с отметками — 3D-полилиния (пропуски — по соседним вершинам), без отметок — плоская, чтобы не было ложных нулей
-    const zs = lineZs(l);
-    ent(0, 'POLYLINE', 8, lay, 66, 1, 10, 0, 20, 0, 30, 0, 70, (zs ? 8 : 0) | (sp.closed ? 1 : 0));
+    const zs = lineZs(l), lt = dxfLtype(l, sp);
+    if (lt) ltypes.set(lt.name, lt);
+    ent(0, 'POLYLINE', 8, lay, ...(lt ? [6, lt.name] : []), 66, 1, 10, 0, 20, 0, 30, 0, 70, (zs ? 8 : 0) | (sp.closed ? 1 : 0));
     l.latlngs.forEach((ll, i) => { const [x, y, zz] = xyz(ll, zs && zs[i]); ent(0, 'VERTEX', 8, lay, 10, x, 20, y, 30, zs ? zz : 0, 70, zs ? 32 : 0); });
     ent(0, 'SEQEND', 8, lay);
     const label = [sp.kind === 'building' ? buildingLabel(sp, l) : '', NET_LINE_KINDS.has(sp.kind) ? netCaption(l) : l.caption, (l.attr && l.attr.caption) || ''].filter(Boolean).join(' ');
@@ -3176,7 +3184,10 @@ function toDxf() {
   // вид при открытии — на объекты, а не на начало координат
   put(0, 'TABLE', 2, 'VPORT', 70, 1, 0, 'VPORT', 2, '*ACTIVE', 70, 0, 10, 0, 20, 0, 11, 1, 21, 1, 12, f3(cx), 22, f3(cy), 13, 0, 23, 0, 14, 1, 24, 1, 15, 0, 25, 0,
     16, 0, 26, 0, 36, 1, 17, 0, 27, 0, 37, 0, 40, f3(vh), 41, 1.5, 42, 50, 43, 0, 44, 0, 50, 0, 51, 0, 71, 0, 72, 100, 73, 1, 74, 3, 75, 0, 76, 0, 77, 0, 78, 0, 0, 'ENDTAB');
-  put(0, 'TABLE', 2, 'LTYPE', 70, 1, 0, 'LTYPE', 2, 'CONTINUOUS', 70, 0, 3, 'Solid line', 72, 65, 73, 0, 40, 0.0, 0, 'ENDTAB');
+  put(0, 'TABLE', 2, 'LTYPE', 70, ltypes.size + 1, 0, 'LTYPE', 2, 'CONTINUOUS', 70, 0, 3, 'Solid line', 72, 65, 73, 0, 40, 0.0);
+  for (const { name, d } of ltypes.values())
+    put(0, 'LTYPE', 2, name, 70, 0, 3, `Штрих ${d[0]} мм, пробел ${d[1]} мм на плане 1:500`, 72, 65, 73, 2, 40, f3((d[0] + d[1]) * DXF_M_PER_MM), 49, f3(d[0] * DXF_M_PER_MM), 49, f3(-d[1] * DXF_M_PER_MM));
+  put(0, 'ENDTAB');
   put(0, 'TABLE', 2, 'LAYER', 70, layers.size + 1, 0, 'LAYER', 2, '0', 70, 0, 62, 7, 6, 'CONTINUOUS');
   for (const [name, color] of layers) put(0, 'LAYER', 2, name, 70, 0, 62, color, 6, 'CONTINUOUS');
   put(0, 'ENDTAB');
@@ -3237,7 +3248,7 @@ async function exportReport() {
   toast('Собираю архив для отчёта…');
   const enc = new TextEncoder();
   const files = [{ name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
-    { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) }, { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
+    { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `catalog_kody_${today()}.txt`, data: toCatalog(true) },{ name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) }, { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
 
@@ -3271,15 +3282,20 @@ function pointNote(p) {
   return [p.note, s.frac && hasH(a.bot) ? 'рядом с камнем ' + planNum(a.bot, 2) : '', lots, bot != null && hasH(p.h) ? 'глуб. ' + (Number(p.h) - bot).toFixed(2) : ''].filter(Boolean).join('; ');
 }
 const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки' };
+// метаданные отметки для отчёта: СКО, высота над эллипсоидом, высота антенны (с какой снимали), репер привязки
+const hInfoCols = hi => { const h = hi || {}, ref = h.ref;
+  return [h.acc != null ? f3(h.acc) : '', hasH(h.hEll) ? f3(h.hEll) : '', h.ant != null ? f3(h.ant) : '', ref ? (typeof ref === 'object' ? ref.name || 'репер' : ref) : '']; };
 function toCsv() {
   const rows = [['№', 'Код', 'Знак', 'Подпись', 'X ' + planeName(), 'Y ' + planeName(), 'H', 'Отметка из', 'Точность в плане, м', 'Решение', 'Время',
-    'Широта WGS-84', 'Долгота WGS-84', 'Зона', 'Примечание', 'Фото', 'СКО измерения, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб']];
+    'Широта WGS-84', 'Долгота WGS-84', 'Зона', 'Примечание', 'Фото', 'СКО измерения, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб',
+    'СКО отметки, м', 'Высота над эллипсоидом, м', 'Высота антенны, м', 'Привязка отметки']];
   for (const p of data.points) {
     const c = sk42(p.lat, p.lng), m = p.meas, H = pointH(p), q = p.q || {};
     rows.push([p.no || '', p.type, (POINTS[p.type] || POINTS.mark).name, p.name || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(2),
       H == null ? '' : H_SRC[p.hSrc] || 'вручную', q.acc != null ? f3(q.acc) : '', q.fix || '', q.at ? new Date(q.at).toLocaleString('ru-RU') : '',
       f8(p.lat), f8(p.lng), c.zone, pointNote(p), (p.photos || []).map(photoFile).join(' '),
-      ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', ''])]);
+      ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', '']),
+      ...hInfoCols(p.hInfo)]);
   }
   return '\ufeff' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
 }
@@ -3349,7 +3365,8 @@ function toMifMid() {
   const all = objs.flatMap(x => x.pts);
   const b = all.length ? [Math.min(...all.map(p => p.y)) - 100, Math.min(...all.map(p => p.x)) - 100, Math.max(...all.map(p => p.y)) + 100, Math.max(...all.map(p => p.x)) + 100] : [0, 0, 1, 1];
   const mif = ['Version 300', 'Charset "WindowsCyrillic"', 'Delimiter ";"', `CoordSys NonEarth Units "m" Bounds (${f3(b[0])}, ${f3(b[1])}) (${f3(b[2])}, ${f3(b[3])})`,
-    'Columns 7', '  NO Char(20)', '  CODE Char(30)', '  NAME Char(100)', '  H Float', '  LABEL Char(120)', '  STATE Char(30)', '  NOTE Char(200)', 'Data'];
+    'Columns 14', '  NO Char(20)', '  CODE Char(40)', '  NAME Char(100)', '  H Float', '  LABEL Char(120)', '  STATE Char(30)', '  NOTE Char(200)',
+    '  MAT Char(60)', '  DIAM Char(20)', '  DEPTH Char(10)', '  YEAR Char(10)', '  OWNER Char(100)', '  ACC Char(10)', '  FIX Char(20)', 'Data'];
   const mid = [], q = v => '"' + String(v == null ? '' : v).replace(/"/g, "'") + '"';
   for (const { o, kind, pts } of objs) {
     const sp = (kind === 'point' ? POINTS : LINES)[o.type] || {};
@@ -3357,34 +3374,89 @@ function toMifMid() {
     else if (sp.closed) mif.push('Region 1', '  ' + pts.length, ...pts.map(p => `${f3(p.y)} ${f3(p.x)}`));
     else mif.push('Pline ' + pts.length, ...pts.map(p => `${f3(p.y)} ${f3(p.x)}`));
     const H = kind === 'point' ? pointH(o) : null;
-    mid.push([q(kind === 'point' ? o.no || '' : 'L' + (o.no || '')), q(o.type), q(sp.name), H == null ? '' : H.toFixed(3), q(kind === 'point' ? pointLabel(o) : netCaption(o) || o.caption || ''), q(STATE_NAME[o.state] || ''), q(kind === 'point' ? pointNote(o) : '')].join(';'));
+    // семантика сетей и колодцев — отдельными столбцами, чтобы в ГИС сопоставить с полями классификатора
+    const a = o.attr || {}, qq = o.q || {};
+    mid.push([q(kind === 'point' ? o.no || '' : 'L' + (o.no || '')), q(codeOf(o.type)), q(sp.name), H == null ? '' : H.toFixed(3), q(kind === 'point' ? pointLabel(o) : netCaption(o) || o.caption || ''), q(STATE_NAME[o.state] || ''), q(kind === 'point' ? pointNote(o) : ''),
+      q(a.mat || a.mark || a.wm || ''), q(a.d || a.wd || ''), q(hasH(a.depth) ? Number(a.depth).toFixed(2) : ''), q(a.year || ''), q(a.owner || ''), q(qq.acc != null ? f3(qq.acc) : ''), q(qq.fix || '')].join(';'));
   }
   return { mif: cp1251(mif.join('\r\n') + '\r\n'), mid: cp1251(mid.join('\r\n') + '\r\n') };
 }
 // текст поля без разделителя файла: «;» внутри описания сдвигал столбцы в КРЕДО
 const field = (s, sep) => String(s == null ? '' : s).replace(sep === ',' ? /[,;]/g : /;/g, sep === ',' ? ' ' : ',').replace(/\s+/g, ' ').trim();
+// Коды знаков под классификатор пользователя (КРЕДО, Civil 3D): pref 'codes' { тип: код }; не задан — код приложения
+let codeMap = pref('codes', {}) || {};
+const codeOf = type => codeMap[type] || type;
+const cleanCode = s => String(s || '').trim().replace(/[\s;,]+/g, '_').slice(0, 40);
 // Каталог для КРЕДО, GeoniCS, Панорамы: «№;X;Y;H;код;описание» — точки и все вершины линий (номер линии.номер вершины).
-// Кодировка Windows-1251, шапка — строкой комментария «//» (в шаблоне импорта КРЕДО — «Символы комментария: //»)
-function toCatalog() {
-  const out = ['// №;X;Y;H;Код;Описание — ' + planeName()];
+// coded — полевое кодирование КРЕДО: у вершин линии «код-номер» и команда p (начать), e (закончить), o (замкнуть) —
+// КРЕДО сам соберёт линии. Кодировка Windows-1251, шапка — строкой комментария «//» (в шаблоне КРЕДО — «Символы комментария: //»)
+function toCatalog(coded) {
+  const out = [`// №;X;Y;H;${coded ? 'Кодовая строка' : 'Код'};Описание — ${planeName()}`];
   for (const p of data.points) { const c = sk42(p.lat, p.lng), H = pointH(p);
-    out.push([p.no || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(3), p.type, field([(POINTS[p.type] || POINTS.mark).name, p.name, pointNote(p)].filter(Boolean).join(' '))].join(';')); }
-  for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain;
+    out.push([p.no || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(3), codeOf(p.type), field([(POINTS[p.type] || POINTS.mark).name, p.name, pointNote(p)].filter(Boolean).join(' '))].join(';')); }
+  for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain, n = l.latlngs.length;
+    const cmd = i => !coded || n < 2 ? '' : i === 0 ? ' p' : i === n - 1 ? (sp.closed ? ' o' : ' e') : '';
     l.latlngs.forEach((ll, i) => { const c = sk42(ll[0], ll[1]), z = l.hs && l.hs[i];
-      out.push([`L${l.no || ''}.${i + 1}`, f3(c.x), f3(c.y), z && hasH(z.h) ? Number(z.h).toFixed(3) : '', l.type, i ? '' : field([sp.name, l.caption, sp.closed ? 'замкнут' : ''].filter(Boolean).join(' '))].join(';')); }); }
+      out.push([`L${l.no || ''}.${i + 1}`, f3(c.x), f3(c.y), z && hasH(z.h) ? Number(z.h).toFixed(3) : '', codeOf(l.type) + (coded ? '-' + (l.no || 0) : '') + cmd(i),
+        i ? '' : field([sp.name, NET_LINE_KINDS.has(sp.kind) ? netCaption(l) : l.caption, coded || !sp.closed ? '' : 'замкнут'].filter(Boolean).join(' '))].join(';')); }); }
   return cp1251(out.join('\r\n') + '\r\n');
 }
+function catalogMenu() {
+  const used = new Set([...data.points.map(p => p.type), ...data.lines.map(l => l.type)]);
+  const own = [...used].filter(t => codeMap[t]).length;
+  showSheet(`<div class="sh-head"><b>Каталог для КРЕДО</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin:4px 0 10px">Точки и вершины линий: №;X;Y;H;код;описание, ${planeName()}, кодировка Windows-1251.
+      В КРЕДО: «Импорт точек по шаблону», разделитель «;», символы комментария «//».</div>
+    <button class="btn primary" id="catCoded" style="width:100%">С кодами линий — КРЕДО соберёт линии сам</button>
+    <div class="hint" style="margin:4px 0 10px;color:var(--muted)">У вершин: «код-номер линии» и команда p — начать, e — закончить, o — замкнуть (как в полевом кодировании КРЕДО).</div>
+    <button class="btn" id="catPlain" style="width:100%">Простой — только точки</button>
+    <button class="btn" id="catCodes" style="width:100%;margin-top:12px">Коды знаков под ваш классификатор${own ? ` (своих: ${own})` : ''}</button>`);
+  $('catCoded').onclick = () => { closeSheet(); download(`catalog_kody_${today()}.txt`, new Blob([toCatalog(true)], { type: 'text/plain' }), 'text/plain'); };
+  $('catPlain').onclick = () => { closeSheet(); download(`catalog_${today()}.txt`, new Blob([toCatalog()], { type: 'text/plain' }), 'text/plain'); };
+  $('catCodes').onclick = () => codesMenu();
+}
+// таблица «знак → свой код»: знаки этого плана — сразу для правки, все знаки — через файл (заполнить в Excel и загрузить)
+function codesMenu() {
+  const used = [...new Set([...data.points.map(p => p.type), ...data.lines.map(l => l.type)])];
+  const nameOf = t => (POINTS[t] || LINES[t] || {}).name || t;
+  showSheet(`<div class="sh-head"><b>Коды знаков</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin:4px 0 10px">Код идёт в каталог, файл для Civil 3D и имя блока в DXF. Пусто — код приложения.</div>
+    <div id="codeRows" style="max-height:45vh;overflow:auto">${used.length ? used.map(t => `<div class="meas-row"><span style="flex:1;min-width:0">${esc(nameOf(t))}<br><small style="color:var(--muted)">${esc(t)}</small></span>
+      <input data-t="${esc(t)}" value="${esc(codeMap[t] || '')}" placeholder="${esc(t)}" style="width:40%;min-height:44px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)"></div>`).join('')
+      : '<div class="hint">На плане пока нет знаков — коды для всех знаков можно задать файлом.</div>'}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">
+      <button class="btn" id="codesOut">Выгрузить таблицу всех знаков</button><button class="btn" id="codesIn">Загрузить таблицу</button></div>
+    <div class="hint" style="margin-top:6px;color:var(--muted)">Таблица — CSV «тип;код;название»: заполните столбец «код» в Excel и загрузите обратно.</div>`);
+  $('codeRows').onchange = e => { const t = e.target.dataset && e.target.dataset.t; if (!t) return;
+    const v = cleanCode(e.target.value); e.target.value = v;
+    codeMap = { ...codeMap }; if (v) codeMap[t] = v; else delete codeMap[t]; setPref('codes', codeMap); toast(v ? `Код «${v}»` : 'Код приложения'); };
+  $('codesOut').onclick = () => download(`kody_znakov_${today()}.csv`, new Blob([cp1251(['тип;код;название', ...[...Object.values(POINTS), ...Object.values(LINES)]
+    .map(s => [s.id, codeMap[s.id] || '', field(s.name)].join(';'))].join('\r\n') + '\r\n')], { type: 'text/csv' }), 'text/csv');
+  $('codesIn').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.csv,.txt,text/csv,text/plain';
+    inp.onchange = async () => { const f = inp.files[0]; if (!f) return;
+      const buf = new Uint8Array(await f.arrayBuffer());
+      let text = new TextDecoder('utf-8').decode(buf); if (text.includes('�')) text = new TextDecoder('windows-1251').decode(buf);   // Excel сохраняет в 1251
+      const next = { ...codeMap }; let n = 0;
+      for (const row of text.replace(/^﻿/, '').split(/\r?\n/)) { const [t, c] = row.split(/[;\t]/).map(s => (s || '').trim().replace(/^"|"$/g, ''));
+        if (!POINTS[t] && !LINES[t]) continue;
+        const v = cleanCode(c); if (v) next[t] = v; else delete next[t]; n++; }
+      if (!n) { toast('В файле не нашлось знаков приложения — нужен столбец «тип» первым'); return; }
+      codeMap = next; setPref('codes', codeMap); toast(`Загружено кодов: ${Object.keys(codeMap).length}`); codesMenu(); };
+    inp.click(); };
+}
 // Точки для Civil 3D, формат PNEZD через запятую: номер — только число (вершины линий — номера после точек),
-// описание начинается с кода знака — по нему срабатывают ключи описаний (Description Keys)
+// описание начинается с кода знака — по нему срабатывают ключи описаний (Description Keys);
+// у вершин линий — коды фигур Civil 3D по умолчанию: B — начало, E — конец, CLS — замкнуть
 function toPnezd() {
   const out = [], used = new Set(data.points.map(p => Number(p.no)).filter(n => n > 0));
   let next = Math.max(0, ...used) + 1;
   const num = n => { if (n > 0 && !used.has(-n)) { used.add(-n); return n; } while (used.has(next)) next++; used.add(next); return next++; };
   const row = (n, c, H, d) => out.push([n, f3(c.x), f3(c.y), H == null ? '' : Number(H).toFixed(3), field(d, ',')].join(','));
-  for (const p of data.points) row(num(Number(p.no)), sk42(p.lat, p.lng), pointH(p), [p.type, p.name, pointNote(p)].filter(Boolean).join(' '));
-  for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain;
+  for (const p of data.points) row(num(Number(p.no)), sk42(p.lat, p.lng), pointH(p), [codeOf(p.type), p.name, pointNote(p)].filter(Boolean).join(' '));
+  for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain, n = l.latlngs.length;
+    const fig = i => n < 2 ? '' : i === 0 ? 'B' : i === n - 1 ? (sp.closed ? 'CLS' : 'E') : '';
     l.latlngs.forEach((ll, i) => { const z = l.hs && l.hs[i];
-      row(num(0), sk42(ll[0], ll[1]), z && hasH(z.h) ? z.h : null, [l.type, `L${l.no || ''}.${i + 1}`, i ? '' : [sp.name, l.caption].filter(Boolean).join(' ')].filter(Boolean).join(' ')); }); }
+      row(num(0), sk42(ll[0], ll[1]), z && hasH(z.h) ? z.h : null, [codeOf(l.type), fig(i)].filter(Boolean).join(' ')); }); }
   return cp1251(out.join('\r\n') + '\r\n');
 }
 // поворот и свойства знака из KML; повреждённые — просто пропускаем
