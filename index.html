@@ -1351,13 +1351,18 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 42;
+const APP_BUILD = 43;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
-async function checkUpdate() {
-  if (!NATIVE || !navigator.onLine) return;
+// manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
+async function checkUpdate(manual) {
+  if (!NATIVE) { if (manual) toast(`Сборка ${APP_BUILD}. Обновления проверяются в Android-приложении`); return; }
+  if (!navigator.onLine) { if (manual) toast('Нет интернета — проверю, когда появится связь'); return; }
   try {
-    const v = await fetch(UPDATE_URL + '?t=' + Date.now(), { cache: 'no-store' }).then(r => r.json());
-    if (!(v.build > APP_BUILD)) return;
+    const r = await fetch(UPDATE_URL + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const v = await r.json();
+    if (!(v.build > APP_BUILD)) { if (manual) toast(`У вас последняя версия — сборка ${APP_BUILD}`); return; }
+    if (manual) toast(`Есть новая сборка ${v.build} — кнопка «Обновить» вверху`);
     $('updVer').textContent = v.name || ('сборка ' + v.build);
     $('updLine').style.display = 'flex';
     const U = window.Capacitor.Plugins && window.Capacitor.Plugins.Updater || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Updater'));
@@ -1377,8 +1382,9 @@ async function checkUpdate() {
       busy = false; btn.disabled = false;
       if (btn.textContent.startsWith('Скачиваю')) btn.textContent = 'Обновить';
     };
-  } catch (e) { /* нет связи с сайтом — проверим в другой раз */ }
+  } catch (e) { if (manual) toast('Не удалось связаться с сайтом обновлений — попробуйте позже'); }   // молча — проверим в другой раз
 }
+const UPDATE_EVERY_MS = 30 * 60 * 1000;                                // и раз в полчаса, если приложение не закрывали
 
 /* ───────────── Спутники ГНСС — только в Android-приложении (браузер этих данных не даёт) ───────────── */
 
@@ -3619,6 +3625,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { header: 'Прочее' },
   { id: 'fit', icon: '⤢', text: 'Показать все объекты' },
   { id: 'clear', icon: '✕', text: 'Удалить всё с карты' },
+  { id: 'update', icon: '⬆', text: `Проверить обновление (у вас сборка ${APP_BUILD})` },
   { id: 'about', icon: 'i', text: 'О программе' }
 ], act => MENU[act]());
 
@@ -3674,7 +3681,10 @@ const MENU = {
     if (all.length) map.fitBounds(all, { padding: [60, 60], maxZoom: 18 }); else toast('На карте пока ничего нет');
   },
   clear: () => ask('Удалить ВСЕ знаки и линии? Их можно будет вернуть кнопкой «Вернуть» или из автокопии.', 'Удалить всё', true).then(ok => { if (ok) { data = { points: [], lines: [], ...(data.meta ? { meta: data.meta } : {}) }; save(); hideCard(); } }),
-  about: () => alert('Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
+  update: () => checkUpdate(true),
+  about: () => alert(`Полевой план, сборка ${APP_BUILD}.
+
+` + 'Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
   crs: () => openList('Система координат', [
     { header: 'Плоские координаты' },
     { id: 'gsk', icon: '⌖', text: 'ГСК-2011 — государственная (по умолчанию)', on: crsId === 'gsk', check: true },
@@ -5400,6 +5410,7 @@ loadGeoid().catch(() => { /* без сети и кэша — попробуем 
 if (NATIVE) { startGnss(); startGps(); checkUpdate(); }   // в Android-приложении спутники и GPS включаются сразу, проверяется обновление
 // вернулись в приложение (из другого окна, после сна телефона) — ещё раз проверить обновление, перезапускать не нужно
 if (NATIVE) document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+if (NATIVE) { setInterval(checkUpdate, UPDATE_EVERY_MS); addEventListener('online', () => checkUpdate()); }
 // на сайте — фоновый помощник, чтобы приложение открывалось без интернета (в Android-приложении всё и так внутри)
 if (!NATIVE && 'serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { /* без него просто нужен интернет */ });
 redrawAll();
