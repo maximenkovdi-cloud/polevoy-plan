@@ -173,6 +173,14 @@
   #card .btn.trash { color:var(--red); padding:0; margin-left:6px; }
   #card .swatches { display:flex; align-items:center; gap:8px; margin:2px 0 10px; overflow-x:auto; padding:3px 2px; }
   .meas-row .seg button { min-height:44px; font-size:15px; padding:8px 12px; }
+  /* режим «перчатки»: всё, что нажимают в поле, — не меньше 60 px */
+  body.glove .btn { min-height:62px; font-size:1.08em; }
+  body.glove .fab { width:62px; height:62px; }
+  body.glove .fab svg { width:32px; height:32px; }
+  body.glove #bar button { width:84px; font-size:14px; }
+  body.glove .seg button, body.glove .meas-row .seg button { min-height:54px; padding:10px 14px; font-size:15px; }
+  body.glove #modeQuick button { min-height:58px; }
+  body.glove .x { min-width:52px; min-height:52px; }
   .tabs button { min-height:40px; }
   #card .swatches > span { color:var(--muted); font-size:.9em; margin-right:4px; }
   #card .swatches button { flex:none; width:38px; height:38px; border-radius:50%; border:1px solid var(--line); background:var(--panel); padding:0; font-size:9px; color:var(--muted); }
@@ -871,6 +879,7 @@ function startGps() {
     const first = !gps;
     gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, altAcc: p.coords.altitudeAccuracy, at: Date.now() };
     if (measuring) measuring.onFix(p);
+    fixWatch(gps.acc);
     const ll = [gps.lat, gps.lng];
     if (!gpsMarker) {
       gpsCircle = L.circle(ll, { radius: gps.acc, color: '#1e88e5', weight: 1, fillOpacity: .12, interactive: false }).addTo(map);
@@ -1119,7 +1128,7 @@ function ctrlText(p) {
 }
 
 function openMeasure(onAccept) {
-  const o = pref('meas', { sec: 30, kind: 'clear', scale: 500 });
+  const o = { auto: 1, ...pref('meas', { sec: 30, kind: 'clear', scale: 500 }) };
   const seg = (key, items, label) => `<div class="seg" data-key="${key}">${items.map(([v, t]) =>
     `<button data-v="${v}" class="${String(o[key]) === String(v) ? 'on' : ''}">${t}</button>`).join('')}</div>`;
   // результат — первым и крупно; настройки (меняются редко) — одной строкой «30 с · Чёткий контур · 1:500 ✎», по нажатию раскрываются
@@ -1130,12 +1139,13 @@ function openMeasure(onAccept) {
       <div class="meas-row"><span>Время</span>${seg('sec', MEAS_SECONDS.map(s => [s, s < 60 ? s + ' с' : s / 60 + ' мин']))}</div>
       <div class="meas-row"><span>Что снимаем</span>${seg('kind', MEAS_KINDS.map(k => [k.id, k.name]))}</div>
       <div class="meas-row"><span>Масштаб плана</span>${seg('scale', MEAS_SCALES.map(s => [s, '1:' + s]))}</div>
+      <div class="meas-row"><span>Приём</span>${seg('auto', [[1, 'Сам, если в допуске'], [0, 'Кнопкой']])}</div>
     </div>
     <div class="acts" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">
       <button class="btn" data-close>Отмена</button><button class="btn primary" id="measGo">Начать</button></div></div>`);
   const tolNote = () => {
     const k = MEAS_KINDS.find(x => x.id === o.kind);
-    $('measSum').innerHTML = `${o.sec < 60 ? o.sec + ' с' : o.sec / 60 + ' мин'} · ${esc(k.name)} · 1:${o.scale} <span class="pen">✎ изменить</span>`;
+    $('measSum').innerHTML = `${o.sec < 60 ? o.sec + ' с' : o.sec / 60 + ' мин'} · ${esc(k.name)} · 1:${o.scale}${o.auto ? ' · автоприём' : ''} <span class="pen">✎ изменить</span>`;
     if (!measuring) $('measLive').innerHTML = `<div class="meas-big">допуск ${cmText(measTol(o))}</div>
       <div class="meas-sub">${String(k.mm).replace('.', ',')} мм на плане, ${k.hint} СП 47.13330. Стойте неподвижно, веха — по уровню, затем «Начать».</div>`;
   };
@@ -1150,6 +1160,7 @@ function openMeasure(onAccept) {
     setPref('meas', o); tolNote();
   });
   $('measGo').onclick = () => runMeasure(o, onAccept);
+  syncVolKeys();
 }
 
 function runMeasure(o, onAccept) {
@@ -1184,9 +1195,12 @@ function runMeasure(o, onAccept) {
     const hd = hdops.length ? hdops.reduce((a, b) => a + b, 0) / hdops.length : null;
     const meas = { sec: Math.round((Date.now() - t0) / 1000), n: s.n, m: +s.m.toFixed(3), dev: +s.dev.toFixed(3), acc: +s.acc.toFixed(3),
       hdop: hd == null ? null : +hd.toFixed(1), hEll: s.hEll == null ? null : +s.hEll.toFixed(3), hm: s.hm == null ? null : +s.hm.toFixed(3), kind: o.kind, scale: o.scale, tol: +tol.toFixed(3), ok: cls, dropped: fixes.length - use.length, at: new Date().toISOString() };
-    const go = $('measGo');
+    const go = $('measGo'), accept = () => { closeSheet(); onAccept(L.latLng(s.lat, s.lng), meas); };
+    cue(cls);
+    if (o.auto && cls === 'ok') { say(`${VERDICT_SPEECH.ok}, плюс-минус ${cmSpeech(s.m)}. Принято`); accept(); return; }
+    say(`${VERDICT_SPEECH[cls]}, плюс-минус ${cmSpeech(s.m)}`);
     go.textContent = 'Принять'; go.disabled = false;
-    go.onclick = () => { closeSheet(); onAccept(L.latLng(s.lat, s.lng), meas); };
+    go.onclick = accept;
     const back = go.previousElementSibling;
     back.removeAttribute('data-close'); back.textContent = 'Повторить';
     back.onclick = () => openMeasure(onAccept);
@@ -1199,6 +1213,7 @@ function runMeasure(o, onAccept) {
     fixes.push({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, altAcc: p.coords.altitudeAccuracy });
     if (sats && sats.dop) hdops.push(sats.dop.h);
   } };
+  cue('start');
   const go = $('measGo');
   go.textContent = 'Стоп — принять';
   go.onclick = () => finish();
@@ -1206,10 +1221,96 @@ function runMeasure(o, onAccept) {
   live();
 }
 
+/* ───────────── Работа с занятыми руками: сигналы, озвучка, перчатки, дождь ───────────── */
+
+let soundOn = pref('sound', true), voiceOn = pref('voice', true), gloveOn = pref('glove', false), rainOn = pref('rain', false);
+document.body.classList.toggle('glove', gloveOn);
+// сигналы различаются на слух и в кармане: в допуске — два высоких, на пределе — один средний, брак — низкий длинный,
+// потеря FIX — три падающих, FIX вернулся — два восходящих. [частота Гц (0 — пауза), длительность мс]
+const CUES = {
+  tick: { tones: [[1200, 50]], vib: [30] },
+  start: { tones: [[880, 120]], vib: [60] },
+  ok: { tones: [[1320, 110], [0, 70], [1760, 170]], vib: [80, 80, 80] },
+  mid: { tones: [[990, 320]], vib: [250] },
+  bad: { tones: [[330, 650]], vib: [650] },
+  fixLost: { tones: [[880, 150], [660, 150], [440, 320]], vib: [200, 100, 200, 100, 400] },
+  fixBack: { tones: [[660, 120], [990, 180]], vib: [60, 60, 60] }
+};
+let audioCtx = null;
+function cue(kind) {
+  const c = CUES[kind];
+  if (!c) return;
+  if (navigator.vibrate) navigator.vibrate(c.vib);
+  if (!soundOn) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    let t = audioCtx.currentTime + 0.02;
+    for (const [hz, ms] of c.tones) {
+      if (hz) {
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = 'square'; o.frequency.value = hz;
+        g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + ms / 1000);
+        o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t + ms / 1000);
+      }
+      t += ms / 1000;
+    }
+  } catch (e) { /* без звука — вибрация уже была */ }
+}
+// озвучка: в приложении — голосом Android, в браузере — встроенным синтезом речи
+function say(text) {
+  if (!voiceOn) return;
+  const web = () => { try { const u = new SpeechSynthesisUtterance(text); u.lang = 'ru-RU'; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) { /* без голоса */ } };
+  if (GNSS && GNSS.speak) GNSS.speak({ text }).catch(web); else web();
+}
+function cmSpeech(m) {
+  if (m >= 1) return m.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' метра';
+  const n = Math.max(1, Math.round(m * 100));
+  return n + ' ' + plural(n, 'сантиметр', 'сантиметра', 'сантиметров');
+}
+const VERDICT_SPEECH = { ok: 'В допуске', mid: 'На пределе', bad: 'Не годится' };
+// потеря и возврат FIX — сигналом, пока идёт съёмка (не чаще раза в 5 секунд)
+const FIX_ALERT_MS = 5000;
+let lastFix = null, lastFixAlert = 0;
+function fixWatch(acc) {
+  const k = fixKind(acc), busy = mode || measuring, now = Date.now();
+  const changed = lastFix && (lastFix === 'FIX') !== (k === 'FIX');
+  if (!busy || !changed) { lastFix = k; return; }
+  if (now - lastFixAlert <= FIX_ALERT_MS) return;                    // сообщим на следующем отсчёте, если смена удержится
+  lastFixAlert = now; lastFix = k;
+  if (k === 'FIX') { cue('fixBack'); say('Фикс'); }
+  else { cue('fixLost'); say('Потерян фикс'); toast(`Потерян FIX — сейчас ${k}, ±${cmText(acc)}`); }
+}
+// вопрос крупными кнопками вместо системного окна; громкость «+» — да, «−» — нет
+let askClosedAt = 0;
+const VOL_AFTER_ASK_MS = 500;
+function ask(text, yes, danger) {
+  return new Promise(resolve => {
+    showSheet(`<div class="hint" style="margin:6px 0 14px;font-size:1.05em;color:var(--ink);line-height:1.45">${text}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="askNo">Нет</button><button class="btn ${danger ? 'danger' : 'primary'}" id="askYes">${esc(yes)}</button></div>`);
+    let done = false;
+    const end = v => { if (done) return; done = true; askClosedAt = Date.now(); closeSheet(); resolve(v); };
+    $('askYes').onclick = () => end(true);
+    $('askNo').onclick = () => end(false);
+    $('sheet').onclick = e => { if (e.target === $('sheet')) end(false); };
+  });
+}
+// кнопки громкости перехватываются, пока идёт съёмка или открыто измерение / вопрос
+let volCap = null;                                                   // null — ещё не сообщали телефону: первая же проверка выключит перехват
+function syncVolKeys() {
+  try {
+    const open = $('sheet').style.display === 'block' && !!($('measBox') || $('askYes'));
+    const on = pref('volKeys', true) && (!!mode || open);
+    if (on === volCap || !GNSS || !GNSS.volumeKeys) return;
+    GNSS.volumeKeys({ on }).then(() => { volCap = on; }).catch(() => {});
+  } catch (e) { /* ещё идёт запуск — режима съёмки нет */ }
+}
+setTimeout(syncVolKeys, 0);                                          // после запуска: сбросить перехват громкости
+
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 32;
+const APP_BUILD = 33;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -2455,7 +2556,7 @@ function setMode(m) {
   if (mode && mode.temp && (!m || m !== mode)) { map.removeLayer(mode.temp); mode.temp = null; }
   mode = m;
   if (typeof updateRubber === 'function') updateRubber();
-  if (GNSS && GNSS.volumeKeys) GNSS.volumeKeys({ on: !!m && pref('volKeys', true) }).catch(() => {});   // громкость «−» — По GPS, «+» — Измерить
+  syncVolKeys();                                                      // громкость «−» — По GPS, «+» — Измерить
   setBarState();
   const box = $('mode');
   if (!mode) { box.style.display = 'none'; return; }
@@ -2477,11 +2578,18 @@ function setMode(m) {
   $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}"${a === 'done' ? ` style="grid-column:span ${isPt ? 2 : 1}"` : ''}>${t}</button>`).join('');
 }
 // кнопки громкости в режиме съёмки (Android): «−» — точка по GPS, «+» — измерение с усреднением
+// в окне измерения: «+» — Начать / Стоп — принять / Принять, «−» — Отмена / Повторить; в вопросе: «+» — да, «−» — нет
 addEventListener('volumeKey', e => {
-  if (!mode || $('sheet').style.display === 'block') return;
-  const act = (e.key || (e.detail && e.detail.key)) === 'up' ? 'measure' : 'gps';
-  const b = document.querySelector(`#modeBtns [data-act="${act}"]`);
-  if (b) { if (navigator.vibrate) navigator.vibrate(40); b.click(); }
+  const up = (e.key || (e.detail && e.detail.key)) === 'up', sheetOpen = $('sheet').style.display === 'block';
+  if (sheetOpen && $('askYes')) { cue('tick'); $(up ? 'askYes' : 'askNo').click(); return; }
+  if (sheetOpen && $('measGo')) {
+    const b = up ? $('measGo') : $('measGo').previousElementSibling;
+    if (b && !b.disabled) { cue('tick'); b.click(); }
+    return;
+  }
+  if (!mode || sheetOpen || Date.now() - askClosedAt < VOL_AFTER_ASK_MS) return;
+  const b = document.querySelector(`#modeBtns [data-act="${up ? 'measure' : 'gps'}"]`);
+  if (b) { cue('tick'); b.click(); }
 });
 $('modeQuick').addEventListener('click', e => {
   const b = e.target.closest('[data-quick]');
@@ -2496,7 +2604,11 @@ $('modeBtns').addEventListener('click', e => {
   const act = b.dataset.act;
   if (act === 'center') addAt(map.getCenter(), null, 'center');
   if (act === 'gps' && gps && Date.now() - gps.at > GPS_FRESH_MS) { toast(`Координаты GPS устарели (${Math.round((Date.now() - gps.at) / 1000)} с назад) — подождите сигнал`); startGps(); return; }
-  if (act === 'gps' && gps && gps.acc > GPS_WARN_M && !confirm(`Точность GPS ±${cmText(gps.acc)} (${fixKind(gps.acc)}) — хуже допуска 1:500 (25 см). Поставить всё равно?`)) return;
+  if (act === 'gps' && gps && gps.acc > GPS_WARN_M) {
+    const m = mode, at = L.latLng(gps.lat, gps.lng);
+    ask(`Точность GPS ±${cmText(gps.acc)} (${fixKind(gps.acc)}) — хуже допуска 1:500 (25 см). Поставить всё равно?`, 'Поставить').then(ok => { if (ok && mode === m) addAt(at, null, 'gps'); });
+    return;
+  }
   if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng), null, 'gps'); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
   if (act === 'photo') {                                              // сначала снимок (отмена — точки нет), потом точка с ним
     const m = mode;
@@ -2511,12 +2623,17 @@ $('modeBtns').addEventListener('click', e => {
   if (act === 'snap') { snapOn = !snapOn; setPref('snap', snapOn); setMode(mode); toast(snapOn ? 'Привязка к точкам, вершинам и линиям включена' : 'Привязка выключена — точка ставится ровно куда нажали'); }
   if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode !== m) return; const pt = addAt(ll, meas);
-    if (pt && pt.type === GENERIC.point) openPicker('point', id => changeType('point', pt, id), 'Закройте — останется простой точкой'); }); }
+    if (pt && pt.type === GENERIC.point) openPicker('point', id => { changeType('point', pt, id); if (/^w_/.test(id)) editPoint(pt); }, 'Закройте — останется простой точкой'); }); }
   if (act === 'undo') { mode.latlngs.pop(); if (mode.hs) mode.hs.pop(); refreshTemp(); setMode(mode); }
-  if (act === 'cancel' && (mode.latlngs.length < 2 || confirm(`Бросить линию из ${mode.latlngs.length} точек?`))) setMode(null);
+  if (act === 'cancel') { const m = mode; if (m.latlngs.length < 2) setMode(null); else ask(`Бросить линию из ${m.latlngs.length} точек?`, 'Бросить', true).then(ok => { if (ok && mode === m) setMode(null); }); }
   if (act === 'done') finishMode();
 });
-map.on('click', e => { if (mode) addAt(e.latlng); });
+let rainHintAt = 0;
+map.on('click', e => {
+  if (!mode) return;
+  if (rainOn) { if (Date.now() - rainHintAt > 4000) { rainHintAt = Date.now(); toast('Режим «дождь»: касание карты точку не ставит — «В перекрестье», «По GPS» или «Измерить»'); } return; }
+  addAt(e.latlng);
+});
 
 // src: 'tap' (касание), 'center' (перекрестье), 'gps', 'measure'. Касание и перекрестье привязываются к соседним объектам
 function addAt(ll, meas, src) {
@@ -2537,7 +2654,7 @@ function addAt(ll, meas, src) {
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
       (hz ? `, H ${mText(hz.h, 2)}` : src === 'tap' || src === 'center' ? ' без отметки' : ', приёмник не дал высоту'));
     const ps = POINTS[pt.type] || {};
-    if (ps.frac || ps.svgFor) editPoint(pt);                          // у надписи покрытия и отметок — сразу спросить значения
+    if (ps.frac || ps.svgFor || /^w_/.test(pt.type)) editPoint(pt);   // у надписи покрытия, отметок и колодца (лотки) — сразу спросить значения
     return pt;
   } else {
     mode.latlngs.push([ll.lat, ll.lng]);
@@ -2646,8 +2763,9 @@ function showSheet(html) {
   $('sheetPanel').innerHTML = '<div class="grab"></div>' + html;
   $('sheet').style.display = 'block';
   $('sheet').onclick = e => { if (e.target === $('sheet') || e.target.closest('[data-close]')) closeSheet(); };
+  syncVolKeys();
 }
-function closeSheet() { $('sheet').style.display = 'none'; }
+function closeSheet() { $('sheet').style.display = 'none'; syncVolKeys(); }
 
 // Мягкие переносы в длинных словах — чтобы в узкой плитке слово рвалось по слогам («нефте-провода»), а не по одной букве
 const SOFT = '­';
@@ -2733,7 +2851,10 @@ function changeType(kind, obj, id) {
   editLine(obj);
 }
 $('fabUndo').onclick = undo;
-$('btnMap').onclick = () => { if (mode && mode.kind === 'line' && mode.latlngs.length && !confirm('Бросить рисование линии?')) return; setMode(null); closeSheet(); };
+$('btnMap').onclick = () => {
+  if (mode && mode.kind === 'line' && mode.latlngs.length) { const m = mode; ask('Бросить рисование линии?', 'Бросить', true).then(ok => { if (ok && mode === m) setMode(null); }); return; }
+  setMode(null); closeSheet();
+};
 
 // Список с пунктами: [{ id, icon, text, on }]
 function openList(title, items, onPick) {
@@ -2766,7 +2887,11 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
   { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' },
   ...(NATIVE ? [{ id: 'screen', icon: '◑', text: pref('keepScreen', true) ? 'Экран не гаснет во время работы' : 'Экран гаснет как обычно', on: pref('keepScreen', true), check: true }] : []),
-  ...(NATIVE ? [{ id: 'volkeys', icon: '±', text: pref('volKeys', true) ? 'Кнопки громкости: «−» По GPS, «+» Измерить' : 'Кнопки громкости: как обычно', on: pref('volKeys', true), check: true }] : []),
+  ...(NATIVE ? [{ id: 'volkeys', icon: '±', text: pref('volKeys', true) ? 'Кнопки громкости: «−» По GPS, «+» Измерить и Принять' : 'Кнопки громкости: как обычно', on: pref('volKeys', true), check: true }] : []),
+  { id: 'sound', icon: '♪', text: 'Звук и вибрация: в допуске / брак / потеря FIX', on: soundOn, check: true },
+  { id: 'voice', icon: '🗣', text: 'Озвучивать результат измерения голосом', on: voiceOn, check: true },
+  { id: 'glove', icon: '✋', text: 'Крупные кнопки (работа в перчатках)', on: gloveOn, check: true },
+  { id: 'rain', icon: '☂', text: 'Дождь: касание карты не ставит точку', on: rainOn, check: true },
   { id: 'cal', icon: '⟷', text: PX_MM === PX_MM_DEFAULT ? 'Размер знаков: откалибровать по линейке' : 'Размер знаков: по линейке — повторить' },
   { id: 'stake', icon: '◎', text: 'Вынос в натуру по координатам' },
   { header: 'Карта' },
@@ -2810,6 +2935,10 @@ const MENU = {
   heights: () => heightsMenu(),
   volkeys: () => { const on = !pref('volKeys', true); setPref('volKeys', on); toast(on ? 'В режиме съёмки: громкость «−» — точка по GPS, «+» — Измерить' : 'Кнопки громкости работают как обычно'); },
   stake: () => stakeByCoords(),
+  sound: () => { soundOn = !soundOn; setPref('sound', soundOn); if (soundOn) cue('ok'); toast(soundOn ? 'Звук включён: два высоких — в допуске, низкий — брак, три падающих — потерян FIX' : 'Звук выключен, осталась вибрация'); },
+  voice: () => { voiceOn = !voiceOn; setPref('voice', voiceOn); if (voiceOn) say('В допуске, плюс-минус 2 сантиметра'); toast(voiceOn ? 'Результат измерения будет озвучен' : 'Без голоса'); },
+  glove: () => { gloveOn = !gloveOn; setPref('glove', gloveOn); document.body.classList.toggle('glove', gloveOn); toast(gloveOn ? 'Крупные кнопки включены' : 'Обычные кнопки'); },
+  rain: () => { rainOn = !rainOn; setPref('rain', rainOn); toast(rainOn ? 'Дождь: точки ставятся только кнопками — капли и мокрая перчатка не наставят лишнего' : 'Касание карты снова ставит точку'); },
   kmz: () => exportKmz(),
   cross: () => { const n = netCrossings().length; if (!n) { toast('Пересечений сетей не найдено'); return; } download(`peresecheniya_${today()}.csv`, toCrossSheet(), 'text/csv;charset=utf-8'); },
   ctrlsheet: () => { if (!data.points.some(p => p.ctrl && p.ctrl.length)) { toast('Контрольных измерений нет — карточка точки → «✓ Контроль»'); return; } download(`kontrol_${today()}.csv`, toCtrlSheet(), 'text/csv;charset=utf-8'); },
@@ -2837,7 +2966,7 @@ const MENU = {
     const all = data.points.map(p => [p.lat, p.lng]).concat(...data.lines.map(l => l.latlngs));
     if (all.length) map.fitBounds(all, { padding: [60, 60], maxZoom: 18 }); else toast('На карте пока ничего нет');
   },
-  clear: () => { if (confirm('Удалить ВСЕ знаки и линии? Их можно будет вернуть кнопкой «Вернуть» или из автокопии.')) { data = { points: [], lines: [] }; save(); hideCard(); } },
+  clear: () => ask('Удалить ВСЕ знаки и линии? Их можно будет вернуть кнопкой «Вернуть» или из автокопии.', 'Удалить всё', true).then(ok => { if (ok) { data = { points: [], lines: [] }; save(); hideCard(); } }),
   about: () => alert('Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
   crs: () => openList('Система координат', [
     { header: 'Плоские координаты' },
