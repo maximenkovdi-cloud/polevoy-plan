@@ -27,6 +27,8 @@
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { height:100%; margin:0; background:var(--bg); font:var(--fs)/1.35 system-ui, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
   #map { position:absolute; inset:0; background:var(--bg); }
+  .leaflet-tile-pane { opacity:var(--baseOp, .7); }
+  body.day .leaflet-tile-pane { filter: saturate(.6); }
   body.night .leaflet-tile-pane { filter: brightness(.55) contrast(1.15) saturate(.55); }
   body.sun .leaflet-tile-pane { filter: contrast(1.2) saturate(1.1); }
   button { font:inherit; color:inherit; }
@@ -36,13 +38,20 @@
   #top .r1 { display:flex; justify-content:space-between; align-items:center; gap:6px; }
   .seg { display:flex; background:var(--line); border-radius:9px; padding:2px; }
   body.sun .seg { background:#fff; border:2px solid #000; }
-  .seg button { border:0; background:none; padding:5px 10px; border-radius:7px; color:var(--muted); font-size:12.5px; }
+  .seg button { border:0; background:none; padding:7px 12px; min-height:36px; border-radius:7px; color:var(--muted); font-size:14px; }
   .seg button.on { background:var(--panel); color:var(--ink); font-weight:700; }
   body.sun .seg button.on { background:#000; color:#fff; }
   #zone { font-size:12px; color:var(--muted); }
   .xy { font-size:1.08em; font-weight:700; margin-top:4px; letter-spacing:.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .xy small { font-weight:400; color:var(--muted); font-size:.75em; }
-  #gpsLine { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); margin-top:3px; }
+  #gpsRow { display:flex; align-items:stretch; gap:6px; margin-top:5px; }
+  #gpsLine { flex:1; min-width:0; display:flex; align-items:center; gap:6px; font-size:14px; font-weight:600; padding:6px 9px; border-radius:9px; background:var(--line); color:var(--ink); cursor:pointer; }
+  #gpsLine #gpsText { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #gpsLine[data-st=fix] { background:#2e7d32; color:#fff; } #gpsLine[data-st=float] { background:#f9a825; color:#1b1b1b; }
+  #gpsLine[data-st=phone] { background:#cfd8dc; color:#1b1b1b; } #gpsLine[data-st=bad], #gpsLine[data-st=spoof] { background:#c62828; color:#fff; }
+  #gpsLine[data-st=fix] .dot, #gpsLine[data-st=bad] .dot, #gpsLine[data-st=spoof] .dot { background:#fff; }
+  #antChip { flex:none; min-width:64px; border:2px solid var(--line); border-radius:9px; background:var(--panel); font-weight:700; font-size:14px; padding:4px 8px; }
+  body.night #gpsLine[data-st=phone] { background:#455a64; color:#fff; }
   #updLine { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; padding:6px 8px; border-radius:10px;
     background:color-mix(in srgb, var(--accent) 14%, transparent); font-size:13px; }
   #updLine .btn { min-height:34px; padding:6px 14px; }
@@ -121,6 +130,9 @@
   .grab { width:40px; height:4px; border-radius:2px; background:var(--line); margin:0 auto 10px; }
   .sh-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
   .sh-head b { font-size:1.1em; }
+  /* масштаб «+/−» — крупно и в том же стиле, что круглые кнопки справа */
+  .leaflet-control-zoom { border:0 !important; box-shadow:var(--shadow) !important; border-radius:14px !important; overflow:hidden; }
+  .leaflet-control-zoom a { width:50px !important; height:50px !important; line-height:50px !important; font-size:26px !important; background:var(--panel) !important; color:var(--ink) !important; }
   .x { border:0; background:var(--line); color:var(--ink); width:44px; height:44px; border-radius:50%; font-size:20px; line-height:1; flex:none; }
   body.sun .x { background:#fff; color:#000; border:2px solid #000; }
   .search { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:12px; padding:0 10px; color:var(--muted); }
@@ -141,7 +153,13 @@
   .list .item { display:flex; align-items:center; gap:12px; padding:13px 6px; border-bottom:1px solid var(--line); }
   .list .item:active { background:color-mix(in srgb, var(--accent) 12%, transparent); }
   .list .item .i { width:26px; text-align:center; font-size:18px; flex:none; }
-  .list .item.on { font-weight:700; color:var(--accent); }
+  .list .item.on { font-weight:600; }
+  .list .item.danger { color:#c62828; font-weight:600; }
+  .list .h { font-weight:700; color:var(--ink); opacity:.75; }
+  .list .item .sw { margin-left:auto; flex:none; width:44px; height:26px; border-radius:13px; background:var(--line); position:relative; transition:background .15s; }
+  .list .item .sw::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.35); transition:left .15s; }
+  .list .item .sw.on { background:var(--accent); }
+  .list .item .sw.on::after { left:21px; }
   .list .item .chk { margin-left:auto; font-size:18px; color:var(--accent); }
 
   /* ── формы ── */
@@ -171,7 +189,10 @@
   #card .sub { color:var(--muted); font-size:12.5px; }
   #card .kv { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin:10px 0; font-size:13.5px; font-variant-numeric:tabular-nums; }
   #card .kv span:nth-child(odd) { color:var(--muted); }
-  #card .acts { display:grid; grid-template-columns:1fr 1fr 1fr 52px; gap:6px; }
+  #card .acts { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+  #card .x.trash-h { margin-left:auto; margin-right:16px; color:#c62828; }
+  #card .sw-wrap { margin:2px 0 8px; } #card .sw-wrap summary { cursor:pointer; color:var(--muted); font-size:.9em; padding:6px 2px; list-style:none; }
+  #card .sw-wrap summary::-webkit-details-marker { display:none; }
   #card .btn.trash { color:var(--red); padding:0; margin-left:6px; }
   #card .swatches { display:flex; align-items:center; gap:8px; margin:2px 0 10px; overflow-x:auto; padding:3px 2px; }
   .meas-row .seg button { min-height:44px; font-size:15px; padding:8px 12px; }
@@ -200,6 +221,9 @@
   .sym .lbl.frac .t { border-bottom:1px solid currentColor; padding:0 1px; font-style:italic; }
   .sym .lbl.frac .b { font-style:italic; }                                        /* места нет — подпись появится при приближении */
   .sym.sel svg { filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 3px var(--accent)); }
+  .sym.wait::after { content:''; position:absolute; left:50%; top:50%; width:30px; height:30px; margin:-15px 0 0 -15px; border:2px dashed #ef6c00; border-radius:50%; pointer-events:none; }
+  .sym.sel::before { content:''; position:absolute; left:50%; top:50%; width:38px; height:38px; margin:-19px 0 0 -19px; border:3px solid var(--accent); border-radius:50%; animation:selRing 1.4s ease-in-out infinite; pointer-events:none; }
+  @keyframes selRing { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.45; transform:scale(1.12); } }
   .gtxt { pointer-events:none; fill:#1b5e20; font-weight:400; font-style:italic; font-family:var(--draft); font-variant-numeric: tabular-nums;
     paint-order: stroke; stroke:var(--halo); stroke-width:3.5px; stroke-linejoin:round; }
   body.night .gtxt { fill:#a5d6a7; }
@@ -236,7 +260,7 @@
     <span id="zone"></span>
   </div>
   <div id="coords"></div>
-  <div id="gpsLine"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS выключен — нажмите ◎</span></div>
+  <div id="gpsRow"><div id="gpsLine" data-st="off" role="button"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS выключен — нажмите, чтобы включить</span></div><button id="antChip" aria-label="Высота вехи"></button></div>
   <div id="spoofLine" style="display:none"><span id="spoofText"></span><button class="btn" id="spoofMore">Что делать</button></div>
   <div id="updLine" style="display:none"><span>⬆ Доступна новая версия <b id="updVer"></b></span><button class="btn primary" id="updBtn">Обновить</button></div>
   <div id="satLine" style="display:none"><span class="sat-ic">🛰</span><span id="satText"></span><span class="more">▾</span></div>
@@ -742,7 +766,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&am
 const THEMES = { day: 'Дневная тема', sun: 'Режим «солнце» — максимальный контраст', night: 'Ночная тема' };
 let theme = pref('theme', 'day'), ready = false;      // ready — карта и слои созданы (в конце файла)
 function applyTheme() {
-  document.body.className = THEMES[theme] ? theme : 'day';
+  document.body.classList.remove('day', 'sun', 'night'); document.body.classList.add(THEMES[theme] ? theme : 'day');   // другие классы (перчатки) не трогаем
   document.querySelector('meta[name=theme-color]').content = theme === 'night' ? '#262c33' : '#ffffff';
   if (!ready) return;
   redrawAll();
@@ -956,7 +980,7 @@ function spoofNear(ms) {
     if (ms >= e.from - SPOOF_LOG.beforeMs && ms <= to + SPOOF_LOG.afterMs) return ms < e.from ? 'за ' + Math.ceil((e.from - ms) / 60e3) + ' мин до подмены GPS' : ms <= to ? 'во время подмены GPS' : 'через ' + Math.ceil((ms - to) / 60e3) + ' мин после подмены GPS'; }
   return null;
 }
-const pointSpoofNote = p => p.q ? p.q.spoofNear || spoofNear(Date.parse(p.q.at)) : null;
+const pointSpoofNote = p => p.q && !p.q.redone ? p.q.spoofNear || spoofNear(Date.parse(p.q.at)) : null;   // досняли после подмены по очереди — не помечать
 function spoofUpdate(g) {
   const signs = spoofTrustOn(g) ? [] : spoofSigns(g);
   if (signs.length) {
@@ -966,7 +990,8 @@ function spoofUpdate(g) {
   } else if (spoof) {
     if (!spoofCalm) spoofCalm = Date.now();
     if (Date.now() - spoofCalm > SPOOF.clearMs) { const last = spoofLog[spoofLog.length - 1]; if (last) { last.to = spoofCalm; spoofLogSave(); }
-      spoof = null; spoofCalm = 0; spoofTrusted = { lat: g.lat, lng: g.lng, at: g.at }; cue('fixBack'); toast('Сигнал спутников снова похож на настоящий'); }
+      spoof = null; spoofCalm = 0; spoofTrusted = { lat: g.lat, lng: g.lng, at: g.at }; cue('fixBack');
+      const w = waitList().length; toast(w ? `Сигнал вернулся. Ждут GPS: ${w} — Меню → «Доснять по GPS»` : 'Сигнал спутников снова похож на настоящий'); if (w) say(`Сигнал вернулся. Доснять точек: ${w}`); }
   } else spoofTrusted = { lat: g.lat, lng: g.lng, at: g.at };
   renderSpoof();
 }
@@ -976,12 +1001,13 @@ function renderSpoof() {
   if (spoof) $('spoofText').textContent = spoofCalm ? 'Сигнал снова похож на настоящий — проверяю полминуты. Точки по GPS пока не ставятся.'
     : 'Похоже на подмену GPS: ' + spoof.signs.map(s => s.text).join('; ') + '. Точки по GPS не ставятся.';
   if (gpsMarker) gpsMarker.setStyle({ fillColor: spoof ? '#9e9e9e' : '#1e88e5' });
+  if ($('gpsLine')) { if (spoof) $('gpsLine').dataset.st = 'spoof'; else if ($('gpsLine').dataset.st === 'spoof') $('gpsLine').dataset.st = 'phone'; }
   if (gpsCircle) gpsCircle.setStyle({ color: spoof ? '#9e9e9e' : '#1e88e5' });
 }
 // запрет записи: вернёт true и объяснит, если сейчас подмена
 function spoofBlocks() {
   if (!spoof) return false;
-  cue('bad'); toast('Похоже на подмену GPS — точку по GPS не ставлю. Подробнее — красная строка вверху');
+  cue('bad'); say('Подмена GPS, точку не ставлю'); toast('Похоже на подмену GPS — точку по GPS не ставлю. Подробнее — красная строка вверху');
   return true;
 }
 function spoofSheet() {
@@ -1023,15 +1049,17 @@ function startGps() {
     const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
     const rtk = acc <= RTK_FIX_M ? ' · RTK (похоже на FIX)' : acc < 1 ? ' · RTK (похоже на FLOAT)' : '';
     $('gpsDot').className = 'dot ' + (acc <= 5 ? 'ok' : acc <= 15 ? 'mid' : 'bad');
+    $('gpsLine').dataset.st = spoof ? 'spoof' : acc <= RTK_FIX_M ? 'fix' : acc < 1 ? 'float' : acc > 15 ? 'bad' : 'phone';
     const H = normalHeight(gps.lat, gps.lng, gps.alt);
-    $('gpsText').textContent = (spoof ? '⚠ подмена? ' : '') + `GPS ±${accText} м${rtk}` + (H != null ? ` · H ${H.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} м` : '') +
+    const src = spoofNative.mock === true ? ' · внешний приёмник' : spoofNative.mock === false ? ' · телефон' : '';
+    $('gpsText').textContent = (spoof ? '⚠ подмена? ' : '') + `GPS ±${accText} м${rtk}${src}` + (H != null ? ` · H ${H.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} м` : '') +
       (acc > 15 ? ' — подождите на открытом месте' : '');
     $('fabMe').classList.add('on');
   }, err => {
     if (gpsWatch != null) navigator.geolocation.clearWatch(gpsWatch);
     gpsWatch = null;
-    $('gpsDot').className = 'dot bad';
-    $('gpsText').textContent = 'GPS: ' + ({ 1: 'нет разрешения — разрешите местоположение в настройках телефона', 2: 'нет сигнала — выйдите на открытое место', 3: 'не ответил вовремя — нажмите ◎ ещё раз' }[err.code] || 'нет доступа');
+    $('gpsDot').className = 'dot bad'; $('gpsLine').dataset.st = 'bad';
+    $('gpsText').textContent = 'GPS: ' + ({ 1: 'нет разрешения — разрешите местоположение в настройках телефона', 2: 'нет сигнала — выйдите на открытое место', 3: 'не ответил вовремя — нажмите сюда ещё раз' }[err.code] || 'нет доступа');
   }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
   loadGeoid().catch(() => { /* без модели геоида отметки не считаем — координаты работают */ });
 }
@@ -1123,7 +1151,7 @@ function heightsMenu() {
   $('antH').onchange = () => {                                        // высоту вехи часто меняют — отметки по ГНСС пересчитать
     const v = $('antH').value.trim() === '' ? 0 : parseNum($('antH').value);
     if (isNaN(v) || v < 0 || v > 5) { toast('Высота антенны — от 0 до 5 м, например 1.8'); return; }
-    antH = v; setPref('antH', v);
+    antH = v; setPref('antH', v); antChipText();
     const n = gnssHeights().length && confirm(`Высота антенны ${mText(v, 3)} м. Пересчитать ранее снятые отметки по ГНСС?`) ? recomputeHeights(false) : 0;
     if (n) { save(); redrawAll(); }
     toast(`Высота антенны ${mText(v, 3)} м${n ? `, пересчитано отметок: ${n}` : ''}`);
@@ -1434,7 +1462,7 @@ let volCap = null;                                                   // null —
 function syncVolKeys() {
   try {
     const open = $('sheet').style.display === 'block' && !!($('measBox') || $('askYes'));
-    const on = pref('volKeys', true) && (!!mode || open || !!(stake && stake.so && $('sheet').style.display !== 'block'));
+    const on = pref('volKeys', true) && (!!mode || open || !!(stake && (stake.so || stake.redo) && $('sheet').style.display !== 'block'));
     if (on === volCap || !GNSS || !GNSS.volumeKeys) return;
     GNSS.volumeKeys({ on }).then(() => { volCap = on; }).catch(() => {});
   } catch (e) { /* ещё идёт запуск — режима съёмки нет */ }
@@ -1444,7 +1472,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 46;
+const APP_BUILD = 47;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1592,6 +1620,20 @@ function startGnss() {
   GNSS.start().catch(e => { gnssOn = false; satMessage('Спутники: ' + (e && e.message || 'нет доступа') + ' — нажмите ◎'); });
 }
 $('spoofLine').onclick = () => spoofSheet();
+$('gpsLine').onclick = () => { if (spoof) { spoofSheet(); return; } startGps(); if (gps) map.setView([gps.lat, gps.lng], Math.max(map.getZoom(), 17)); };
+// высота вехи: на виду и меняется в одно касание (самая частая причина брака по отметкам — забыли сменить)
+const ANT_PRESETS = [0, 1.8, 2, 2.1];
+function antChipText() { $('antChip').textContent = 'веха ' + mText(antH, 2); $('antChip').style.borderColor = antH ? '' : '#f9a825'; }
+$('antChip').onclick = () => openList('Высота вехи (антенны) над точкой', [
+  ...ANT_PRESETS.map(v => ({ id: String(v), icon: '⟂', text: v ? mText(v, 2) + ' м' : '0 — антенна на точке', on: Math.abs(antH - v) < 1e-6, radio: true })),
+  { id: 'own', icon: '✎', text: 'Своя высота…' }], pick => {
+  const set = v => { antH = v; setPref('antH', v); data.meta = { ...meta(), heights: { ...(meta().heights || {}), hgt, antH: v } }; save(); antChipText();
+    toast(`Веха ${mText(v, 2)} м — для новых точек. Снятые раньше не меняются`); say('Веха ' + String(v).replace('.', ',') + ' метра'); };
+  if (pick !== 'own') { set(Number(pick)); return; }
+  openForm('Своя высота вехи', [{ key: 'v', label: 'Высота антенны над точкой, м', type: 'number', value: antH, placeholder: '1.8' }], v => {
+    const n = parseNum(v.v); if (isNaN(n) || n < 0 || n > 5) { toast('Высота — от 0 до 5 м'); return false; } set(n); }, 'Готово');
+});
+antChipText();
 // признаки подмены от Android: место по вышкам и Wi-Fi, расхождение времени спутников с часами
 if (NATIVE && GNSS && GNSS.spoofInfo) setInterval(() => { if (gnssOn) spoofPoll(); }, SPOOF.pollMs);
 function spoofPoll() { if (NATIVE && GNSS && GNSS.spoofInfo) GNSS.spoofInfo().then(r => { spoofNative = { ...(r || {}), at: Date.now() }; }).catch(() => {}); }
@@ -1685,7 +1727,7 @@ function drawPoints() {
   for (const p of data.points) {
     if (generalized && MINOR_POINTS.has(p.type) && !(selected && selected.obj === p)) continue;
     const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
-    const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : ''), iconSize: [TAP_PX, TAP_PX], iconAnchor: [TAP_PX / 2, TAP_PX / 2],
+    const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : '') + (p.wait ? ' wait' : ''), iconSize: [TAP_PX, TAP_PX], iconAnchor: [TAP_PX / 2, TAP_PX / 2],
       html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}"${s.defect || s.cadNew ? ` style="color:${objColor(p, 'point')}"` : ''}>${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
     const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode) addAt(snapOn ? L.latLng(p.lat, p.lng) : e.latlng, null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
     pointMarkers.push({ p, marker, lbl });
@@ -2100,6 +2142,7 @@ function drawLines() {
     const g = el('g', {}, netSvg);
     const isSel = selected && selected.obj === line;
     g.style.color = isSel && !line.color ? 'var(--accent)' : objColor(line, 'line');   // свой цвет виден и у выбранной линии — выбор показывает толщина
+    if (isSel) el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 12, opacity: 0.22, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);   // подсветка выбранной линии
     const path = el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'none' }, g);
     if (path.getTotalLength() < 6) { el('line', { x1: pts[0].x, y1: pts[0].y, x2: pts[pts.length - 1].x, y2: pts[pts.length - 1].y, stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round' }, g); continue; }
     curOwner = line.id;                                                // надписи своей линии не мешают ей самой
@@ -2308,7 +2351,8 @@ function showCard(kind, obj) {
       if (a.wd || a.wm) kv.push(['Колодец', [a.wm, a.wd ? 'Ø ' + a.wd + ' мм' : ''].filter(Boolean).join(', ')]);
     }
     if (obj.q) kv.push(['Точность', `±${cmText(obj.q.acc)} в плане · ${fixText(obj.q.fix)}${obj.q.src === 'measure' ? ' · усреднено' : ''}<br><span style="color:var(--muted)">${new Date(obj.q.at).toLocaleString('ru-RU')}</span>`]);
-    else kv.push(['Точность', '<span style="color:var(--muted)">не измерена — поставлена касанием или в перекрестье</span>']);
+    else kv.push(['Точность', '<span style="color:var(--muted)">— (касанием)</span>']);
+    if (obj.wait) kv.push(['Ждёт GPS', '<b style="color:#ef6c00">поставлена на глаз при подмене — доснять</b>']);
     if (pointSpoofNote(obj)) kv.push(['Внимание', `<b style="color:#c62828">снята ${esc(pointSpoofNote(obj))}</b> — проконтролируйте`]);
     const hInfo = obj.hInfo || (obj.meas ? { acc: obj.meas.hm, from: 'measure' } : {});
     kv.push(['Отметка', (obj.h != null && obj.h !== '' ? `<b>${mText(Number(obj.h), 2)} м</b><br>` : '') + `<span style="color:var(--muted)">${esc(heightNote(obj.h, obj.hSrc, hInfo))}</span>`]);
@@ -2343,12 +2387,12 @@ function showCard(kind, obj) {
       if (parts.length) kv.push(['Сеть', parts.join(' · ')]); }
     if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${obj.pk0}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
   }
-  card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x" data-act="close">×</button></div>
+  card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x trash-h" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
-    <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
-    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn" data-act="stake" style="grid-column:span ${kind === 'point' ? 2 : 3}">◎ Вынести в натуру</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки по линии</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}${kind === 'point' ? '<button class="btn" data-act="ctrl" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : ''}<button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
+    <details class="sw-wrap"><summary>Цвет: ${esc((COLORS.find(c => c[0] === (obj.color || '')) || COLORS[0])[1])} ▾</summary><div class="swatches">${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div></details>
+    <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts" style="grid-column:span 2">Вершины</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -2368,6 +2412,7 @@ function showCard(kind, obj) {
     if (act === 'photo') addPhoto(kind, obj);
     if (act === 'ctrl') controlPoint(obj);
     if (act === 'axis') startAxis(obj);
+    if (act === 'redo') { hideCard(); redoGo(obj); }
     if (act === 'vol') volumeForm(obj);
     if (act === 'soline') soFromLine(obj);
     if (act === 'outage') showOutage(outageFrom(kind, obj));
@@ -2764,16 +2809,18 @@ function updateStake() {
       <div>${dx >= 0 ? 'на север' : 'на юг'} ${cmText(Math.abs(dx))} · ${dy >= 0 ? 'на восток' : 'на запад'} ${cmText(Math.abs(dy))}</div>
       <div style="color:var(--muted);font-size:.85em">угол ${az.toFixed(1)}° · GPS ±${cmText(gps.acc)}</div></div></div>`;
   }
-  const sp = stake.so && soById(stake.so.id);
+  const sp = stake.so && soById(stake.so.id), rp = stake.redo && data.points.find(p => p.id === stake.redo.id && p.wait);
+  if (stake.redo && !rp) { stopStake(); return; }                          // точку уже досняли или удалили
   if (stake.so && !sp) { stopStake(); drawSo(); return; }               // точки больше нет (вернули, сменили объект)
-  const box = $('stake'), key = sp ? 'so:' + sp.id : 'pt';
+  const box = $('stake'), key = sp ? 'so:' + sp.id : rp ? 'redo:' + rp.id : 'pt';
   if (box.dataset.key !== key || !$('stakeInfo')) {
     box.dataset.key = key;
-    box.innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:4px"><b>Вынос: ${esc(stake.name)}</b><button class="x" id="stakeStop">×</button></div><div id="stakeInfo"></div>${sp ? soButtons() : ''}`;
+    box.innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:4px"><b>Вынос: ${esc(stake.name)}</b><button class="x" id="stakeStop">×</button></div><div id="stakeInfo"></div>${sp ? soButtons() : rp ? redoButtons() : ''}`;
     $('stakeStop').onclick = stopStake;
     if (sp) soPanelWire(sp);
+    if (rp) redoWire(rp);
   }
-  $('stakeInfo').innerHTML = `${body}${sp ? soPanel(sp) : ''}
+  $('stakeInfo').innerHTML = `${body}${sp ? soPanel(sp) : ''}${rp ? `<div style="margin-top:4px;color:var(--muted);font-size:.85em">Поставлена на глаз при подмене. Встаньте на место и «Измерить здесь». Осталось: ${waitList().length}</div>` : ''}
     <div style="color:var(--muted);font-size:.8em;margin-top:4px">X ${f2(t.x)} Y ${f2(t.y)} — стрелка показывает направление на карте (север вверху)</div>`;
 }
 setInterval(updateStake, 1000);
@@ -3420,6 +3467,47 @@ function toCadCatalog() {
   return cp1251(out.join('\r\n') + '\r\n');
 }
 
+/* ───────────── «Доснять по GPS»: при подмене точки ставятся касанием и ждут; сигнал вернулся — по очереди к каждой ───────────── */
+
+const REDO_JOIN_M = 0.01;                                               // вершины линий, сидящие на точке (до 1 см), едут вместе с ней
+const waitList = () => data.points.filter(p => p.wait);
+function redoSheet() {
+  const L0 = waitList();
+  if (!L0.length) { toast('Точек, ждущих GPS, нет'); return; }
+  showSheet(`<div class="sh-head"><b>Доснять по GPS: ${L0.length}</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin:4px 0 8px">Эти точки поставлены касанием во время подмены GPS — на глаз. Встаньте на каждую и нажмите «Измерить здесь»: координаты и отметка заменятся настоящими.${spoof ? '<br><b style="color:#c62828">Подмена ещё идёт — дождитесь, пока красная строка уберётся.</b>' : ''}</div>
+    <div id="redoRows" style="max-height:44vh;overflow:auto">${L0.map((p, i) => `<div class="meas-row" data-ri="${i}" style="cursor:pointer"><span style="flex:1;min-width:0"><b>${esc(pointLabel(p) || (POINTS[p.type] || POINTS.mark).name)}</b> · № ${esc(p.no || '')}<br><small style="color:var(--muted)">поставлена ${esc(new Date(p.wait).toLocaleString('ru-RU'))}</small></span><span style="flex:none;color:var(--muted)">◎</span></div>`).join('')}</div>
+    <button class="btn primary" id="redoGo" style="width:100%;margin-top:10px">Начать с первой</button>`);
+  $('redoRows').onclick = e => { const r = e.target.closest('[data-ri]'); if (r) redoGo(L0[r.dataset.ri]); };
+  $('redoGo').onclick = () => redoGo(L0[0]);
+}
+function redoGo(p) { startStake([p.lat, p.lng], 'доснять: ' + (pointLabel(p) || (POINTS[p.type] || POINTS.mark).name), null); stake.redo = { id: p.id }; $('stake').dataset.key = ''; updateStake(); }
+const redoButtons = () => '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-top:8px"><button class="btn primary" id="redoRec">Измерить здесь</button><button class="btn" id="redoSkip">Дальше →</button><button class="btn" id="redoMenu">Список</button></div>';
+function redoWire(p) { $('redoRec').onclick = () => redoRecord(p.id); $('redoSkip').onclick = () => redoNext(p.id); $('redoMenu').onclick = () => redoSheet(); }
+function redoNext(id) {
+  const L0 = waitList(), i = L0.findIndex(x => x.id === id), n = L0.slice(i + 1)[0] || L0.find(x => x.id !== id);
+  if (n) redoGo(n); else if (L0.length) { toast('Это последняя точка, ждущая GPS'); } else { stopStake(); toast('Все точки досняты'); say('Все точки досняты'); }
+}
+// измерить на месте: координаты, отметка и точность — настоящие; вершины линий на этой точке переезжают вместе с ней
+function redoRecord(id) {
+  openMeasure((ll, meas) => {
+    const p = data.points.find(x => x.id === id); if (!p) { toast('Точку удалили'); return; }
+    const old = sk42(p.lat, p.lng);
+    if (!p.waitSnap) for (const l of data.lines) l.latlngs.forEach((a, i) => { const c = sk42(a[0], a[1]); if (Math.hypot(c.x - old.x, c.y - old.y) > REDO_JOIN_M) return;
+      l.latlngs[i] = [ll.lat, ll.lng]; if (l.hs && l.hs[i]) l.hs[i] = null; });   // отметка вершины была «на глаз» — убрать
+    const moved = L.latLng(p.lat, p.lng).distanceTo(ll);
+    p.lat = ll.lat; p.lng = ll.lng; p.meas = meas;
+    p.q = { acc: meas.m, fix: fixKind(meas.acc), at: meas.at, src: 'measure', redone: true };
+    const hz = heightFor(ll, meas, 'measure', null);
+    if (hz) { if (hz.h != null) p.h = hz.h; else delete p.h; p.hSrc = hz.src; p.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll, ant: antH }; }
+    else { delete p.h; delete p.hSrc; delete p.hInfo; }                 // приёмник не дал высоту — старая отметка («на глаз») неверна
+    delete p.wait; delete p.waitSnap;
+    save(); redrawAll(); cue('ok');
+    say(`Точка ${p.no || ''} доснята, сдвиг ${cmSpeech(moved)}`); toast(`Доснято: сдвиг от точки «на глаз» ${cmText(moved)}`);
+    redoNext(p.id);
+  });
+}
+
 /* ───────────── Точка по расстоянию и углу от базы (смещение): база — GPS, если свежий, иначе последняя поставленная ───────────── */
 function offsetPoint() {
   const fresh = gps && Date.now() - gps.at < GPS_FRESH_MS && !spoof;   // при подмене база — последняя точка, не GPS
@@ -3483,6 +3571,7 @@ addEventListener('volumeKey', e => {
     if (b && !b.disabled) { cue('tick'); b.click(); }
     return;
   }
+  if (!mode && !sheetOpen && stake && stake.redo && Date.now() - askClosedAt >= VOL_AFTER_ASK_MS) { cue('tick'); if (up) redoRecord(stake.redo.id); else redoNext(stake.redo.id); return; }
   if (!mode && !sheetOpen && stake && stake.so && soById(stake.so.id) && Date.now() - askClosedAt >= VOL_AFTER_ASK_MS) { cue('tick'); if (up) soRecord(stake.so); else soNext(stake.so); return; }
   if (!mode || sheetOpen || Date.now() - askClosedAt < VOL_AFTER_ASK_MS) return;
   const b = document.querySelector(`#modeBtns [data-act="${up ? 'measure' : 'gps'}"]`);
@@ -3513,6 +3602,7 @@ $('modeBtns').addEventListener('click', e => {
     takePhoto().then(blob => {
       if (!blob || mode !== m) return;
       const fresh = gps && Date.now() - gps.at < GPS_FRESH_MS && !spoof;   // при подмене — точка в перекрестье, не по GPS
+      if (spoof) { say('Подмена GPS, точка в перекрестье'); toast('Подмена GPS — точка с фото поставлена в перекрестье, не по GPS'); }
       const pt = addAt(fresh ? L.latLng(gps.lat, gps.lng) : map.getCenter(), null, fresh ? 'gps' : 'center');
       if (pt) addPhoto('point', pt, blob);
     });
@@ -3549,6 +3639,7 @@ function addAt(ll, meas, src) {
     if ((POINTS[mode.type] || {}).pipe) { const r = pipeAngle(L.latLng(ll)); if (r) pt.rot = r.rot; }      // арматура — вдоль трубы
     if (meas) pt.meas = meas;
     if ((POINTS[mode.type] || {}).cadNew) pt.name = nextNewName();      // н1, н2… — следующий свободный
+    if (spoof && (src === 'tap' || src === 'center')) { pt.wait = new Date().toISOString(); if (snap) pt.waitSnap = true; }   // на глаз при подмене — доснять по GPS; привязана к чужому объекту — его не двигать      // н1, н2… — следующий свободный
     if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll, ...(hz.src === 'gnss' ? { ant: antH } : {}) }; }
     data.points.push(pt);
     save(); drawPoints();
@@ -3608,7 +3699,7 @@ function nextNo(list) { return list.reduce((m, o) => Math.max(m, Number(o.no) ||
 function heightNote(h, srcKind, info) {
   info = info || {};
   if ((h == null || h === '') && info.hEll != null) return 'высота по ГНСС получена, отметка посчитается, когда загрузится модель геоида (нужен интернет один раз)';
-  if (h == null || h === '') return 'нет — поставлена касанием или в перекрестье. Отметка будет при «По GPS» или «Измерить»';
+  if (h == null || h === '') return '— (касанием; отметка — при «По GPS» или «Измерить»)';
   if (srcKind === 'gnss') return 'по ГНСС' + (info.acc != null ? ' ±' + cmText(info.acc) : '') + (info.from === 'gps' ? ', один отсчёт' : info.from === 'measure' ? ', усреднено' : '') +
     (info.ref ? ', привязка: ' + info.ref : ', без привязки к реперу (EGM2008, ошибка до дм)');
   if (srcKind === 'snap') return 'взята с точки, к которой привязано';
@@ -3765,80 +3856,108 @@ $('btnMap').onclick = () => {
 function openList(title, items, onPick) {
   showSheet(`<div class="sh-head"><b>${esc(title)}</b><button class="x" data-close>×</button></div><div class="list">` +
     items.map(it => it.header ? `<div class="h">${esc(it.header)}</div>` :
-      `<div class="item${it.on ? ' on' : ''}" data-pick="${esc(it.id)}"><span class="i">${it.icon || ''}</span><span>${esc(it.text)}</span>${it.check ? `<span class="chk">${it.on ? '✓' : ''}</span>` : ''}</div>`).join('') + '</div>');
+      `<div class="item${it.on ? ' on' : ''}${it.danger ? ' danger' : ''}" data-pick="${esc(it.id)}"><span class="i">${it.icon || ''}</span><span>${esc(it.text)}</span>${it.radio ? `<span class="chk">${it.on ? '✓' : ''}</span>` : ''}${it.check ? `<span class="sw${it.on ? ' on' : ''}" aria-label="${it.on ? 'включено' : 'выключено'}"></span>` : ''}</div>`).join('') + '</div>');
   $('sheetPanel').querySelector('.list').onclick = e => {
     const it = e.target.closest('[data-pick]');
     if (!it) return;
     closeSheet(); onPick(it.dataset.pick);
   };
 }
+const BASE_FADES = [[1, 'ярко'], [0.7, 'приглушённо'], [0.45, 'бледно']];
+let baseOp = Number(pref('baseOp', 0.7)) || 0.7;
+document.documentElement.style.setProperty('--baseOp', baseOp);
 $('fabLayers').onclick = () => {
-  const items = [{ header: 'Подложка' }, ...Object.keys(bases).map(n => ({ id: 'base:' + n, icon: '🗺', text: n, on: n === baseName, check: true })),
+  const items = [{ header: 'Подложка' }, ...Object.keys(bases).map(n => ({ id: 'base:' + n, icon: '🗺', text: n, on: n === baseName, radio: true })),
+    { id: 'fade', icon: '◑', text: 'Яркость подложки: ' + (BASE_FADES.find(f => f[0] === baseOp) || BASE_FADES[1])[1] + ' (нажмите — сменить)' },
     { header: 'Поверх карты' }, { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
     { id: 'netcolors', icon: '🎨', text: 'Цвета сетей (традиционные)', on: netColors, check: true },
     ...Object.keys(rasterLayers).map(id => ({ id: 'r:' + id, icon: '🖼', text: rasterLayers[id].r.name, on: map.hasLayer(rasterLayers[id]), check: true }))];
   openList('Слои', items, pick => {
     if (pick.startsWith('base:')) setBase(pick.slice(5));
+    if (pick === 'fade') { const i = BASE_FADES.findIndex(f => f[0] === baseOp); baseOp = BASE_FADES[(i + 1) % BASE_FADES.length][0]; setPref('baseOp', baseOp); document.documentElement.style.setProperty('--baseOp', baseOp); }
     if (pick === 'grid') MENU.grid();
     if (pick === 'netcolors') MENU.netcolors();
     if (pick.startsWith('r:')) { const l = rasterLayers[pick.slice(2)]; if (map.hasLayer(l)) map.removeLayer(l); else l.addTo(map); }
     $('fabLayers').onclick();
   });
 };
+// Меню: короткий главный список; выгрузки и настройки — в своих подменю (2 касания до любой выгрузки)
 $('btnMenu').onclick = () => openList('Меню', [
-  { header: 'На объекте' },
-  { id: 'cad', icon: '⬠', text: 'Кадастр: участки, площадь и ΔP, сведения о точках' },
-  { id: 'so', icon: '⌖', text: soList().length ? `Разбивка: проектные точки (вынесено ${soList().filter(p => p.done).length} из ${soList().length})` : 'Разбивка: загрузить проектные точки (TXT, CSV)' },
+  { header: 'Объект' },
   { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || 'без названия') + ' — сменить, новый' },
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
   { id: 'check', icon: '✓', text: 'Проверка перед сдачей' },
   { id: 'heights', icon: '△', text: hgt.ref ? `Отметки: привязка к реперу ${hgt.ref.name || ''}`.trim() : hgt.dh ? 'Отметки: с поправкой' : 'Отметки: привязать к реперу' },
-  { id: 'offline', icon: '⇩', text: 'Сохранить участок карты — работать без интернета' },
-  { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
-  { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' },
-  ...(NATIVE ? [{ id: 'screen', icon: '◑', text: pref('keepScreen', true) ? 'Экран не гаснет во время работы' : 'Экран гаснет как обычно', on: pref('keepScreen', true), check: true }] : []),
-  ...(NATIVE ? [{ id: 'volkeys', icon: '±', text: pref('volKeys', true) ? 'Кнопки громкости: «−» По GPS, «+» Измерить и Принять' : 'Кнопки громкости: как обычно', on: pref('volKeys', true), check: true }] : []),
-  { id: 'sound', icon: '♪', text: 'Звук и вибрация: в допуске / брак / потеря FIX', on: soundOn, check: true },
-  { id: 'voice', icon: '🗣', text: 'Озвучивать результат измерения голосом', on: voiceOn, check: true },
-  { id: 'glove', icon: '✋', text: 'Крупные кнопки (работа в перчатках)', on: gloveOn, check: true },
-  { id: 'rain', icon: '☂', text: 'Дождь: касание карты не ставит точку', on: rainOn, check: true },
-  { id: 'cal', icon: '⟷', text: PX_MM === PX_MM_DEFAULT ? 'Размер знаков: откалибровать по линейке' : 'Размер знаков: по линейке — повторить' },
+  { id: 'cad', icon: '⬠', text: 'Кадастр: участки, площадь и ΔP, сведения о точках' },
+  ...(waitList().length ? [{ id: 'redo', icon: '📡', text: `Доснять по GPS: ${waitList().length} ${plural(waitList().length, 'точка', 'точки', 'точек')} (поставлены при подмене)` }] : []),
+  { header: 'Разбивка' },
+  { id: 'so', icon: '⌖', text: soList().length ? `Проектные точки: вынесено ${soList().filter(p => p.done).length} из ${soList().length}` : 'Загрузить проектные точки (TXT, CSV)' },
   { id: 'stake', icon: '◎', text: 'Вынос в натуру по координатам' },
+  { header: 'Сдать работу' },
+  { id: 'export', icon: '⇩', text: 'Выгрузки: архив для отчёта, DXF, КРЕДО, ведомости, ГИС →' },
+  { id: 'backup', icon: '⟲', text: 'Копии плана: автокопия, полная копия с фото, восстановление' },
+  { header: 'Поле' },
+  { id: 'glove', icon: '✋', text: 'Крупные кнопки (перчатки)', on: gloveOn, check: true },
+  { id: 'rain', icon: '☂', text: 'Дождь: касание карты не ставит точку', on: rainOn, check: true },
   { header: 'Карта' },
   { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() },
-  { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
   { id: 'labels', icon: 'А', text: labelsAll ? 'Подписи: все, даже с наложением' : 'Подписи: без наложений (лишние — при приближении)', on: labelsAll, check: true },
-  { id: 'netcolors', icon: '◍', text: netColors ? 'Цвета сетей: традиционные' : 'Цвета сетей: чёрные (по «Правилам»)', on: netColors, check: true },
   { id: 'raster', icon: '▣', text: 'Наложить свой растр (план, ортофото, скан)' },
   { id: 'rasters', icon: '◐', text: 'Свои растры: прозрачность, удаление' },
+  { id: 'offline', icon: '⇩', text: 'Сохранить участок карты — работать без интернета' },
   { id: 'offlineinfo', icon: '▤', text: 'Карты в телефоне: сколько сохранено, очистить' },
-  { header: 'Файлы' },
-  { id: 'backup', icon: '⟲', text: 'Копии плана: автокопия, полная копия с фото, восстановление' },
-  { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z${pref('dxfFrame', true) ? ', рамка и штамп' : ''})` },
-  { id: 'dxfframe', icon: '▭', text: 'В DXF — рамка листа и штамп', on: pref('dxfFrame', true), check: true },
-  { id: 'txt', icon: '⇩', text: 'Каталог TXT для КРЕДО (с кодами линий), коды знаков' },
-  { id: 'pnezd', icon: '⇩', text: 'Точки для Civil 3D (PNEZD через запятую)' },
-  { id: 'wells', icon: '⇩', text: 'Ведомость колодцев (CSV для Excel)' },
-  { id: 'nets', icon: '⇩', text: 'Ведомость сетей (CSV для Excel)' },
-  { id: 'arms', icon: '⇩', text: 'Ведомость арматуры: задвижки, вантузы, клапаны (CSV)' },
-  { id: 'defects', icon: '⇩', text: 'Ведомость дефектов: утечки, провалы, люки (CSV)' },
-  { id: 'cross', icon: '⇩', text: 'Ведомость пересечений сетей (CSV)' },
-  { id: 'tracer', icon: '⇩', text: 'Протокол трассоискателя: глубины по прибору (CSV)' },
-  { id: 'ctrlsheet', icon: '⇩', text: 'Ведомость контрольных измерений (CSV)' },
-  { id: 'geojson', icon: '⇩', text: 'GeoJSON для QGIS (WGS-84, все свойства)' },
-  { id: 'mif', icon: '⇩', text: `MIF/MID для MapInfo и Панорамы (${planeName()})` },
-  { id: 'shp', icon: '⇩', text: `SHP для ГИС: QGIS, ArcGIS, Панорама (${planeName()})` },
-  { id: 'kmz', icon: '⇩', text: 'Выгрузить KMZ с фото (Google Earth, ГИС)' },
-  { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + каталог + DXF + фото' },
-  { id: 'kml', icon: '⇩', text: 'Выгрузить всё в KML (без фото)' },
-  { id: 'csv', icon: '⇩', text: `Выгрузить точки в CSV (WGS-84 и ${planeName()})` },
-  { id: 'import', icon: '⇧', text: 'Загрузить KML / KMZ с фото / копию плана' },
   { header: 'Прочее' },
+  { id: 'settings', icon: '⚙', text: 'Настройки: звук, голос, экран, тема, знаки, DXF →' },
   { id: 'fit', icon: '⤢', text: 'Показать все объекты' },
-  { id: 'clear', icon: '✕', text: 'Удалить всё с карты' },
   { id: 'update', icon: '⬆', text: `Проверить обновление (у вас сборка ${APP_BUILD})` },
-  { id: 'about', icon: 'i', text: 'О программе' }
+  { id: 'about', icon: 'i', text: 'О программе' },
+  { header: ' ' },
+  { id: 'clear', icon: '✕', text: 'Удалить всё с карты…', danger: true }
 ], act => MENU[act]());
+function exportMenu() {
+  openList('Выгрузки', [
+    { header: 'Главное' },
+    { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + каталог + DXF + фото' },
+    { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z${pref('dxfFrame', true) ? ', рамка и штамп' : ''})` },
+    { id: 'txt', icon: '⇩', text: 'Каталог TXT для КРЕДО (с кодами линий), коды знаков' },
+    { header: 'Ведомости (CSV для Excel)' },
+    { id: 'wells', icon: '⇩', text: 'Колодцы' },
+    { id: 'nets', icon: '⇩', text: 'Сети' },
+    { id: 'arms', icon: '⇩', text: 'Арматура: задвижки, вантузы, клапаны' },
+    { id: 'defects', icon: '⇩', text: 'Дефекты: утечки, провалы, люки' },
+    { id: 'cross', icon: '⇩', text: 'Пересечения сетей' },
+    { id: 'tracer', icon: '⇩', text: 'Протокол трассоискателя' },
+    { id: 'ctrlsheet', icon: '⇩', text: 'Контрольные измерения' },
+    { id: 'csv', icon: '⇩', text: `Точки (WGS-84 и ${planeName()})` },
+    { header: 'Для ГИС и других программ' },
+    { id: 'shp', icon: '⇩', text: `SHP: QGIS, ArcGIS, Панорама (${planeName()})` },
+    { id: 'geojson', icon: '⇩', text: 'GeoJSON для QGIS (WGS-84)' },
+    { id: 'mif', icon: '⇩', text: `MIF/MID для MapInfo и Панорамы (${planeName()})` },
+    { id: 'pnezd', icon: '⇩', text: 'Точки для Civil 3D (PNEZD)' },
+    { id: 'kmz', icon: '⇩', text: 'KMZ с фото (Google Earth)' },
+    { id: 'kml', icon: '⇩', text: 'KML без фото' },
+    { header: 'Загрузить' },
+    { id: 'import', icon: '⇧', text: 'Загрузить KML / KMZ с фото / копию плана' }
+  ], act => MENU[act]());
+}
+// настройки: переключатели — лист остаётся открытым, видно, что включилось
+function settingsMenu() {
+  openList('Настройки', [
+    { header: 'Сигналы' },
+    { id: 'sound', icon: '♪', text: 'Звук и вибрация: в допуске / брак / потеря FIX', on: soundOn, check: true },
+    { id: 'voice', icon: '🗣', text: 'Озвучивать результат голосом', on: voiceOn, check: true },
+    ...(NATIVE ? [{ id: 'volkeys', icon: '±', text: 'Кнопки громкости: «−» По GPS, «+» Измерить и Принять', on: pref('volKeys', true), check: true },
+      { id: 'screen', icon: '◑', text: 'Экран не гаснет во время работы', on: pref('keepScreen', true), check: true }] : []),
+    { header: 'Вид' },
+    { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
+    { id: 'netcolors', icon: '◍', text: 'Цвета сетей (выкл. — чёрные, по «Правилам»)', on: netColors, check: true },
+    { id: 'cal', icon: '⟷', text: PX_MM === PX_MM_DEFAULT ? 'Размер знаков: откалибровать по линейке' : 'Размер знаков: по линейке — повторить' },
+    { header: 'Выгрузки' },
+    { id: 'dxfframe', icon: '▭', text: 'В DXF — рамка листа и штамп', on: pref('dxfFrame', true), check: true },
+    { header: 'Помощники' },
+    { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' }
+  ], act => { MENU[act](); if (['sound', 'voice', 'volkeys', 'screen', 'netcolors', 'dxfframe'].includes(act)) settingsMenu(); });
+}
 
 const MENU = {
   kml: () => download(`plan_${today()}.kml`, toKml(), 'application/vnd.google-earth.kml+xml'),
@@ -3891,17 +4010,23 @@ const MENU = {
     const all = data.points.map(p => [p.lat, p.lng]).concat(...data.lines.map(l => l.latlngs));
     if (all.length) map.fitBounds(all, { padding: [60, 60], maxZoom: 18 }); else toast('На карте пока ничего нет');
   },
-  clear: () => ask('Удалить ВСЕ знаки и линии? Их можно будет вернуть кнопкой «Вернуть» или из автокопии.', 'Удалить всё', true).then(ok => { if (ok) { data = { points: [], lines: [], ...(data.meta ? { meta: data.meta } : {}) }; save(); hideCard(); } }),
+  clear: () => openForm('Удалить всё с карты', [{ key: 'w', label: `Знаков: ${data.points.length}, линий: ${data.lines.length}. Чтобы удалить, наберите слово «удалить»`, placeholder: 'удалить', hint: 'Вернуть можно кнопкой ↶ или из автокопии (Меню → «Копии плана»).' }], v => {
+    if (v.w.trim().toLowerCase() !== 'удалить') { toast('Слово не совпало — ничего не удалено'); return false; }
+    data = { points: [], lines: [], ...(data.meta ? { meta: data.meta } : {}) }; save(); hideCard(); toast('Удалено. Кнопка ↶ вернёт');
+  }, 'Удалить всё'),
   update: () => checkUpdate(true),
+  export: () => exportMenu(),
+  redo: () => redoSheet(),
+  settings: () => settingsMenu(),
   dxfframe: () => { const on = !pref('dxfFrame', true); setPref('dxfFrame', on); toast(on ? 'DXF — с рамкой листа, сеткой и штампом' : 'DXF — только план, без рамки (для вставки в чужой чертёж)'); },
   about: () => alert(`Полевой план, сборка ${APP_BUILD}.
 
 ` + 'Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
   crs: () => openList('Система координат', [
     { header: 'Плоские координаты' },
-    { id: 'gsk', icon: '⌖', text: 'ГСК-2011 — государственная (по умолчанию)', on: crsId === 'gsk', check: true },
-    { id: 'sk42', icon: '⌖', text: 'СК-42 — для старых материалов (до 2021 г.)', on: crsId === 'sk42', check: true },
-    { id: 'msk', icon: '⌖', text: msk ? `${msk.name || 'МСК'} — своя местная система` : 'МСК — ввести параметры своей местной системы', on: crsId === 'msk', check: true },
+    { id: 'gsk', icon: '⌖', text: 'ГСК-2011 — государственная (по умолчанию)', on: crsId === 'gsk', radio: true },
+    { id: 'sk42', icon: '⌖', text: 'СК-42 — для старых материалов (до 2021 г.)', on: crsId === 'sk42', radio: true },
+    { id: 'msk', icon: '⌖', text: msk ? `${msk.name || 'МСК'} — своя местная система` : 'МСК — ввести параметры своей местной системы', on: crsId === 'msk', radio: true },
     ...(msk ? [{ id: 'mskedit', icon: '✎', text: 'Изменить параметры МСК' }] : [])
   ], pick => {
     if (pick === 'msk' && !msk || pick === 'mskedit') { editMsk(); return; }
@@ -4546,7 +4671,7 @@ async function switchProject(id, fresh) {
   data = next;
   const hs = meta().heights;                                            // свои высота антенны и репер; у нового объекта репера нет
   hgt = hs && hs.hgt ? hs.hgt : { src: hgt.src, dh: 0, ref: null }; antH = hs && hs.antH != null ? Number(hs.antH) || 0 : antH;
-  setPref('hgt', hgt); setPref('antH', antH);
+  setPref('hgt', hgt); setPref('antH', antH); antChipText();
   lastSaved = JSON.stringify(data);
   undoStack.length = 0; undoChars = 0;                                  // «Вернуть» не должен вернуть чужой объект
   persist(lastSaved); showUndo(); hideCard();
@@ -4627,6 +4752,7 @@ function checkPlan() {
   }
   add('warn', 'Точки без знака (простые)', P.filter(p => p.type === GENERIC.point).map(pt), 'Знак выбирается в карточке точки');
   add('warn', 'Линии без знака (простые)', data.lines.filter(l => l.type === GENERIC.line).map(ln));
+  add('bad', 'Точки ждут GPS — поставлены на глаз при подмене', P.filter(p => p.wait).map(pt), 'Меню → «Доснять по GPS»');
   add('warn', 'Точки сняты во время или вскоре после подмены GPS (глушилки)', P.filter(p => pointSpoofNote(p)).map(pt), 'Встаньте на точку и нажмите «✓ Контроль» — или переснимите');
   { const n = soList().filter(p => p.done && (p.done.spoofNear || spoofNear(Date.parse(p.done.at)))).length;
     if (n) out.push({ level: 'warn', text: `Разбивка: вынесено вскоре после подмены GPS — ${n}`, objs: [], hint: 'Меню → «Разбивка»: вынести заново' }); }
@@ -5478,21 +5604,28 @@ const GridLayer = L.Layer.extend({
     }
     // линии и кресты — векторные линии в том же SVG-слое, что и подписи
     const night = document.body.classList.contains('night'), r = this._renderer;
-    L.polyline(gridLines, { renderer: r, color: night ? '#4caf50' : GRID_LINE_COLOR, weight: 0.8, opacity: 0.55, interactive: false }).addTo(group);
-    L.polyline(segs, { renderer: r, color: night ? '#81c784' : GRID_COLOR, weight: 2.2, opacity: 1, interactive: false }).addTo(group);
+    L.polyline(gridLines, { renderer: r, color: night ? '#4caf50' : GRID_LINE_COLOR, weight: 0.6, opacity: 0.22, interactive: false }).addTo(group);
+    L.polyline(segs, { renderer: r, color: night ? '#81c784' : GRID_COLOR, weight: 1.3, opacity: 0.8, interactive: false }).addTo(group);
     // X — горизонтально над правой чертой креста; Y — вертикально над верхней чертой (читается снизу вверх, текст над линией)
     const g = this._labels = el('g', { class: 'gtxt', 'font-size': fontPx.toFixed(1) }, r._rootGroup);
     const t = (tr, str) => { el('text', { transform: tr, x: gap.toFixed(1), y: -3 }, g).textContent = str; };
     // подписи сетки — последними и только на свободные места: знаки, линии и их надписи важнее
     const fh = fontPx + 2;
-    for (const { c, deg, x, y } of labels) {
-      const at = `translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(`, cc = m.layerPointToContainerPoint(c);
-      const sx = 'X – ' + fmt(x), sy = 'Y – ' + fmt(y), wx = textWidth(sx, fontPx, true) + 2, wy = textWidth(sy, fontPx, true) + 2;
-      const PAD = 3;                                                   // запас на нижние выносные элементы букв и белую обводку
+    const PAD = 3;                                                     // запас на нижние выносные элементы букв и белую обводку
+    const doneX = new Set(), doneY = new Set();
+    for (const { c, deg, x, y } of labels.slice().sort((p, q) => p.y - q.y)) {   // X — с запада (слева), одна на линию
+      if (doneX.has(x)) continue;
+      const cc = m.layerPointToContainerPoint(c), sx = 'X – ' + fmt(x), wx = textWidth(sx, fontPx, true) + 2;
       const bx = { x: cc.x + gap - PAD, y: cc.y - 3 - fh - PAD, w: wx + 2 * PAD, h: fh + 2 * PAD + 2 };
+      if (cc.x < 0 || cc.x + gap + wx > size.x || cc.y < fh + 4 || hits(bx, null)) continue;
+      t(`translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(${deg.toFixed(2)})`, sx); doneX.add(x);
+    }
+    for (const { c, deg, x, y } of labels.slice().sort((p, q) => p.x - q.x)) {   // Y — с юга (снизу), одна на линию
+      if (doneY.has(y)) continue;
+      const cc = m.layerPointToContainerPoint(c), sy = 'Y – ' + fmt(y), wy = textWidth(sy, fontPx, true) + 2;
       const by = { x: cc.x - 3 - fh - PAD, y: cc.y - gap - wy - PAD, w: fh + 2 * PAD + 2, h: wy + 2 * PAD };
-      if (!hits(bx, null)) t(at + deg.toFixed(2) + ')', sx);
-      if (!hits(by, null)) t(at + (deg - 90).toFixed(2) + ')', sy);
+      if (cc.y > size.y || cc.y - gap - wy < 0 || cc.x < fh + 4 || hits(by, null)) continue;
+      t(`translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(${(deg - 90).toFixed(2)})`, sy); doneY.add(y);
     }
   }
 });
