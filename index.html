@@ -946,14 +946,27 @@ function spoofSigns(g) {
   return out;
 }
 const spoofTrustOn = g => spoofTrust && Date.now() < spoofTrust.until && kmApart([g.lat, g.lng], [spoofTrust.lat, spoofTrust.lng]) <= SPOOF.trustKm;
+const SPOOF_LOG = { beforeMs: 5 * 60e3, afterMs: 15 * 60e3, keepMs: 60 * 86400e3, max: 300, touchMs: 15e3 };
+let spoofLog = pref('spoofLog', []) || [];
+function spoofLogSave() { const old = Date.now() - SPOOF_LOG.keepMs; spoofLog = spoofLog.filter(e => (e.to || e.from) > old).slice(-SPOOF_LOG.max); setPref('spoofLog', spoofLog); }
+// время (мс) попадает в подмену или в окно вокруг неё: за 5 мин до начала (сдвиг мог начаться незаметно) и 15 мин после конца
+function spoofNear(ms) {
+  if (!isFinite(ms)) return null;
+  for (const e of spoofLog) { const to = e.to || e.from;
+    if (ms >= e.from - SPOOF_LOG.beforeMs && ms <= to + SPOOF_LOG.afterMs) return ms < e.from ? 'за ' + Math.ceil((e.from - ms) / 60e3) + ' мин до подмены GPS' : ms <= to ? 'во время подмены GPS' : 'через ' + Math.ceil((ms - to) / 60e3) + ' мин после подмены GPS'; }
+  return null;
+}
+const pointSpoofNote = p => p.q ? p.q.spoofNear || spoofNear(Date.parse(p.q.at)) : null;
 function spoofUpdate(g) {
   const signs = spoofTrustOn(g) ? [] : spoofSigns(g);
   if (signs.length) {
-    if (!spoof) { spoof = { since: Date.now(), signs }; cue('fixLost'); say('Внимание! Похоже на подмену сигнала спутников. Точки по GPS не ставятся'); }
+    if (!spoof) { spoof = { since: Date.now(), signs }; spoofLog.push({ from: spoof.since, to: spoof.since }); spoofLogSave(); cue('fixLost'); say('Внимание! Похоже на подмену сигнала спутников. Точки по GPS не ставятся'); }
     spoof.signs = signs; spoofCalm = 0;
+    const last = spoofLog[spoofLog.length - 1]; if (last && Date.now() - last.to > SPOOF_LOG.touchMs) { last.to = Date.now(); spoofLogSave(); }   // приложение могут закрыть посреди подмены
   } else if (spoof) {
     if (!spoofCalm) spoofCalm = Date.now();
-    if (Date.now() - spoofCalm > SPOOF.clearMs) { spoof = null; spoofCalm = 0; spoofTrusted = { lat: g.lat, lng: g.lng, at: g.at }; cue('fixBack'); toast('Сигнал спутников снова похож на настоящий'); }
+    if (Date.now() - spoofCalm > SPOOF.clearMs) { const last = spoofLog[spoofLog.length - 1]; if (last) { last.to = spoofCalm; spoofLogSave(); }
+      spoof = null; spoofCalm = 0; spoofTrusted = { lat: g.lat, lng: g.lng, at: g.at }; cue('fixBack'); toast('Сигнал спутников снова похож на настоящий'); }
   } else spoofTrusted = { lat: g.lat, lng: g.lng, at: g.at };
   renderSpoof();
 }
@@ -1431,7 +1444,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 45;
+const APP_BUILD = 46;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2296,6 +2309,7 @@ function showCard(kind, obj) {
     }
     if (obj.q) kv.push(['Точность', `±${cmText(obj.q.acc)} в плане · ${fixText(obj.q.fix)}${obj.q.src === 'measure' ? ' · усреднено' : ''}<br><span style="color:var(--muted)">${new Date(obj.q.at).toLocaleString('ru-RU')}</span>`]);
     else kv.push(['Точность', '<span style="color:var(--muted)">не измерена — поставлена касанием или в перекрестье</span>']);
+    if (pointSpoofNote(obj)) kv.push(['Внимание', `<b style="color:#c62828">снята ${esc(pointSpoofNote(obj))}</b> — проконтролируйте`]);
     const hInfo = obj.hInfo || (obj.meas ? { acc: obj.meas.hm, from: 'measure' } : {});
     kv.push(['Отметка', (obj.h != null && obj.h !== '' ? `<b>${mText(Number(obj.h), 2)} м</b><br>` : '') + `<span style="color:var(--muted)">${esc(heightNote(obj.h, obj.hSrc, hInfo))}</span>`]);
     if (obj.meas) {
@@ -2922,7 +2936,7 @@ function soRecord(ref) {
     const H = normalHeight(ll.lat, ll.lng, meas.hEll), dx = q.x - p.x, dy = q.y - p.y, dl = Math.hypot(dx, dy), dh = p.h != null && H != null ? H - p.h : null;
     const ok = dl <= t.plan && (dh == null || Math.abs(dh) <= t.h);
     p.done = { x: +q.x.toFixed(3), y: +q.y.toFixed(3), h: H == null ? null : +H.toFixed(3), dx: +dx.toFixed(3), dy: +dy.toFixed(3), dl: +dl.toFixed(3), dh: dh == null ? null : +dh.toFixed(3),
-      ok, tol: t, acc: meas.m, fix: fixKind(meas.acc), at: meas.at, ref: hgt.ref ? hgt.ref.name || 'репер' : hgt.dh ? 'поправка' : '' };
+      ok, tol: t, acc: meas.m, fix: fixKind(meas.acc), at: meas.at, ...(spoofNear(Date.now()) ? { spoofNear: spoofNear(Date.now()) } : {}), ref: hgt.ref ? hgt.ref.name || 'репер' : hgt.dh ? 'поправка' : '' };
     save(); drawSo(); cue(ok ? 'ok' : 'bad');
     say(`Точка ${p.no}: ${ok ? 'в допуске' : 'вне допуска'}, ${cmSpeech(dl)}${dh != null ? `, по высоте ${cmSpeech(Math.abs(dh))}` : ''}`);
     toast(`${p.no}: ${ok ? 'в допуске' : 'ВНЕ ДОПУСКА'} — ${cmText(dl)}${dh != null ? `, H ${dh >= 0 ? '+' : '−'}${cmText(Math.abs(dh))}` : ''}`);
@@ -3528,7 +3542,8 @@ function addAt(ll, meas, src) {
   const hz = heightFor(ll, meas, src, snap);
   if (mode.kind === 'point') {
     const pt = { id: uid(), no: nextNo(data.points), type: mode.type, lat: ll.lat, lng: ll.lng, name: '' };
-    if (src === 'gps' || src === 'measure') pt.q = meas ? { acc: meas.m, fix: fixKind(meas.acc), at: meas.at, src } : { acc: +gps.acc.toFixed(3), fix: fixKind(gps.acc), at: new Date(gps.at).toISOString(), src };
+    if (src === 'gps' || src === 'measure') { pt.q = meas ? { acc: meas.m, fix: fixKind(meas.acc), at: meas.at, src } : { acc: +gps.acc.toFixed(3), fix: fixKind(gps.acc), at: new Date(gps.at).toISOString(), src };
+      const sn = spoofNear(Date.now()); if (sn) pt.q.spoofNear = sn; }
     if (pt.type === GENERIC.point) pt.color = pref('color', VIS_COLOR);   // простая точка — заметным цветом (последним выбранным)
     if ((POINTS[mode.type] || {}).wall) { const r = wallAngle(L.latLng(ll)); if (r != null) pt.rot = r; }   // крыльцо — стеной к ближнему зданию
     if ((POINTS[mode.type] || {}).pipe) { const r = pipeAngle(L.latLng(ll)); if (r) pt.rot = r.rot; }      // арматура — вдоль трубы
@@ -4612,6 +4627,9 @@ function checkPlan() {
   }
   add('warn', 'Точки без знака (простые)', P.filter(p => p.type === GENERIC.point).map(pt), 'Знак выбирается в карточке точки');
   add('warn', 'Линии без знака (простые)', data.lines.filter(l => l.type === GENERIC.line).map(ln));
+  add('warn', 'Точки сняты во время или вскоре после подмены GPS (глушилки)', P.filter(p => pointSpoofNote(p)).map(pt), 'Встаньте на точку и нажмите «✓ Контроль» — или переснимите');
+  { const n = soList().filter(p => p.done && (p.done.spoofNear || spoofNear(Date.parse(p.done.at)))).length;
+    if (n) out.push({ level: 'warn', text: `Разбивка: вынесено вскоре после подмены GPS — ${n}`, objs: [], hint: 'Меню → «Разбивка»: вынести заново' }); }
   add('warn', 'Точки по GPS не в FIX', P.filter(p => p.q && p.q.fix && p.q.fix !== 'FIX').map(pt), 'Для 1:500 нужен FIX (до 5 см). FLOAT и автономные — переснять');
   const nets = data.lines.filter(isNetLine);
   add('warn', 'Сети с отметками: не указано, что это (земля, верх трубы, лоток)', nets.filter(l => (l.hs || []).some(z => z && hasH(z.h)) && !(l.attr || {}).hKind).map(ln), 'Карточка сети → «Изменить» → «Отметки вершин — это»');
