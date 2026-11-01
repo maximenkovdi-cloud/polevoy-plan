@@ -231,7 +231,7 @@
   /* ── знаки и подписи на карте ── */
   .sym { background:none; border:0; color:var(--sym); display:flex; align-items:center; justify-content:center; }   /* знак — в центре зоны касания */
   svg [fill="#fff"] { fill:var(--symBg); }                              /* белая заливка знаков — ночью тёмная, чтобы светлые черты были видны */
-  .sym .lbl { position:absolute; left:24px; top:-2px; white-space:nowrap; font:italic 12.5px/1 var(--draft); color:var(--sym); letter-spacing:.01em;
+  .sym .lbl { position:absolute; left:24px; top:-2px; white-space:nowrap; font:italic var(--lblPx, 12.5px)/1 var(--draft); color:var(--sym); letter-spacing:.01em;
     text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo), 0 0 3px var(--halo); }
   .sym .lbl.off { display:none; }
   .sym .lbl.frac { display:flex; flex-direction:column; align-items:center; line-height:1.05; }
@@ -656,13 +656,17 @@ function netColor(type, fallback) {
 const PICKET_STEP_M = 100;     // пикет — каждые 100 м
 const PK_STEPS = [1, 2, 5, 10, 20, 50, 100, 500, 1000];   // прореживание пикетов при отдалении
 const PK_TICK_MM = 4, PK_LABEL_MM = 14;                     // засечки не чаще 4 мм, подписи не чаще 14 мм на экране
-// Экранных пикселей на 1 мм знака — по настоящему размеру экрана (калибровка линейкой или оценка), как на бумажном плане.
-// Надписи остаются прежнего размера (TEXT_K), чтобы не загромождать план на маленьком экране
-const MM = (() => { let px; try { px = JSON.parse(localStorage.getItem('tk.pxmm')); } catch (e) { px = null; }
+// Знаки — как на бумажном плане 1:500: 1 мм знака = 0,5 м на местности. При отдалении знаки и подписи уменьшаются вместе с картой
+// и пропадают, при приближении к месту работы — во весь размер. MM_BASE — точек экрана на 1 мм (калибровка линейкой или оценка):
+// это размер знака, когда на экране ровно 1:500
+const MM_BASE = (() => { let px; try { px = JSON.parse(localStorage.getItem('tk.pxmm')); } catch (e) { px = null; }
   px = px > 0.05 && px < 0.6 ? px : matchMedia('(pointer: coarse)').matches ? 0.159 : 0.2646;
   return Math.min(7, Math.max(3.5, 1 / px)); })();
-const TEXT_K = 4 / MM;
-const SYM_MM = 2.7, SYM_PX = Math.max(14, Math.round(SYM_MM * MM)), TAP_PX = 44;   // точечный знак ≈2,7 мм (колодец 2 мм, столб 1 мм); зона касания — 44 px
+let MM = MM_BASE;                                                     // меняется с масштабом — planSizes()
+const TEXT_K = 4 / MM_BASE;                                           // надпись N·MM мм → 4·N точек на 1:500, дальше — вместе с картой
+const PLAN_MM_PER_M = 2, PLAN_MAX_K = 2, PLAN_HIDE_PX = 2.5, LBL_HIDE_PX = 5;   // 1 м = 2 мм на 1:500; крупнее 2× не растим; мельче — не рисуем
+const SYM_MM = 2.7, TAP_PX = 44;
+let SYM_PX = Math.round(SYM_MM * MM);   // точечный знак ≈2,7 мм (колодец 2 мм, столб 1 мм); зона касания — 44 px   // точечный знак ≈2,7 мм (колодец 2 мм, столб 1 мм); зона касания — 44 px
 const RECENT_MAX = 8;          // сколько «последних» знаков помнить
 
 /* ───────────── Координаты: WGS-84 → плоская система (ГСК-2011, СК-42 или своя МСК) ───────────── */
@@ -1495,7 +1499,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 51;
+const APP_BUILD = 52;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1759,13 +1763,21 @@ const GEN_DENOM = 3000, MINOR_GROUPS = new Set(['street', 'reliefpt', 'bpartpt',
 const MINOR_POINTS = new Set(POINT_GROUPS.filter(g => MINOR_GROUPS.has(g.id)).flatMap(g => g.items.map(i => i.id)));
 function planDenom() { return metersPerPx() * 1000 / PX_MM; }
 let generalized = false;
+function planSizes() {
+  MM = Math.max(0.25, Math.round(Math.min(MM_BASE * PLAN_MAX_K, 1 / (PLAN_MM_PER_M * metersPerPx())) * 4) / 4);   // точек экрана на 1 мм плана 1:500, шаг 0,25 — без лишних перерисовок
+  SYM_PX = SYM_MM * MM; SYM_R = SYM_PX / 2; LBL_PX = 12.5 * MM / MM_BASE;
+  POLE_ARROW = 4.5 * MM; POLE_R = 0.5 * MM;
+  document.documentElement.style.setProperty('--lblPx', LBL_PX.toFixed(2) + 'px');
+}
 function drawPoints() {
+  planSizes();
   pointLayer.clearLayers();
   pointMarkers = [];
   generalized = planDenom() > GEN_DENOM;
   for (const p of data.points) {
     if (generalized && MINOR_POINTS.has(p.type) && !(selected && selected.obj === p)) continue;
-    const s = POINTS[p.type] || POINTS.mark, lbl = pointLabel(p), sel = selected && selected.obj === p;
+    if (SYM_PX < PLAN_HIDE_PX && !(selected && selected.obj === p)) continue;   // на мелком масштабе знак меньше точки — не виден, как на бумаге
+    const s = POINTS[p.type] || POINTS.mark, lbl = LBL_PX < LBL_HIDE_PX ? '' : pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : '') + (p.wait ? ' wait' : ''), iconSize: [TAP_PX, TAP_PX], iconAnchor: [TAP_PX / 2, TAP_PX / 2],
       html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}"${s.defect || s.cadNew ? ` style="color:${objColor(p, 'point')}"` : ''}>${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
     const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode && pickTool) { pickTap(L.latLng(p.lat, p.lng)); return; } if (mode) addAt(snapOn ? L.latLng(p.lat, p.lng) : e.latlng, null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
@@ -1773,7 +1785,7 @@ function drawPoints() {
   }
 }
 // Номер у знака — справа, слева, сверху, снизу или по диагонали: первое место, где он ни с чем не пересекается
-const LBL_PX = 12.5, SYM_R = SYM_PX / 2;
+let LBL_PX = 12.5, SYM_R = SYM_PX / 2;
 const GROUP_OF = Object.fromEntries(POINT_GROUPS.flatMap(g => g.items.map(i => [i.id, g.id])));
 const LABEL_RANK = { geo: 0, wells: 1, reliefpt: 4, street: 3 };          // меньше — важнее (ГКИНП: пункты > номера колодцев > прочие > отметки)
 function labelRank(p) { return p.type === 'spot' ? 5 : LABEL_RANK[GROUP_OF[p.type]] != null ? LABEL_RANK[GROUP_OF[p.type]] : 2; }
@@ -1871,7 +1883,7 @@ function poleMark(g, path, s, kind, w) {
   if (kind === 'rect') el('rect', { x: -r, y: -r * 0.8, width: 2 * r, height: 1.6 * r, fill: 'currentColor', transform: `translate(${p.x} ${p.y}) rotate(${p.a})` }, g);
 }
 // Стрелка от опоры a к соседней опоре b: отрезок от края знака опоры, наконечник наружу (у ЛЭП высокого напряжения — двойной)
-const POLE_ARROW = 4.5 * MM, POLE_R = 0.5 * MM;                        // опора — 1,0 мм (ГКИНП, зн. 106, 108)
+let POLE_ARROW = 4.5 * MM, POLE_R = 0.5 * MM;                        // опора — 1,0 мм (ГКИНП, зн. 106, 108)
 let polesDrawn = [];                                                  // опоры, уже нарисованные в этом кадре
 function poleArrow(g, a, b, w, double, arrows) {
   const d = Math.hypot(b.x - a.x, b.y - a.y);
@@ -1931,6 +1943,7 @@ function textBox(p, deg, dy, w, h) {
 // Ставит надпись вдоль линии, только если место свободно; возвращает, поставлена ли она
 function placeText(g, path, s, str, o) {
   o = Object.assign({ dy: 0, size: 2.8 * MM, italic: true }, o);
+  if (o.size * TEXT_K < LBL_HIDE_PX) return false;                     // мельче нескольких точек — не рисуем; линия идёт сплошной без разрыва под надпись
   const p = at(path, s), box = textBox(p, upright(p.a), o.dy, tw(str, o.size, o.italic) + 6, o.size * TEXT_K + 5);   // с запасом на обводку
   if (!labelsAll && hits(box, curOwner)) return false;                             // своя линия не мешает, всё остальное — мешает
   text(g, path, s, str, o);
@@ -2174,6 +2187,7 @@ function screenPts(line) {
 }
 const NO_STATE = new Set(['building', 'fence', 'road', 'relief', 'veg', 'cad']);
 function drawLines() {
+  planSizes();
   const size = map.getSize();
   L.DomUtil.setPosition(netSvg, map.containerPointToLayerPoint([0, 0]));
   drawnAt = { zoom: map.getZoom(), ll: map.containerPointToLatLng([0, 0]) };
@@ -2238,6 +2252,7 @@ function inPoly(x, y, poly) {
 // Надпись в точке (x, y) под углом deg; inside — целиком внутри контура. Ставится, только если ни с чем не пересекается
 function placeFree(g, poly, x, y, deg, str, size, o) {
   o = o || {};
+  if (size * TEXT_K < LBL_HIDE_PX) return false;
   const w = tw(str, size, o.italic) + 4, h = size * TEXT_K + 3, r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
   const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => ({ x: x + u * w / 2 * c - v * h / 2 * s, y: y + u * w / 2 * s + v * h / 2 * c }));
   if (o.inside && !corners.every(p => inPoly(p.x, p.y, poly))) return false;
@@ -2291,8 +2306,8 @@ function drawHits() {
     ((LINES[line.type] || {}).closed ? L.polygon(line.latlngs, { opacity: 0, fillOpacity: 0, weight: 24, interactive: true })
       : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode && pickTool) { pickTap(e.latlng); return; } if (mode) addAt(e.latlng); else { lineTap = { line, ll: e.latlng }; showCard('line', line); } }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
 }
-map.on('moveend zoomend resize viewreset', frame);
-map.on('zoomend', () => { if ((planDenom() > GEN_DENOM) !== generalized) { drawPoints(); frame(); } });   // перешли через 1:3000 — пересобрать знаки
+map.on('moveend resize viewreset', frame);                              // после изменения масштаба тоже придёт moveend
+map.on('zoomend', () => { const was = MM; planSizes(); if (MM !== was || generalized !== planDenom() > GEN_DENOM) drawPoints(); });   // размер знаков — по масштабу (как на плане 1:500); линии — в frame по moveend
 // Во время приближения (кнопки, щипок) линии не прячем, а растягиваем вместе с картой; после — перерисовываем начисто
 netSvg.classList.add('leaflet-zoom-animated');
 netSvg.style.transformOrigin = '0 0';
