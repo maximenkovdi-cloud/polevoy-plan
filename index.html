@@ -664,7 +664,10 @@ const MM_BASE = (() => { let px; try { px = JSON.parse(localStorage.getItem('tk.
   return Math.min(7, Math.max(3.5, 1 / px)); })();
 let MM = MM_BASE;                                                     // меняется с масштабом — planSizes()
 const TEXT_K = 4 / MM_BASE;                                           // надпись N·MM мм → 4·N точек на 1:500, дальше — вместе с картой
-const PLAN_MM_PER_M = 2, PLAN_MAX_K = 2, PLAN_HIDE_PX = 2.5, LBL_HIDE_PX = 5;   // 1 м = 2 мм на 1:500; крупнее 2× не растим; мельче — не рисуем
+// масштаб плана (как «масштаб съёмки» в GeoniCS): от него — размер знаков на местности, упрощение и выгрузка DXF
+let planScale = [500, 1000, 2000].includes(Number(pref('planScale', 500))) ? Number(pref('planScale', 500)) : 500;
+let PLAN_MM_PER_M = 1000 / planScale;
+const PLAN_MAX_K = 2, PLAN_HIDE_PX = 2.5, LBL_HIDE_PX = 5;   // 1 м = 2 мм на 1:500; крупнее 2× не растим; мельче — не рисуем
 const SYM_MM = 2.7, TAP_PX = 44;
 let SYM_PX = Math.round(SYM_MM * MM);   // точечный знак ≈2,7 мм (колодец 2 мм, столб 1 мм); зона касания — 44 px   // точечный знак ≈2,7 мм (колодец 2 мм, столб 1 мм); зона касания — 44 px
 const RECENT_MAX = 8;          // сколько «последних» знаков помнить
@@ -1499,7 +1502,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 52;
+const APP_BUILD = 53;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1759,10 +1762,18 @@ function pipeAngle(ll) {
 let pointMarkers = [];
 // Мельче 1:3000 мелкие подробности 1:500 (крыльца, буквы покрытий, отметки, засечки оград, надписи зданий) не рисуются — иначе каша;
 // сети, здания, геодезические пункты остаются
-const GEN_DENOM = 3000, MINOR_GROUPS = new Set(['street', 'reliefpt', 'bpartpt', 'arm']);
+let GEN_DENOM = 6 * planScale;
+const MINOR_GROUPS = new Set(['street', 'reliefpt', 'bpartpt', 'arm']);
 const MINOR_POINTS = new Set(POINT_GROUPS.filter(g => MINOR_GROUPS.has(g.id)).flatMap(g => g.items.map(i => i.id)));
 function planDenom() { return metersPerPx() * 1000 / PX_MM; }
 let generalized = false;
+// сменить масштаб плана: знаки на местности крупнее (1:1000 — вдвое, 1:2000 — вчетверо), подписи DXF и лист — по нему
+function setPlanScale(v) {
+  planScale = v; setPref('planScale', v);
+  PLAN_MM_PER_M = 1000 / v; GEN_DENOM = 6 * v; DXF_TEXT_M = 2 * v / 1000; DXF_M_PER_MM = v / 1000;
+  setPref('meas', { ...pref('meas', {}), scale: v });               // допуск измерения — под тот же масштаб
+  redrawAll(); toast(`Масштаб плана 1:${v}: знаки, упрощение и DXF — под него`);
+}
 function planSizes() {
   MM = Math.max(0.25, Math.round(Math.min(MM_BASE * PLAN_MAX_K, 1 / (PLAN_MM_PER_M * metersPerPx())) * 4) / 4);   // точек экрана на 1 мм плана 1:500, шаг 0,25 — без лишних перерисовок
   SYM_PX = SYM_MM * MM; SYM_R = SYM_PX / 2; LBL_PX = 12.5 * MM / MM_BASE;
@@ -4148,6 +4159,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'rain', icon: '☂', text: 'Дождь: касание карты не ставит точку', on: rainOn, check: true },
   { header: 'Карта' },
   { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() },
+  { id: 'planscale', icon: '⊡', text: `Масштаб плана: 1:${planScale} (размер знаков, DXF)` },
   { id: 'labels', icon: 'А', text: labelsAll ? 'Подписи: все, даже с наложением' : 'Подписи: без наложений (лишние — при приближении)', on: labelsAll, check: true },
   { id: 'raster', icon: '▣', text: 'Наложить свой растр (план, ортофото, скан)' },
   { id: 'rasters', icon: '◐', text: 'Свои растры: прозрачность, удаление' },
@@ -4263,6 +4275,7 @@ const MENU = {
   }, 'Удалить всё'),
   update: () => checkUpdate(true),
   export: () => exportMenu(),
+  planscale: () => openList('Масштаб плана', [500, 1000, 2000].map(v => ({ id: String(v), icon: '⊡', text: `1:${v}` + (v === 500 ? ' — исполнительная съёмка, сети' : v === 1000 ? ' — посёлки, промплощадки' : ' — незастроенная территория'), on: v === planScale, radio: true })), v => setPlanScale(Number(v))),
   journal: () => journalSheet(),
   redo: () => redoSheet(),
   settings: () => settingsMenu(),
@@ -4614,7 +4627,7 @@ setInterval(runAiQueue, AI_RETRY_MS);
 
 /* ───────────── DXF R12: X на восток (Y плоской системы), Y на север (X), Z — отметка; кириллица в кодировке 1251 ───────────── */
 
-const DXF_TEXT_M = 1.0;                                                 // высота подписей — 1 м = 2 мм на плане 1:500
+let DXF_TEXT_M = 2 * planScale / 1000;                                  // высота подписей — 2 мм на плане (1 м на 1:500)
 const NET_GROUPS = new Set(['water', 'sewer', 'gas', 'heat', 'cables', 'comm', 'special', 'air']);
 const DXF_COLOR = { water: 5, sewer: 34, gas: 30, heat: 6, el: 1, own: 6, relief: 34, veg: 3, comm: 3 };
 const LINE_GROUP_OF = Object.fromEntries(LINE_GROUPS.flatMap(g => g.items.map(i => [i.id, g])));
@@ -4649,7 +4662,7 @@ function lineZs(l) {
   });
 }
 // пунктирные знаки — свой тип линии: штрих и пробел в мм плана, как на экране (1 мм на 1:500 = 0,5 м)
-const DXF_M_PER_MM = 0.5;
+let DXF_M_PER_MM = planScale / 1000;                                    // метров на 1 мм листа
 function dxfLtype(l, sp) {
   const d = l.state === 'project' ? [10, 4] : l.state === 'staked' ? [10, 2] : Array.isArray(sp.dash) ? sp.dash : sp.dash ? [2, 1] : sp.kind === 'route' ? [4, 1.5] : null;
   return d ? { name: `DASH_${d[0]}_${d[1]}`.replace(/\./g, 'P'), d } : null;
@@ -4711,7 +4724,7 @@ function dxfFrame(box, ent, useLayer) {
   text(ls, X(67), Y(33.5), 3, m.object || '', 116);                     // графа 2 — объект
   text(ls, X(67), Y(29), 2.2, m.customer ? 'Заказчик: ' + m.customer : '', 116);
   text(ls, X(67), Y(17), 3, 'Топографический план', 66);                 // графа 4 — наименование
-  text(ls, X(67), Y(11), 3, 'Масштаб 1:500', 66);
+  text(ls, X(67), Y(11), 3, 'Масштаб 1:' + planScale, 66);
   text(ls, X(67), Y(4), 2, `Формат ${sh.name}${sh.name === 'нестандартный' ? ` ${sh.W}x${sh.H} мм` : ''}`, 66);
   [['Стадия', 135], ['Лист', 150], ['Листов', 165]].forEach(([t, v]) => text(ls, X(v + 0.8), Y(21.2), 1.8, t));
   text(ls, X(137), Y(16.2), 2.5, 'И'); text(ls, X(155), Y(16.2), 2.5, '1'); text(ls, X(171), Y(16.2), 2.5, '1');   // «И» — изыскания
@@ -4771,7 +4784,7 @@ function toDxf() {
     16, 0, 26, 0, 36, 1, 17, 0, 27, 0, 37, 0, 40, f3(vh), 41, 1.5, 42, 50, 43, 0, 44, 0, 50, 0, 51, 0, 71, 0, 72, 100, 73, 1, 74, 3, 75, 0, 76, 0, 77, 0, 78, 0, 0, 'ENDTAB');
   put(0, 'TABLE', 2, 'LTYPE', 70, ltypes.size + 1, 0, 'LTYPE', 2, 'CONTINUOUS', 70, 0, 3, 'Solid line', 72, 65, 73, 0, 40, 0.0);
   for (const { name, d } of ltypes.values())
-    put(0, 'LTYPE', 2, name, 70, 0, 3, `Штрих ${d[0]} мм, пробел ${d[1]} мм на плане 1:500`, 72, 65, 73, 2, 40, f3((d[0] + d[1]) * DXF_M_PER_MM), 49, f3(d[0] * DXF_M_PER_MM), 49, f3(-d[1] * DXF_M_PER_MM));
+    put(0, 'LTYPE', 2, name, 70, 0, 3, `Штрих ${d[0]} мм, пробел ${d[1]} мм на плане 1:${planScale}`, 72, 65, 73, 2, 40, f3((d[0] + d[1]) * DXF_M_PER_MM), 49, f3(d[0] * DXF_M_PER_MM), 49, f3(-d[1] * DXF_M_PER_MM));
   put(0, 'ENDTAB');
   put(0, 'TABLE', 2, 'LAYER', 70, layers.size + 1, 0, 'LAYER', 2, '0', 70, 0, 62, 7, 6, 'CONTINUOUS');
   for (const [name, color] of layers) put(0, 'LAYER', 2, name, 70, 0, 62, color, 6, 'CONTINUOUS');
