@@ -1135,7 +1135,7 @@ function runMeasure(o, onAccept) {
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 28;
+const APP_BUILD = 29;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -2701,7 +2701,8 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'offlineinfo', icon: '▤', text: 'Карты в телефоне: сколько сохранено, очистить' },
   { header: 'Файлы' },
   { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z)` },
-  { id: 'txt', icon: '⇩', text: 'Каталог TXT «№;X;Y;H;код» — точки и вершины линий' },
+  { id: 'txt', icon: '⇩', text: 'Каталог TXT «№;X;Y;H;код» для КРЕДО — точки и вершины линий' },
+  { id: 'pnezd', icon: '⇩', text: 'Точки для Civil 3D (PNEZD через запятую)' },
   { id: 'wells', icon: '⇩', text: 'Ведомость колодцев (CSV для Excel)' },
   { id: 'nets', icon: '⇩', text: 'Ведомость сетей (CSV для Excel)' },
   { id: 'cross', icon: '⇩', text: 'Ведомость пересечений сетей (CSV)' },
@@ -2735,7 +2736,8 @@ const MENU = {
   wells: () => download(`kolodcy_${today()}.csv`, toWellsSheet(), 'text/csv;charset=utf-8'),
   nets: () => download(`seti_${today()}.csv`, toNetsSheet(), 'text/csv;charset=utf-8'),
   dxf: () => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf'),
-  txt: () => download(`catalog_${today()}.txt`, '\ufeff' + toCatalog(), 'text/plain;charset=utf-8'),
+  txt: () => download(`catalog_${today()}.txt`, new Blob([toCatalog()], { type: 'text/plain' }), 'text/plain'),
+  pnezd: () => download(`civil3d_PNEZD_${today()}.csv`, new Blob([toPnezd()], { type: 'text/csv' }), 'text/csv'),
   screen: () => { const on = !pref('keepScreen', true); setPref('keepScreen', on); if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); toast(on ? 'Экран не будет гаснуть, пока открыт план' : 'Экран гаснет как обычно'); },
   ai: () => aiSettings(),
   report: () => exportReport(),
@@ -3106,17 +3108,39 @@ const layerName = (prefix, title) => (prefix + title).toUpperCase().replace(/[^A
 function dxfLayerOfLine(l) { const g = LINE_GROUP_OF[l.type] || { id: 'own', title: 'Прочее' }; return layerName(NET_GROUPS.has(g.id) ? 'СЕТИ_' : 'ТОПО_', g.title); }
 function dxfLayerOfPoint(p) { const g = POINT_GROUPS.find(x => x.items.some(i => i.id === p.type)) || { title: 'Прочее' }; return layerName('ТОЧКИ_', g.title); }
 function dxfColorOfLayer(name, kind) { if (kind && DXF_COLOR[kind]) return DXF_COLOR[kind]; return /РЕЛЬЕФ/.test(name) ? 34 : /РАСТИТ|ДЕРЕВ/.test(name) ? 3 : 7; }
-// кодировка Windows-1251 для кириллицы в DXF R12
-function cp1251(str) {
+// кодировка Windows-1251 для кириллицы в DXF R12, каталоге и MIF; dxf — символы вне 1251 кодом \U+XXXX (AutoCAD его понимает), иначе «?»
+function cp1251(str, dxf) {
   const extra = { 0x401: 0xA8, 0x451: 0xB8, 0x2116: 0xB9, 0x2013: 0x96, 0x2014: 0x97, 0xAB: 0xAB, 0xBB: 0xBB, 0xB0: 0xB0, 0xB1: 0xB1 };
-  const out = new Uint8Array(str.length);
+  const out = [];
   for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i);
-    out[i] = c < 128 ? c : c >= 0x410 && c <= 0x44F ? c - 0x350 : extra[c] != null ? extra[c] : 0x3F; }
-  return out;
+    const b = c < 128 ? c : c >= 0x410 && c <= 0x44F ? c - 0x350 : extra[c];
+    if (b != null) out.push(b);
+    else if (dxf) for (const ch of '\\U+' + c.toString(16).toUpperCase().padStart(4, '0')) out.push(ch.charCodeAt(0));
+    else out.push(0x3F); }
+  return new Uint8Array(out);
 }
+// отметки вершин линии для 3D: известные — как есть, между ними — по длине, на концах — ближайшая; ни одной — null (линия 2D)
+function lineZs(l) {
+  const hs = l.latlngs.map((a, i) => { const z = l.hs && l.hs[i]; return z && hasH(z.h) ? Number(z.h) : null; });
+  if (hs.every(h => h == null)) return null;
+  const pts = l.latlngs.map(a => sk42(a[0], a[1])), d = [0];
+  for (let i = 1; i < pts.length; i++) d.push(d[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+  const known = hs.map((h, i) => h == null ? -1 : i).filter(i => i >= 0);
+  return hs.map((h, i) => {
+    if (h != null) return h;
+    const a = known.filter(k => k < i).pop(), b = known.find(k => k > i);
+    if (a == null) return hs[b];
+    if (b == null) return hs[a];
+    return hs[a] + (hs[b] - hs[a]) * (d[b] > d[a] ? (d[i] - d[a]) / (d[b] - d[a]) : 0);
+  });
+}
+const DXF_STYLE = 'GOST';                                                // стиль подписей: isocpeur.ttf — чертёжный шрифт с кириллицей, есть в AutoCAD и nanoCAD
 function toDxf() {
   const L = [], put = (...kv) => { for (let i = 0; i < kv.length; i += 2) L.push(String(kv[i]), String(kv[i + 1])); };
-  const xyz = (ll, h) => { const c = sk42(ll[0], ll[1]); return [f3(c.y), f3(c.x), hasH(h) ? Number(h).toFixed(3) : '0.0']; };
+  const box = [Infinity, Infinity, -Infinity, -Infinity];               // границы чертежа — чтобы AutoCAD сразу показал объекты
+  const xyz = (ll, h) => { const c = sk42(ll[0], ll[1]);
+    box[0] = Math.min(box[0], c.y); box[1] = Math.min(box[1], c.x); box[2] = Math.max(box[2], c.y); box[3] = Math.max(box[3], c.x);
+    return [f3(c.y), f3(c.x), hasH(h) ? Number(h).toFixed(3) : '0.0']; };
   const layers = new Map();
   const useLayer = (name, kind) => { if (!layers.has(name)) layers.set(name, dxfColorOfLayer(name, kind)); return name; };
   // сущности — сначала, чтобы знать слои и блоки
@@ -3124,38 +3148,52 @@ function toDxf() {
   const blocks = new Set();
   const ATTRS = [['НОМЕР', 0], ['ОТМ', 0], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]
   for (const p of data.points) {
-    const lay = useLayer(dxfLayerOfPoint(p), NET_KIND[p.type]), H = pointH(p), [x, y, z] = xyz([p.lat, p.lng], H), blk = p.type.toUpperCase();
+    // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
+    const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H), blk = p.type.toUpperCase();
     blocks.add(blk);
     ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z);
     const val = { НОМЕР: p.no || '', ОТМ: H == null ? '' : H.toFixed(2), КОД: p.type, ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
       ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : '' };
-    ATTRS.forEach(([tag, inv], k) => ent(0, 'ATTRIB', 8, lay, 10, (Number(x) + 0.6).toFixed(3), 20, (Number(y) + 0.4 - k * 1.2).toFixed(3), 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv));
+    ATTRS.forEach(([tag, inv], k) => ent(0, 'ATTRIB', 8, lay, 10, (Number(x) + 0.6).toFixed(3), 20, (Number(y) + 0.4 - k * 1.2).toFixed(3), 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE));
     ent(0, 'SEQEND', 8, lay);
   }
   for (const l of data.lines) {
     const sp = LINES[l.type] || LINES.plain, lay = useLayer(dxfLayerOfLine(l), NET_KIND[l.type] || (sp.color === REL ? 'relief' : sp.color === VEG ? 'veg' : null));
-    ent(0, 'POLYLINE', 8, lay, 66, 1, 10, 0, 20, 0, 30, 0, 70, 8 | (sp.closed ? 1 : 0));
-    l.latlngs.forEach((ll, i) => { const z = l.hs && l.hs[i], [x, y, zz] = xyz(ll, z && z.h); ent(0, 'VERTEX', 8, lay, 10, x, 20, y, 30, zz, 70, 32); });
+    // с отметками — 3D-полилиния (пропуски — по соседним вершинам), без отметок — плоская, чтобы не было ложных нулей
+    const zs = lineZs(l);
+    ent(0, 'POLYLINE', 8, lay, 66, 1, 10, 0, 20, 0, 30, 0, 70, (zs ? 8 : 0) | (sp.closed ? 1 : 0));
+    l.latlngs.forEach((ll, i) => { const [x, y, zz] = xyz(ll, zs && zs[i]); ent(0, 'VERTEX', 8, lay, 10, x, 20, y, 30, zs ? zz : 0, 70, zs ? 32 : 0); });
     ent(0, 'SEQEND', 8, lay);
     const label = [sp.kind === 'building' ? buildingLabel(sp, l) : '', NET_LINE_KINDS.has(sp.kind) ? netCaption(l) : l.caption, (l.attr && l.attr.caption) || ''].filter(Boolean).join(' ');
-    if (label) { const lay2 = useLayer('ТОПО_ПОДПИСИ'), [x, y, z] = xyz(l.latlngs[0]); ent(0, 'TEXT', 8, lay2, 10, x, 20, y, 30, z, 40, DXF_TEXT_M, 1, label); }
+    if (label) { const lay2 = useLayer('ТОПО_ПОДПИСИ'), [x, y, z] = xyz(l.latlngs[0], zs && zs[0]); ent(0, 'TEXT', 8, lay2, 10, x, 20, y, 30, z, 40, DXF_TEXT_M, 1, label, 7, DXF_STYLE); }
   }
-  put(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1009', 9, '$DWGCODEPAGE', 3, 'ANSI_1251', 9, '$INSUNITS', 70, 6, 0, 'ENDSEC');
-  put(0, 'SECTION', 2, 'TABLES', 0, 'TABLE', 2, 'LTYPE', 70, 1, 0, 'LTYPE', 2, 'CONTINUOUS', 70, 0, 3, 'Solid line', 72, 65, 73, 0, 40, 0.0, 0, 'ENDTAB');
+  if (box[0] === Infinity) box.splice(0, 4, 0, 0, 100, 100);
+  const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2, vh = Math.max(box[3] - box[1], (box[2] - box[0]) / 1.5, 20) * 1.1;
+  put(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1009', 9, '$DWGCODEPAGE', 3, 'ANSI_1251', 9, '$INSUNITS', 70, 6,
+    9, '$EXTMIN', 10, f3(box[0]), 20, f3(box[1]), 30, 0, 9, '$EXTMAX', 10, f3(box[2]), 20, f3(box[3]), 30, 0,
+    9, '$LIMMIN', 10, f3(box[0]), 20, f3(box[1]), 9, '$LIMMAX', 10, f3(box[2]), 20, f3(box[3]), 9, '$TEXTSTYLE', 7, DXF_STYLE, 0, 'ENDSEC');
+  put(0, 'SECTION', 2, 'TABLES');
+  // вид при открытии — на объекты, а не на начало координат
+  put(0, 'TABLE', 2, 'VPORT', 70, 1, 0, 'VPORT', 2, '*ACTIVE', 70, 0, 10, 0, 20, 0, 11, 1, 21, 1, 12, f3(cx), 22, f3(cy), 13, 0, 23, 0, 14, 1, 24, 1, 15, 0, 25, 0,
+    16, 0, 26, 0, 36, 1, 17, 0, 27, 0, 37, 0, 40, f3(vh), 41, 1.5, 42, 50, 43, 0, 44, 0, 50, 0, 51, 0, 71, 0, 72, 100, 73, 1, 74, 3, 75, 0, 76, 0, 77, 0, 78, 0, 0, 'ENDTAB');
+  put(0, 'TABLE', 2, 'LTYPE', 70, 1, 0, 'LTYPE', 2, 'CONTINUOUS', 70, 0, 3, 'Solid line', 72, 65, 73, 0, 40, 0.0, 0, 'ENDTAB');
   put(0, 'TABLE', 2, 'LAYER', 70, layers.size + 1, 0, 'LAYER', 2, '0', 70, 0, 62, 7, 6, 'CONTINUOUS');
   for (const [name, color] of layers) put(0, 'LAYER', 2, name, 70, 0, 62, color, 6, 'CONTINUOUS');
-  put(0, 'ENDTAB', 0, 'ENDSEC');
+  put(0, 'ENDTAB');
+  put(0, 'TABLE', 2, 'STYLE', 70, 2, 0, 'STYLE', 2, 'STANDARD', 70, 0, 40, 0, 41, 1, 50, 0, 71, 0, 42, DXF_TEXT_M, 3, 'txt', 4, '',
+    0, 'STYLE', 2, DXF_STYLE, 70, 0, 40, 0, 41, 1, 50, 0, 71, 0, 42, DXF_TEXT_M, 3, 'isocpeur.ttf', 4, '', 0, 'ENDTAB');
+  put(0, 'TABLE', 2, 'APPID', 70, 1, 0, 'APPID', 2, 'ACAD', 70, 0, 0, 'ENDTAB', 0, 'ENDSEC');
   // блоки знаков: кружок 0,5 м (заменяются своими блоками ГКИНП в офисе) и атрибуты
   put(0, 'SECTION', 2, 'BLOCKS');
   for (const blk of blocks) {
     put(0, 'BLOCK', 8, '0', 2, blk, 70, 2, 10, 0, 20, 0, 30, 0, 3, blk, 0, 'CIRCLE', 8, '0', 10, 0, 20, 0, 30, 0, 40, 0.25);
-    ATTRS.forEach(([tag, inv], k) => put(0, 'ATTDEF', 8, '0', 10, 0.6, 20, (0.4 - k * 1.2).toFixed(1), 30, 0, 40, DXF_TEXT_M, 1, '', 3, tag, 2, tag, 70, inv));
+    ATTRS.forEach(([tag, inv], k) => put(0, 'ATTDEF', 8, '0', 10, 0.6, 20, (0.4 - k * 1.2).toFixed(1), 30, 0, 40, DXF_TEXT_M, 1, '', 3, tag, 2, tag, 70, inv, 7, DXF_STYLE));
     put(0, 'ENDBLK', 8, '0');
   }
   put(0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES');
   L.push(...E);
   put(0, 'ENDSEC', 0, 'EOF');
-  return cp1251(L.join('\r\n') + '\r\n');
+  return cp1251(L.join('\r\n') + '\r\n', true);
 }
 
 /* ───────────── Архив без сжатия (ZIP «stored»): KMZ с фото и архив для отчёта ───────────── */
@@ -3199,7 +3237,7 @@ async function exportReport() {
   toast('Собираю архив для отчёта…');
   const enc = new TextEncoder();
   const files = [{ name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
-    { name: `catalog_${today()}.txt`, data: enc.encode('\ufeff' + toCatalog()) }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) }, { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
+    { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) }, { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
 
@@ -3323,15 +3361,31 @@ function toMifMid() {
   }
   return { mif: cp1251(mif.join('\r\n') + '\r\n'), mid: cp1251(mid.join('\r\n') + '\r\n') };
 }
-// Каталог для КРЕДО, GeoniCS, Панорамы: «№;X;Y;H;код;описание» — точки и все вершины линий (номер линии.номер вершины)
+// текст поля без разделителя файла: «;» внутри описания сдвигал столбцы в КРЕДО
+const field = (s, sep) => String(s == null ? '' : s).replace(sep === ',' ? /[,;]/g : /;/g, sep === ',' ? ' ' : ',').replace(/\s+/g, ' ').trim();
+// Каталог для КРЕДО, GeoniCS, Панорамы: «№;X;Y;H;код;описание» — точки и все вершины линий (номер линии.номер вершины).
+// Кодировка Windows-1251, шапка — строкой комментария «//» (в шаблоне импорта КРЕДО — «Символы комментария: //»)
 function toCatalog() {
-  const out = ['№;X;Y;H;Код;Описание'];
+  const out = ['// №;X;Y;H;Код;Описание — ' + planeName()];
   for (const p of data.points) { const c = sk42(p.lat, p.lng), H = pointH(p);
-    out.push([p.no || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(3), p.type, [(POINTS[p.type] || POINTS.mark).name, p.name, pointNote(p)].filter(Boolean).join(' ')].join(';')); }
+    out.push([p.no || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(3), p.type, field([(POINTS[p.type] || POINTS.mark).name, p.name, pointNote(p)].filter(Boolean).join(' '))].join(';')); }
   for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain;
     l.latlngs.forEach((ll, i) => { const c = sk42(ll[0], ll[1]), z = l.hs && l.hs[i];
-      out.push([`L${l.no || ''}.${i + 1}`, f3(c.x), f3(c.y), z && hasH(z.h) ? Number(z.h).toFixed(3) : '', l.type, i ? '' : [sp.name, l.caption, sp.closed ? 'замкнут' : ''].filter(Boolean).join(' ')].join(';')); }); }
-  return out.join('\r\n');
+      out.push([`L${l.no || ''}.${i + 1}`, f3(c.x), f3(c.y), z && hasH(z.h) ? Number(z.h).toFixed(3) : '', l.type, i ? '' : field([sp.name, l.caption, sp.closed ? 'замкнут' : ''].filter(Boolean).join(' '))].join(';')); }); }
+  return cp1251(out.join('\r\n') + '\r\n');
+}
+// Точки для Civil 3D, формат PNEZD через запятую: номер — только число (вершины линий — номера после точек),
+// описание начинается с кода знака — по нему срабатывают ключи описаний (Description Keys)
+function toPnezd() {
+  const out = [], used = new Set(data.points.map(p => Number(p.no)).filter(n => n > 0));
+  let next = Math.max(0, ...used) + 1;
+  const num = n => { if (n > 0 && !used.has(-n)) { used.add(-n); return n; } while (used.has(next)) next++; used.add(next); return next++; };
+  const row = (n, c, H, d) => out.push([n, f3(c.x), f3(c.y), H == null ? '' : Number(H).toFixed(3), field(d, ',')].join(','));
+  for (const p of data.points) row(num(Number(p.no)), sk42(p.lat, p.lng), pointH(p), [p.type, p.name, pointNote(p)].filter(Boolean).join(' '));
+  for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain;
+    l.latlngs.forEach((ll, i) => { const z = l.hs && l.hs[i];
+      row(num(0), sk42(ll[0], ll[1]), z && hasH(z.h) ? z.h : null, [l.type, `L${l.no || ''}.${i + 1}`, i ? '' : [sp.name, l.caption].filter(Boolean).join(' ')].filter(Boolean).join(' ')); }); }
+  return cp1251(out.join('\r\n') + '\r\n');
 }
 // поворот и свойства знака из KML; повреждённые — просто пропускаем
 function readExtras(ext) {
