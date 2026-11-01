@@ -1047,6 +1047,12 @@ function spoofSheet() {
       <br>• Ставьте точки касанием по подложке или «Точка по расстоянию и углу» от известной точки.
       <br>• С приёмником RTK под подменой FIX обычно не получается; если FIX есть — сначала встаньте на известную точку и нажмите «✓ Контроль».
       <br>• Подмена часто работает волнами — подождите: когда сигнал станет похож на настоящий, плашка перестанет быть красной.
+      <br><br><b>Настройки приёмника (по разбору ПРИН «РЭБ или не РЭБ»):</b>
+      <br>• Поднимите маску (угол отсечки) до 15–20°: глушилки стоят на земле, сильнее всего забиты низкие спутники.
+      <br>• Включите Galileo и сигналы L5/E5 — их заглушить гораздо труднее; Galileo с подписью (OSNMA) сам распознаёт подмену.
+      <br>• Обновите прошивку приёмника — новые прошивки заметно лучше держат помехи.
+      <br>• Веху держите над головой, не у груди. Не кладите приёмник в яму или ведро: координаты будут, но сантиметров — нет.
+      <br>• FIX ≠ точность. После помех — «✓ Контроль» с другой высотой вехи или через полчаса.
       <br>• Если вы действительно далеко от плана (новый объект) — нажмите кнопку ниже.</div>
     <button class="btn" id="spoofTrustBtn" style="width:100%;margin-top:10px">Я действительно здесь (новый объект) — не считать «далеко» и «скачок» 12 часов</button>`);
   $('spoofTrustBtn').onclick = () => {
@@ -1292,13 +1298,16 @@ function measVerdict(m, tol, scale) {
 const CTRL_MARK = { ok: '✓ в допуске', mid: '≈ на пределе', bad: '✗ больше предельной' };
 function ctrlVerdict(d, tol) { return d == null ? null : d <= tol ? 'ok' : d <= 2 * tol ? 'mid' : 'bad'; }
 function controlPoint(p) {
+  const ant0 = p.hInfo && p.hInfo.ant != null ? Number(p.hInfo.ant) : null;
+  if (ant0 != null && Math.abs(ant0 - antH) < 0.005) toast(`Совет: для независимого контроля смените высоту вехи (сейчас ${mText(antH, 2)} м, как при съёмке) или повторите позже`);
   openMeasure((ll, meas) => {
     const a = sk42(p.lat, p.lng), b = sk42(ll.lat, ll.lng), H0 = pointH(p), H1 = normalHeight(ll.lat, ll.lng, meas.hEll);
     const dS = Math.hypot(b.x - a.x, b.y - a.y), dH = H0 != null && H1 != null ? H1 - H0 : null, hTol = heightTol(meas.scale);
     const vs = ctrlVerdict(dS, meas.tol), vh = ctrlVerdict(dH == null ? null : Math.abs(dH), hTol);
     const ok = [vs, vh].includes('bad') ? 'bad' : [vs, vh].includes('mid') ? 'mid' : 'ok';
     const rec = { at: meas.at, dS: +dS.toFixed(3), dH: dH == null ? null : +dH.toFixed(3), dx: +(b.x - a.x).toFixed(3), dy: +(b.y - a.y).toFixed(3),
-      m: meas.m, hm: meas.hm, scale: meas.scale, tol: meas.tol, hTol, ok };
+      m: meas.m, hm: meas.hm, scale: meas.scale, tol: meas.tol, hTol, ok, ant: antH };
+    const sameAnt = ant0 != null && Math.abs(ant0 - antH) < 0.005, soon = p.q && p.q.at && Date.now() - Date.parse(p.q.at) < 30 * 60e3;
     p.ctrl = [...(p.ctrl || []), rec];
     save();
     showSheet(`<div class="sh-head"><b>Контроль точки${p.no ? ' № ' + p.no : ''}</b><button class="x" data-close>×</button></div>
@@ -1306,6 +1315,7 @@ function controlPoint(p) {
       ${dH != null ? `<div class="meas-h">по высоте ${dH >= 0 ? '+' : '−'}${cmText(Math.abs(dH))} <span>${CTRL_MARK[vh]} (допуск ${cmText(hTol)})</span></div>`
         : `<div class="meas-sub">${H0 == null ? 'У точки нет отметки — высоту сравнить не с чем' : 'Приёмник не дал высоту — сравнение только в плане'}</div>`}
       <div class="meas-sub">ΔX ${mText(rec.dx, 3)} м · ΔY ${mText(rec.dy, 3)} м · новое измерение ±${cmText(meas.m)}. Координаты точки не изменены, контроль записан в карточку и в выгрузки.</div>
+      ${sameAnt || soon ? `<div class="meas-sub">⚠ Контроль не вполне независимый: ${[sameAnt && "та же высота вехи", soon && "меньше получаса после съёмки"].filter(Boolean).join(", ")}. Ошибка FIX могла повториться — для надёжности смените высоту вехи или повторите позже.</div>` : ""}
       <button class="btn primary" data-close style="width:100%;margin-top:10px">Готово</button>`);
     if (selected && selected.obj === p) showCard('point', p);
   });
@@ -1502,7 +1512,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 54;
+const APP_BUILD = 55;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
