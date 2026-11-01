@@ -1337,7 +1337,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 39;
+const APP_BUILD = 40;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -2210,6 +2210,7 @@ function showCard(kind, obj) {
       if (a.hFloor !== undefined && a.hFloor !== '') kv.push(['Пол 1 эт.', mText(Number(a.hFloor), 2) + ' м']);
       if (a.hBlind !== undefined && a.hBlind !== '') kv.push(['Отмостка', mText(Number(a.hBlind), 2) + ' м']);
     }
+    if (obj.vol) kv.push(['Объём', `насыпь ${m3(obj.vol.fill)} м³, выемка ${m3(obj.vol.cut)} м³ (на ${esc(dayMonth(obj.vol.at))})${obj.vol.sig !== volSig(obj) ? ' — <b style="color:#c62828">устарел, пересчитайте</b>' : ''}`]);
     if (s.kind === 'fence') {
       const a = obj.attr || {};
       sub = obj.caption ? esc(obj.caption) : 'ограждение';
@@ -2226,7 +2227,7 @@ function showCard(kind, obj) {
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <div class="swatches"><span>Цвет</span>${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div>
-    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn" data-act="stake" style="grid-column:span ${kind === 'point' ? 2 : 3}">◎ Вынести в натуру</button>${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки по линии</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}${kind === 'point' ? '<button class="btn" data-act="ctrl" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : ''}<button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
+    <div class="acts"><button class="btn primary" data-act="type" style="grid-column:span ${kind === 'line' ? 3 : 4}">Условный знак…</button>${kind === 'line' ? '<button class="btn" data-act="verts">Вершины</button>' : ''}<button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Координаты</button><button class="btn" data-act="stake" style="grid-column:span ${kind === 'point' ? 2 : 3}">◎ Вынести в натуру</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки по линии</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}${kind === 'point' ? '<button class="btn" data-act="ctrl" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : ''}<button class="btn trash" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -2246,6 +2247,7 @@ function showCard(kind, obj) {
     if (act === 'photo') addPhoto(kind, obj);
     if (act === 'ctrl') controlPoint(obj);
     if (act === 'axis') startAxis(obj);
+    if (act === 'vol') volumeForm(obj);
     if (act === 'soline') soFromLine(obj);
     if (act === 'outage') showOutage(outageFrom(kind, obj));
     if (act === 'ai') { if (obj.ai) showSuggestion(kind, obj, obj.ai); else suggestSign(kind, obj); }
@@ -2858,6 +2860,181 @@ function updateAxis() {
   }
   $('stake').innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:4px"><b>${esc(stake.name)}</b><button class="x" id="stakeStop">×</button></div>${body}`;
   $('stakeStop').onclick = stopStake;
+}
+
+/* ───────────── Объёмы: отвал, котлован, выемка внутри контура (триангуляция по точкам с отметками) ───────────── */
+
+// Поверхность — треугольники Делоне по вершинам контура и всем точкам с отметками внутри; подошва — по вершинам контура
+// (отвал) или горизонтальная плоскость на заданной отметке (котлован, срезка до проектной). Насыпь — выше подошвы, выемка — ниже.
+const VOL_DUP_M = 0.01;                                                 // точки ближе 1 см — одна
+const VOL_STEP_M = 15;                                                  // реже — рельеф отвала теряется (ГКИНП 1:500: пикеты через 5–15 м)
+// триангуляция Делоне (Боуэр — Уотсон); pts — [{x, y}] в местных метрах; вернёт тройки индексов
+function delaunay(pts) {
+  const n = pts.length; if (n < 3) return [];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+  const d = Math.max(maxX - minX, maxY - minY) * 20 || 1, mx = (minX + maxX) / 2, my = (minY + maxY) / 2;
+  const P = pts.concat([{ x: mx - d, y: my - d }, { x: mx + d, y: my - d }, { x: mx, y: my + d }]);
+  const circ = (a, b, c) => { const A = P[a], B = P[b], C = P[c], D = 2 * (A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y));
+    if (Math.abs(D) < 1e-12) return { x: 0, y: 0, r2: Infinity };
+    const a2 = A.x * A.x + A.y * A.y, b2 = B.x * B.x + B.y * B.y, c2 = C.x * C.x + C.y * C.y;
+    const x = (a2 * (B.y - C.y) + b2 * (C.y - A.y) + c2 * (A.y - B.y)) / D, y = (a2 * (C.x - B.x) + b2 * (A.x - C.x) + c2 * (B.x - A.x)) / D;
+    return { x, y, r2: (A.x - x) ** 2 + (A.y - y) ** 2 }; };
+  let tris = [{ v: [n, n + 1, n + 2], c: circ(n, n + 1, n + 2) }];
+  for (let i = 0; i < n; i++) {
+    const p = P[i], bad = [], keep = [];
+    for (const t of tris) ((p.x - t.c.x) ** 2 + (p.y - t.c.y) ** 2 < t.c.r2 * (1 + 1e-12) ? bad : keep).push(t);
+    const edges = new Map();
+    for (const t of bad) for (let k = 0; k < 3; k++) { const a = t.v[k], b = t.v[(k + 1) % 3], key = a < b ? a + ',' + b : b + ',' + a;
+      edges.set(key, edges.has(key) ? null : [a, b]); }
+    tris = keep;
+    for (const e of edges.values()) if (e) tris.push({ v: [e[0], e[1], i], c: circ(e[0], e[1], i) });
+  }
+  return tris.filter(t => t.v.every(k => k < n)).map(t => t.v);
+}
+const inPolyP = (p, poly) => inPoly(p.x, p.y, poly);
+// объём над/под нулём в треугольнике с линейной разностью d (площадь A): насыпь и выемка отдельно
+function triVol(A, d1, d2, d3) {
+  const tot = A * (d1 + d2 + d3) / 3, ds = [d1, d2, d3], np = ds.filter(v => v > 0).length, nn = ds.filter(v => v < 0).length;
+  if (!nn) return { fill: tot, cut: 0 };
+  if (!np) return { fill: 0, cut: -tot };
+  const lone = np === 1 ? ds.findIndex(v => v > 0) : ds.findIndex(v => v < 0);   // вершина, одна по свою сторону нулевой линии
+  const k = ds[lone], [o1, o2] = ds.filter((_, i) => i !== lone);
+  const part = A * (k * k / ((k - o1) * (k - o2))) * k / 3;            // объём треугольничка у этой вершины
+  return np === 1 ? { fill: part, cut: part - tot } : { fill: tot - part, cut: -part };
+}
+// Треугольники, не пересекающие контур: отрезок контура, которого нет среди рёбер, делится пополам (отметка — по середине),
+// и так до совпадения (уточняющая триангуляция Делоне). pts — [{x, y, h}], segs — [[i, j]] по контуру; оба дополняются
+const VOL_SPLIT_ROUNDS = 12;
+function conformTin(pts, segs) {
+  let T = [];
+  for (let round = 0; round <= VOL_SPLIT_ROUNDS; round++) {
+    T = delaunay(pts);
+    const E = new Set(); for (const t of T) for (let k = 0; k < 3; k++) { const a = t[k], b = t[(k + 1) % 3]; E.add(a < b ? a + ',' + b : b + ',' + a); }
+    const miss = segs.filter(([a, b]) => !E.has(a < b ? a + ',' + b : b + ',' + a));
+    if (!miss.length || round === VOL_SPLIT_ROUNDS) break;
+    for (const s of miss) { const [a, b] = s, A = pts[a], B = pts[b];
+      pts.push({ x: (A.x + B.x) / 2, y: (A.y + B.y) / 2, h: (A.h + B.h) / 2, src: 'контур' });
+      const m = pts.length - 1; segs.splice(segs.indexOf(s), 1, [a, m], [m, b]); }
+  }
+  return T;
+}
+// исходные данные объёма: контур и все отметки внутри — в одной зоне (по первой вершине контура), в местных метрах
+function volumeInputs(line) {
+  const z0 = sk42(line.latlngs[0][0], line.latlngs[0][1]).zone, def = gkDef(z0);
+  const xy = (lat, lng) => { const [e, n] = proj4('WGS84', def, [lng, lat]); return { x: n, y: e }; };
+  const xy0 = line.latlngs.map(a => xy(a[0], a[1])), o = { x: xy0[0].x, y: xy0[0].y };
+  const loc = c => ({ x: c.x - o.x, y: c.y - o.y }), poly = xy0.map(loc);
+  const edge = poly.map((c, i) => ({ ...c, h: line.hs && line.hs[i] && hasH(line.hs[i].h) ? Number(line.hs[i].h) : null }));
+  const inner = [];
+  for (const p of data.points) { const H = pointH(p); if (H == null) continue; const c = loc(xy(p.lat, p.lng)); if (inPolyP(c, poly)) inner.push({ ...c, h: H, src: 'точка ' + (p.no || '') }); }
+  for (const l of data.lines) if (l !== line) l.latlngs.forEach((a, i) => { const z = l.hs && l.hs[i]; if (!z || !hasH(z.h)) return; const c = loc(xy(a[0], a[1])); if (inPolyP(c, poly)) inner.push({ ...c, h: Number(z.h), src: 'L' + (l.no || '') }); });
+  return { z0, o, poly, edge, inner };
+}
+// подпись входных данных: изменились контур или отметки внутри — посчитанный объём устарел
+const volSig = line => { const v = volumeInputs(line); return [...v.edge, ...v.inner].map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.h == null ? '' : p.h.toFixed(3)}`).join(';'); };
+// точки контура (только с отметками, без повторов) и отрезки между соседними вершинами контура
+function contourPts(edge) {
+  const pts = [], idx = edge.map(c => {
+    if (c.h == null) return -1;
+    const k = pts.findIndex(q => Math.hypot(q.x - c.x, q.y - c.y) < VOL_DUP_M); if (k >= 0) return k;
+    pts.push({ x: c.x, y: c.y, h: c.h, src: 'контур' }); return pts.length - 1; });
+  const segs = [];
+  idx.forEach((a, i) => { const b = idx[(i + 1) % idx.length]; if (a >= 0 && b >= 0 && a !== b) segs.push([a, b]); });
+  return { pts, segs };
+}
+function volumeCalc(line, base) {
+  const { z0, o, poly, edge, inner } = volumeInputs(line);
+  const B = contourPts(edge);
+  if (base.kind === 'contour' && B.pts.length < 3) return { err: 'У контура меньше трёх вершин с отметками — подошву не построить. Снимите контур по GPS / «Измерить» или выберите «плоскость на отметке».' };
+  // подошва по контуру: свои треугольники только по вершинам контура; где не покрыто — по ближним вершинам (обратно квадрату расстояния)
+  const bT = base.kind === 'contour' ? conformTin(B.pts, B.segs).filter(t => inPolyP(centroid(B.pts, t), poly)) : [];
+  const eH = B.pts;
+  const baseAt = c => {
+    if (base.kind === 'level') return base.h;
+    for (const t of bT) { const w = bary(eH, t, c); if (w) return w[0] * eH[t[0]].h + w[1] * eH[t[1]].h + w[2] * eH[t[2]].h; }
+    let sw = 0, sh = 0; for (const e of eH) { const d2 = (e.x - c.x) ** 2 + (e.y - c.y) ** 2; if (d2 < 1e-6) return e.h; sw += 1 / d2; sh += e.h / d2; }
+    return sh / sw;
+  };
+  // поверхность: контур (с отметками) + всё внутри, без повторов
+  const S = contourPts(edge), pts = S.pts;
+  for (const c of inner) if (!pts.some(q => Math.hypot(q.x - c.x, q.y - c.y) < VOL_DUP_M)) pts.push(c);
+  if (pts.length < 3) return { err: 'Внутри контура и на нём меньше трёх точек с отметками.' };
+  const T = conformTin(pts, S.segs).filter(t => inPolyP(centroid(pts, t), poly));   // вогнутый контур: треугольники снаружи — прочь
+  let fill = 0, cut = 0, area = 0;
+  const d = pts.map(p => { p.b = baseAt(p); return p.h - p.b; });
+  for (const t of T) { const [a, b, c] = t.map(i => pts[i]), A = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2;
+    const v = triVol(A, d[t[0]], d[t[1]], d[t[2]]); fill += v.fill; cut += v.cut; area += A; }
+  const nIn = inner.length, polyA = Math.abs(poly.reduce((s, p, i) => { const q = poly[(i + 1) % poly.length]; return s + p.x * q.y - q.x * p.y; }, 0)) / 2;
+  const spacing = Math.sqrt(polyA / Math.max(1, pts.length));          // средний шаг точек, м
+  let maxD = -Infinity, minD = Infinity; for (const v of d) { if (v > maxD) maxD = v; if (v < minD) minD = v; }
+  return { fill, cut, area, polyA, n: pts.length, inner: nIn, tris: T.length, spacing, maxD, minD, pts, T, o, z0, hErr: polyA * VOL_H_SIGMA };
+}
+const VOL_H_SIGMA = 0.03;                                               // типичная ошибка отметки по ГНСС с поправками, м
+const centroid = (P, t) => ({ x: (P[t[0]].x + P[t[1]].x + P[t[2]].x) / 3, y: (P[t[0]].y + P[t[1]].y + P[t[2]].y) / 3 });
+function bary(P, t, c) {
+  const [a, b, d] = t.map(i => P[i]), den = (b.y - d.y) * (a.x - d.x) + (d.x - b.x) * (a.y - d.y); if (Math.abs(den) < 1e-12) return null;
+  const w1 = ((b.y - d.y) * (c.x - d.x) + (d.x - b.x) * (c.y - d.y)) / den, w2 = ((d.y - a.y) * (c.x - d.x) + (a.x - d.x) * (c.y - d.y)) / den, w3 = 1 - w1 - w2;
+  return w1 >= -1e-9 && w2 >= -1e-9 && w3 >= -1e-9 ? [w1, w2, w3] : null;
+}
+const m3 = v => Math.round(v).toLocaleString('ru-RU');
+let volLayer = null;
+function volumeForm(line) {
+  const v = line.vol || {}, withH = (line.hs || []).filter(z => z && hasH(z.h)).length;
+  openForm('Объём внутри контура', [
+    { key: 'base', label: 'Подошва (от чего считать)', type: 'select', value: v.base || (withH >= 3 ? 'contour' : 'level'),
+      options: [['contour', 'по вершинам контура — отвал, куча'], ['level', 'горизонталь на отметке — котлован, срезка']] },
+    { key: 'h', label: 'Отметка подошвы, м (для горизонтали)', type: 'number', value: v.h != null ? v.h : '', placeholder: 'например 148.50',
+      hint: `Внутрь контура войдут все точки и вершины линий с отметками. У контура вершин с отметками: ${withH} из ${line.latlngs.length}.` }
+  ], vals => {
+    const base = vals.base === 'level' ? { kind: 'level', h: vals.h === '' ? NaN : parseNum(vals.h) } : { kind: 'contour' };
+    if (base.kind === 'level' && isNaN(base.h)) { toast('Укажите отметку подошвы — число, например 148.50'); return false; }
+    const r = volumeCalc(line, base);
+    if (r.err) { toast(r.err); return false; }
+    line.vol = { base: base.kind, h: base.h, fill: +r.fill.toFixed(1), cut: +r.cut.toFixed(1), area: +r.area.toFixed(1), n: r.n, at: today(), sig: volSig(line) };
+    save(); setTimeout(() => volumeShow(line, base, r), 0);
+  }, 'Посчитать');
+}
+function volumeShow(line, base, r) {
+  hideCard();
+  if (volLayer) volLayer.clearLayers(); else volLayer = L.layerGroup().addTo(map);
+  const z = r.z0, toLL = p => { const l = fromSk42(p.x + r.o.x, p.y + r.o.y, z); return [l.lat, l.lng]; };
+  for (const t of r.T) L.polygon(t.map(i => toLL(r.pts[i])), { color: '#6d4c41', weight: 1, opacity: 0.7, fill: false, interactive: false }).addTo(volLayer);
+  const warn = [];
+  if (r.inner < 3) warn.push('Внутри почти нет точек — объём посчитан только по контуру. Снимите вершину и склоны отвала.');
+  if (r.spacing > VOL_STEP_M) warn.push(`Точки редкие: в среднем через ${mText(r.spacing, 0)} м. Для подсчёта объёма — не реже чем через ${VOL_STEP_M} м и на всех перегибах.`);
+  if (r.area < r.polyA * 0.98) warn.push(`Треугольники покрыли ${Math.round(r.area / r.polyA * 100)}% контура — добавьте точек у краёв.`);
+  if (!hgt.ref && !hgt.dh && base.kind === 'level') warn.push('Отметки не привязаны к реперу, а подошва задана отметкой — ошибка может быть дециметры.');
+  showSheet(`<div class="sh-head"><b>Объём: L${line.no || ''} ${esc((LINES[line.type] || {}).name || '')}</b><button class="x" data-close>×</button></div>
+    <div class="kv" style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:6px 0">
+      <span>Насыпь (выше подошвы)</span><b>${m3(r.fill)} м³</b>
+      <span>Выемка (ниже подошвы)</span><b>${m3(r.cut)} м³</b>
+      <span>Разность</span><span>${r.fill - r.cut >= 0 ? '+' : '−'}${m3(Math.abs(r.fill - r.cut))} м³</span>
+      <span>Площадь</span><span>${mText(r.area, 1)} м² (контур ${mText(r.polyA, 1)} м²)</span>
+      <span>Подошва</span><span>${base.kind === 'level' ? 'горизонталь ' + mText(base.h, 2) + ' м' : 'по вершинам контура'}</span>
+      <span>Высота над подошвой</span><span>до ${mText(Math.max(0, r.maxD), 2)} м${r.minD < 0 ? `, ниже до ${mText(-r.minD, 2)} м` : ''}</span>
+      <span>Точек / треугольников</span><span>${r.n} / ${r.tris}, внутри ${r.inner}</span>
+      <span>Погрешность</span><span>±${m3(r.hErr)} м³ при ошибке отметок ±${cmText(VOL_H_SIGMA)}</span></div>
+    ${warn.map(w => `<div class="hint" style="color:#c62828;margin:4px 0">${w}</div>`).join('')}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px"><button class="btn" id="volCsv">Ведомость (CSV)</button><button class="btn" id="volClear">Убрать треугольники</button></div>
+    <div class="hint" style="margin-top:6px;color:var(--muted)">Метод — треугольники по точкам с отметками (как «Объём по ЦММ» в КРЕДО). Точность — от густоты точек на перегибах.</div>`);
+  $('volCsv').onclick = () => download(`obyom_L${line.no || ''}_${today()}.csv`, toVolumeSheet(line, base, r), 'text/csv;charset=utf-8');
+  $('volClear').onclick = () => { volLayer.clearLayers(); closeSheet(); };
+  if (!volumeShow.hooked) { volumeShow.hooked = true;                  // закрыли лист — треугольники с карты убрать (один слушатель на всё время)
+    $('sheet').addEventListener('click', e => { if (volLayer && (e.target === $('sheet') || e.target.closest('[data-close]'))) volLayer.clearLayers(); }); }
+}
+function toVolumeSheet(line, base, r) {
+  const rows = [['Контур', `L${line.no || ''} ${(LINES[line.type] || {}).name || ''}`], ['Подошва', base.kind === 'level' ? 'горизонталь ' + base.h.toFixed(3) : 'по вершинам контура'],
+    ['Насыпь, м³', r.fill.toFixed(1)], ['Выемка, м³', r.cut.toFixed(1)], ['Площадь, м²', r.area.toFixed(1)], ['Точек', r.n], ['Треугольников', r.tris], ['Погрешность, м³', '±' + r.hErr.toFixed(0)], [],
+    ['№', 'Откуда', 'X ' + planeName(), 'Y ' + planeName(), 'H', 'H подошвы', 'Над подошвой, м']];
+  r.pts.forEach((p, i) => rows.push([i + 1, p.src, f3(p.x + r.o.x), f3(p.y + r.o.y), p.h.toFixed(3), p.b.toFixed(3), (p.h - p.b).toFixed(3)]));
+  return sheetJoin(rows);
+}
+// сводка посчитанных объёмов — в архив для отчёта
+function toVolumesSummary() {
+  const rows = [['Контур', 'Вид', 'Подошва', 'Насыпь, м³', 'Выемка, м³', 'Площадь, м²', 'Точек', 'Посчитано']];
+  for (const l of data.lines) if (l.vol) rows.push(['L' + (l.no || ''), (LINES[l.type] || {}).name || '', l.vol.base === 'level' ? 'горизонталь ' + l.vol.h : 'по контуру', l.vol.fill, l.vol.cut, l.vol.area, l.vol.n, l.vol.at + (l.vol.sig !== volSig(l) ? ' — устарел, данные менялись' : '')]);
+  return sheetJoin(rows);
 }
 
 /* ───────────── Точка по расстоянию и углу от базы (смещение): база — GPS, если свежий, иначе последняя поставленная ───────────── */
@@ -3819,6 +3996,7 @@ async function exportReport() {
   const files = [{ name: 'pasport_obekta.txt', data: enc.encode(passportText()) }, { name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
     { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `catalog_kody_${today()}.txt`, data: toCatalog(true) },{ name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) },
     ...(data.points.some(p => (POINTS[p.type] || {}).arm) ? [{ name: `armatura_${today()}.csv`, data: enc.encode(toArmSheet()) }] : []),
+    ...(data.lines.some(l => l.vol) ? [{ name: `obyomy_${today()}.csv`, data: enc.encode(toVolumesSummary()) }] : []),
     ...(soList().some(p => p.done) ? [{ name: `vynos_v_naturu_${today()}.csv`, data: enc.encode(toSoSheet()) }] : []),
     ...(data.points.some(p => (POINTS[p.type] || {}).defect) ? [{ name: `defekty_${today()}.csv`, data: enc.encode(toDefectSheet()) }] : []),
     ...(data.points.some(p => p.ctrl && p.ctrl.length) ? [{ name: `kontrol_${today()}.csv`, data: enc.encode(toCtrlSheet()) }] : []),
