@@ -1323,7 +1323,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 35;
+const APP_BUILD = 36;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 async function checkUpdate() {
   if (!NATIVE || !navigator.onLine) return;
@@ -2228,14 +2228,26 @@ function showCard(kind, obj) {
   if (kind === 'point' && ll) map.panInside(ll, { paddingBottomRight: [0, card.offsetHeight + 90], paddingTopLeft: [0, $('top').offsetHeight + 20] });
   redrawAll();
 }
+const TRACER_MAX_M = 20;                                                // глубже трассоискатели не берут
 function showVertices(line) {
+  const net = isNetLine(line), dep = line.tdep || [];
+  const inp = i => `<td><input data-dep="${i}" inputmode="decimal" value="${hasH(dep[i]) ? dep[i] : ''}" placeholder="—" style="width:64px;min-height:40px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)"></td>`;
   const rows = line.latlngs.map((a, i) => {
     const c = sk42(a[0], a[1]), z = line.hs && line.hs[i];
-    return `<tr><td>${i + 1}</td><td>${f2(c.x)}</td><td>${f2(c.y)}</td><td>${z ? planNum(z.h, 2) : '—'}</td><td class="vsrc">${z ? esc(heightNote(z.h, z.src, z).split(',')[0]) : ''}</td></tr>`;
+    return `<tr><td>${i + 1}</td><td>${f2(c.x)}</td><td>${f2(c.y)}</td><td>${z ? planNum(z.h, 2) : '—'}</td><td class="vsrc">${z ? esc(heightNote(z.h, z.src, z).split(',')[0]) : ''}</td>${net ? inp(i) : ''}</tr>`;
   }).join('');
   showSheet(`<div class="sh-head"><b>Вершины полилинии</b><button class="x" data-close>×</button></div>
-    <div style="overflow-x:auto"><table class="sat-tab"><tr><th>№</th><th>X</th><th>Y</th><th>H, м</th><th>откуда</th></tr>${rows}</table></div>
+    <div style="overflow-x:auto"><table class="sat-tab" id="vertTab"><tr><th>№</th><th>X</th><th>Y</th><th>H, м</th><th>откуда</th>${net ? '<th>глубина по прибору, м</th>' : ''}</tr>${rows}</table></div>
+    ${net ? '<div class="hint" style="margin-top:8px">Глубина до оси сети по трассоискателю — у тех вершин, где мерили. Идёт в протокол трассоискателя.</div>' : ''}
     <div class="hint" style="margin-top:10px;color:var(--muted);font-size:12.5px">Координаты — ${esc(planeName())}. Отметку вершина получает, если её ставили «По GPS», «Измерить» или привязали к точке с отметкой.</div>`);
+  if (net) $('vertTab').onchange = e => {                               // глубина по прибору: число или пусто
+    const i = e.target.dataset && e.target.dataset.dep; if (i == null) return;
+    const t = e.target.value.trim(), n = t === '' ? '' : parseNum(t), old = (line.tdep || [])[i];
+    if (n !== '' && (isNaN(n) || n < 0 || n > TRACER_MAX_M)) { toast(`Глубина — число от 0 до ${TRACER_MAX_M} м`); e.target.value = hasH(old) ? old : ''; return; }
+    const next = line.latlngs.map((_, k) => k === Number(i) ? n : hasH((line.tdep || [])[k]) ? line.tdep[k] : '');
+    if (next.some(hasH)) line.tdep = next; else delete line.tdep;
+    save();
+  };
 }
 function hideCard() { $('card').style.display = 'none'; selected = null; redrawAll(); }
 map.on('click', () => { if (!mode && selected) hideCard(); });
@@ -2501,7 +2513,7 @@ function editLine(line, isNew) {
     if ('count' in v) line.count = Math.max(1, parseInt(v.count, 10) || 1);
     if ('state' in v) line.state = v.state || '';
     if ('solid' in v) line.attr = { ...(line.attr || {}), solid: v.solid === '1' };
-    if (NET_LINE_KINDS.has(spec.kind)) { const nx = readNetFields(v, line.attr || {}); if (!nx) { toast('Диаметр, глубина и год — числа'); return false; } line.attr = { ...nx, solid: (line.attr || {}).solid }; }
+    if (NET_LINE_KINDS.has(spec.kind)) { const nx = readNetFields(v, line.attr || {}); if (!nx) { toast('Диаметр, глубина, год и частота — числа'); return false; } line.attr = { ...nx, solid: (line.attr || {}).solid }; if (nx.tDev) setPref('tracerDev', nx.tDev); }
     line.caption = v.caption || '';
     if (isNew) data.lines.push(line);
     save(); showCard('line', line);
@@ -2517,6 +2529,9 @@ function netCaption(line) {
   return [main, a.sleeve ? 'футл.' + (a.sleeveD ? ' ' + a.sleeveD : '') : ''].filter(Boolean).join(', ');
 }
 const NET_LINE_KINDS = new Set(['indexed', 'cable', 'power', 'air']);
+// способ поиска трассы трассоискателем — как пишут в протоколах обследования
+const T_METHODS = [['', '— не применялся'], ['гальв.', 'активный, гальванический (прямое подключение)'], ['инд.', 'активный, индукционный (генератор над трассой)'],
+  ['клещи', 'активный, индукционные клещи'], ['50 Гц', 'пассивный, сеть 50 Гц'], ['радио', 'пассивный, радиочастоты'], ['зонд', 'зонд в неметаллической трубе']];
 const H_KINDS = [['', '— не указано'], ['земля', 'земля над сетью'], ['верх трубы', 'верх трубы'], ['лоток', 'лоток (низ трубы)'], ['ось', 'ось трубы / кабеля']];
 function netFields(line, spec) {
   const a = line.attr || {}, pipe = spec.kind === 'indexed';
@@ -2530,16 +2545,21 @@ function netFields(line, spec) {
   f.push({ key: 'hKind', label: 'Отметки вершин — это', type: 'select', value: a.hKind || '', half: true, options: H_KINDS },
     { key: 'trench', label: 'Съёмка', type: 'select', value: a.trench ? 1 : 0, half: true, options: [[0, 'по засыпанной трассе'], [1, 'по открытой траншее']],
       hint: 'Приёмщики геофонда просят верх трубы, снятый в открытой траншее, — отметьте это и приложите фото.' });
+  f.push({ key: 'tMethod', label: 'Трассоискатель: способ', type: 'select', value: a.tMethod || '', half: true, options: T_METHODS },
+    { key: 'tFreq', label: 'Частота, кГц', type: 'number', value: a.tFreq, placeholder: '33', half: true },
+    { key: 'tDev', label: 'Трассоискатель (модель, зав. №)', value: a.tMethod ? a.tDev || '' : pref('tracerDev', ''), placeholder: 'например RD8100, № 12345',
+      hint: 'Глубину по прибору у каждой вершины — карточка сети → «Вершины». Из них — протокол трассоискателя.' });
   if (pipe) f.push({ key: 'sleeve', label: 'В футляре', type: 'select', value: a.sleeve ? 1 : 0, options: [[0, 'нет'], [1, 'да — штриховые линии по бокам']], half: true },
     { key: 'sleeveD', label: 'Футляр (материал, Ø)', value: a.sleeveD, placeholder: 'ст. 325', half: true });
   return f;
 }
 function readNetFields(v, a) {
   const next = { ...a };
-  for (const k of ['mat', 'mark', 'volt', 'owner', 'sleeveD', 'hKind']) if (k in v) next[k] = v[k];
+  for (const k of ['mat', 'mark', 'volt', 'owner', 'sleeveD', 'hKind', 'tMethod', 'tDev']) if (k in v) next[k] = v[k];
   if ('trench' in v) { next.trench = v.trench === '1'; next.trenchAt = next.trench ? a.trenchAt || today() : ''; }
-  for (const k of ['d', 'depth', 'year']) if (k in v) { const n = v[k] === '' ? '' : parseNum(v[k]); if (n !== '' && isNaN(n)) return null; next[k] = n; }
+  for (const k of ['d', 'depth', 'year', 'tFreq']) if (k in v) { const n = v[k] === '' ? '' : parseNum(v[k]); if (n !== '' && isNaN(n)) return null; next[k] = n; }
   if ('sleeve' in v) next.sleeve = v.sleeve === '1';
+  if ('tMethod' in v) { if (!next.tMethod) { next.tDev = ''; next.tFreq = ''; } next.tAt = next.tMethod ? a.tAt || today() : ''; }
   return next;
 }
 
@@ -2981,9 +3001,11 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'nets', icon: '⇩', text: 'Ведомость сетей (CSV для Excel)' },
   { id: 'arms', icon: '⇩', text: 'Ведомость арматуры: задвижки, вантузы, клапаны (CSV)' },
   { id: 'cross', icon: '⇩', text: 'Ведомость пересечений сетей (CSV)' },
+  { id: 'tracer', icon: '⇩', text: 'Протокол трассоискателя: глубины по прибору (CSV)' },
   { id: 'ctrlsheet', icon: '⇩', text: 'Ведомость контрольных измерений (CSV)' },
   { id: 'geojson', icon: '⇩', text: 'GeoJSON для QGIS (WGS-84, все свойства)' },
   { id: 'mif', icon: '⇩', text: `MIF/MID для MapInfo и Панорамы (${planeName()})` },
+  { id: 'shp', icon: '⇩', text: `SHP для ГИС: QGIS, ArcGIS, Панорама (${planeName()})` },
   { id: 'kmz', icon: '⇩', text: 'Выгрузить KMZ с фото (Google Earth, ГИС)' },
   { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + каталог + DXF + фото' },
   { id: 'kml', icon: '⇩', text: 'Выгрузить всё в KML (без фото)' },
@@ -3018,6 +3040,8 @@ const MENU = {
   ctrlsheet: () => { if (!data.points.some(p => p.ctrl && p.ctrl.length)) { toast('Контрольных измерений нет — карточка точки → «✓ Контроль»'); return; } download(`kontrol_${today()}.csv`, toCtrlSheet(), 'text/csv;charset=utf-8'); },
   geojson: () => guardExport(() => download(`plan_${today()}.geojson`, toGeoJson(), 'application/geo+json')),
   mif: () => guardExport(() => { const { mif, mid } = toMifMid(); download(`plan_mapinfo_${today()}.zip`, makeZip([{ name: `plan_${today()}.mif`, data: mif }, { name: `plan_${today()}.mid`, data: mid }]), 'application/zip'); }),
+  shp: () => guardExport(() => { const files = toShpFiles(); if (!files.length) { toast('На плане пока нет объектов'); return; } download(`plan_shp_${today()}.zip`, makeZip(files), 'application/zip'); }),
+  tracer: () => { if (!data.lines.some(l => isNetLine(l) && (l.tdep || []).some(hasH))) { toast('Глубин по прибору нет — карточка сети → «Вершины»'); return; } download(`trassoiskatel_${today()}.csv`, toTracerSheet(), 'text/csv;charset=utf-8'); },
   wells: () => download(`kolodcy_${today()}.csv`, toWellsSheet(), 'text/csv;charset=utf-8'),
   arms: () => { if (!data.points.some(p => (POINTS[p.type] || {}).arm)) { toast('Арматуры нет — Знак… → «Арматура»'); return; } download(`armatura_${today()}.csv`, toArmSheet(), 'text/csv;charset=utf-8'); },
   nets: () => download(`seti_${today()}.csv`, toNetsSheet(), 'text/csv;charset=utf-8'),
@@ -3537,7 +3561,8 @@ async function exportReport() {
   const files = [{ name: 'pasport_obekta.txt', data: enc.encode(passportText()) }, { name: `plan_${today()}.kml`, data: enc.encode(toKml('photos/')) }, { name: `points_${today()}.csv`, data: enc.encode(toCsv()) },
     { name: `catalog_${today()}.txt`, data: toCatalog() }, { name: `catalog_kody_${today()}.txt`, data: toCatalog(true) },{ name: `civil3d_PNEZD_${today()}.csv`, data: toPnezd() }, { name: `kolodcy_${today()}.csv`, data: enc.encode(toWellsSheet()) }, { name: `seti_${today()}.csv`, data: enc.encode(toNetsSheet()) },
     ...(data.points.some(p => (POINTS[p.type] || {}).arm) ? [{ name: `armatura_${today()}.csv`, data: enc.encode(toArmSheet()) }] : []),
-    ...(data.points.some(p => p.ctrl && p.ctrl.length) ? [{ name: `kontrol_${today()}.csv`, data: enc.encode(toCtrlSheet()) }] : []), { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
+    ...(data.points.some(p => p.ctrl && p.ctrl.length) ? [{ name: `kontrol_${today()}.csv`, data: enc.encode(toCtrlSheet()) }] : []),
+    ...(data.lines.some(l => isNetLine(l) && (l.tdep || []).some(hasH)) ? [{ name: `trassoiskatel_${today()}.csv`, data: enc.encode(toTracerSheet()) }] : []), ...toShpFiles('shp/'), { name: `plan_${today()}.dxf`, data: toDxf() }, ...await photoFiles('photos/')];
   download(`otchet_${today()}.zip`, makeZip(files), 'application/zip');
 }
 
@@ -3686,6 +3711,7 @@ function checkPlan() {
   add('warn', 'Точки по GPS не в FIX', P.filter(p => p.q && p.q.fix && p.q.fix !== 'FIX').map(pt), 'Для 1:500 нужен FIX (до 5 см). FLOAT и автономные — переснять');
   const nets = data.lines.filter(isNetLine);
   add('warn', 'Сети с отметками: не указано, что это (земля, верх трубы, лоток)', nets.filter(l => (l.hs || []).some(z => z && hasH(z.h)) && !(l.attr || {}).hKind).map(ln), 'Карточка сети → «Изменить» → «Отметки вершин — это»');
+  add('warn', 'Трассоискатель указан, а глубин по прибору нет', nets.filter(l => (l.attr || {}).tMethod && !(l.tdep || []).some(hasH)).map(ln), 'Карточка сети → «Вершины» — глубина у вершин');
   add('warn', 'Сети без материала / марки', nets.filter(l => !((l.attr || {}).mat || (l.attr || {}).mark)).map(ln));
   // висящие концы: конец сети не у колодца, опоры, другой точки и не на другой линии сети
   const xy = a => sk42(a[0], a[1]), near = (c, d) => Math.hypot(c.x - d.x, c.y - d.y) <= DANGLE_M;
@@ -3909,13 +3935,13 @@ function toWellsSheet() {
 }
 // Ведомость сетей: линия, вид, длина, материал/марка, диаметр, глубина, год, владелец, состояние, футляр
 function toNetsSheet() {
-  const rows = [['№', 'Вид сети', 'От', 'До', 'Длина, м', 'Материал / марка', 'Диаметр, мм', 'Число труб / кабелей', 'Напряжение', 'Глубина, м', 'Год', 'Владелец', 'Состояние', 'Футляр', 'Отметки вершин', 'Съёмка по открытой траншее', 'Подпись']];
+  const rows = [['№', 'Вид сети', 'От', 'До', 'Длина, м', 'Материал / марка', 'Диаметр, мм', 'Число труб / кабелей', 'Напряжение', 'Глубина, м', 'Год', 'Владелец', 'Состояние', 'Футляр', 'Отметки вершин', 'Съёмка по открытой траншее', 'Трассоискатель', 'Подпись']];
   for (const l of data.lines) { const sp = LINES[l.type] || {};
     if (!NET_LINE_KINDS.has(sp.kind) && l.type !== 'sleeve') continue;
     const a = l.attr || {};
     const [from, to] = netEnds(l);
     rows.push(['L' + (l.no || ''), sp.name, from, to, lineLength(l).toFixed(2), a.mat || a.mark || '', a.d || '', l.count || 1, a.volt || '', hasH(a.depth) ? Number(a.depth).toFixed(2) : '', a.year || '', a.owner || '',
-      STATE_NAME[l.state] || 'действующая', a.sleeve ? 'да' + (a.sleeveD ? ', ' + a.sleeveD : '') : '', a.hKind || '', a.trench ? 'да' + (a.trenchAt ? ', ' + a.trenchAt : '') : '', netCaption(l)]);
+      STATE_NAME[l.state] || 'действующая', a.sleeve ? 'да' + (a.sleeveD ? ', ' + a.sleeveD : '') : '', a.hKind || '', a.trench ? 'да' + (a.trenchAt ? ', ' + a.trenchAt : '') : '', tracerText(a), netCaption(l)]);
   }
   return sheetJoin(rows);
 }
@@ -3976,6 +4002,104 @@ function toCrossSheet() {
   netCrossings().forEach((c, i) => rows.push([i + 1, nm(c.A), nm(c.B), f3(c.x), f3(c.y), c.h1 == null ? '' : c.h1.toFixed(2), c.h2 == null ? '' : c.h2.toFixed(2),
     c.h1 != null && c.h2 != null ? Math.abs(c.h1 - c.h2).toFixed(2) : '', (c.A.attr || {}).depth || '', (c.B.attr || {}).depth || '']));
   return sheetJoin(rows);
+}
+// способ, частота, прибор, дата — одной строкой
+const tracerText = a => a.tMethod ? [a.tMethod, hasH(a.tFreq) ? a.tFreq + ' кГц' : '', a.tDev, a.tAt].filter(Boolean).join(', ') : '';
+// Протокол трассоискателя: по вершинам сетей — глубина по прибору; отметка оси, если отметки вершин сняты по земле
+function toTracerSheet() {
+  const rows = [['Сеть', 'Вершина', 'X ' + planeName(), 'Y ' + planeName(), 'Отметка вершины, м', 'Отметка — это', 'Глубина до оси по прибору, м', 'Отметка оси по прибору, м', 'Способ', 'Частота, кГц', 'Трассоискатель', 'Дата']];
+  for (const l of data.lines) { const a = l.attr || {};
+    if (!isNetLine(l) || !(a.tMethod || (l.tdep || []).some(hasH))) continue;
+    const name = `L${l.no || ''} ${(LINES[l.type] || {}).name}${netCaption(l) ? ' ' + netCaption(l) : ''}`;
+    l.latlngs.forEach((ll, i) => { const c = sk42(ll[0], ll[1]), z = l.hs && l.hs[i], d = (l.tdep || [])[i], H = z && hasH(z.h) ? Number(z.h) : null;
+      if (!hasH(d)) return;
+      rows.push([name, i + 1, f3(c.x), f3(c.y), H == null ? '' : H.toFixed(2), a.hKind || '', Number(d).toFixed(2), H != null && a.hKind === 'земля' ? (H - Number(d)).toFixed(2) : '',
+        a.tMethod || '', hasH(a.tFreq) ? a.tFreq : '', a.tDev || '', a.tAt || '']); });
+  }
+  return sheetJoin(rows);
+}
+
+/* Shapefile для ГИС (QGIS, ArcGIS, Панорама): слои «точки», «линии», «контуры»; плоская система, X — восток; подписи в Windows-1251 */
+const SHP_FIELDS = [['NO', 'C', 20], ['CODE', 'C', 40], ['NAME', 'C', 100], ['LABEL', 'C', 120], ['H', 'N', 12, 3], ['STATE', 'C', 30], ['NOTE', 'C', 200],
+  ['MAT', 'C', 60], ['DIAM', 'C', 20], ['DEPTH', 'N', 8, 2], ['YEAR', 'C', 10], ['OWNER', 'C', 100], ['HKIND', 'C', 20], ['TRENCH', 'C', 20], ['TRACER', 'C', 100],
+  ['FROM_PT', 'C', 40], ['TO_PT', 'C', 40], ['LEN_M', 'N', 12, 2], ['ACC_M', 'N', 8, 3], ['FIX', 'C', 20], ['TIME', 'C', 25]];
+function shpAttrs(o, kind) {
+  const sp = (kind === 'point' ? POINTS : LINES)[o.type] || {}, a = o.attr || {}, q = o.q || {}, net = kind !== 'point' && isNetLine(o);
+  const [from, to] = net ? netEnds(o) : ['', ''];
+  return { NO: kind === 'point' ? o.no || '' : 'L' + (o.no || ''), CODE: codeOf(o.type), NAME: sp.name || '', LABEL: kind === 'point' ? pointLabel(o) : netCaption(o) || o.caption || '',
+    H: kind === 'point' ? pointH(o) : null, STATE: STATE_NAME[o.state] || '', NOTE: kind === 'point' ? pointNote(o) : '', MAT: a.mat || a.mark || a.wm || '', DIAM: a.d || a.wd || '',
+    DEPTH: hasH(a.depth) ? Number(a.depth) : null, YEAR: a.year || '', OWNER: a.owner || '', HKIND: a.hKind || '', TRENCH: a.trench ? 'да' + (a.trenchAt ? ' ' + a.trenchAt : '') : '',
+    TRACER: tracerText(a), FROM_PT: from, TO_PT: to, LEN_M: kind === 'point' ? null : lineLength(o), ACC_M: q.acc != null ? Number(q.acc) : null, FIX: q.fix || '', TIME: q.at || '' };
+}
+const bboxOf = pts => { const b = [Infinity, Infinity, -Infinity, -Infinity]; for (const p of pts) { if (p.x < b[0]) b[0] = p.x; if (p.y < b[1]) b[1] = p.y; if (p.x > b[2]) b[2] = p.x; if (p.y > b[3]) b[3] = p.y; } return b; };
+// .shp и .shx одного слоя; shapes — [{ parts: [[{x, y}…]…] }], type: 1 точка, 3 линия, 5 полигон
+function shpFiles(type, shapes) {
+  const lens = shapes.map(s => type === 1 ? 20 : 44 + 4 * s.parts.length + 16 * s.parts.reduce((n, p) => n + p.length, 0));
+  const shpLen = 100 + lens.reduce((n, l) => n + 8 + l, 0), shp = new DataView(new ArrayBuffer(shpLen)), shx = new DataView(new ArrayBuffer(100 + 8 * shapes.length));
+  const box = bboxOf(shapes.flatMap(s => s.parts.flat()));
+  for (const [v, len] of [[shp, shpLen], [shx, 100 + 8 * shapes.length]]) {
+    v.setInt32(0, 9994); v.setInt32(24, len / 2); v.setInt32(28, 1000, true); v.setInt32(32, type, true);
+    box.forEach((b, i) => v.setFloat64(36 + 8 * i, b, true));
+  }
+  let o = 100;
+  shapes.forEach((s, i) => {
+    shx.setInt32(100 + 8 * i, o / 2); shx.setInt32(104 + 8 * i, lens[i] / 2);
+    shp.setInt32(o, i + 1); shp.setInt32(o + 4, lens[i] / 2); shp.setInt32(o + 8, type, true);
+    if (type === 1) { shp.setFloat64(o + 12, s.parts[0][0].x, true); shp.setFloat64(o + 20, s.parts[0][0].y, true); }
+    else {
+      const pts = s.parts.flat(), np = pts.length;
+      bboxOf(pts).forEach((b, k) => shp.setFloat64(o + 12 + 8 * k, b, true));
+      shp.setInt32(o + 44, s.parts.length, true); shp.setInt32(o + 48, np, true);
+      let start = 0, at = o + 52;
+      for (const p of s.parts) { shp.setInt32(at, start, true); at += 4; start += p.length; }
+      for (const p of pts) { shp.setFloat64(at, p.x, true); shp.setFloat64(at + 8, p.y, true); at += 16; }
+    }
+    o += 8 + lens[i];
+  });
+  return { shp: new Uint8Array(shp.buffer), shx: new Uint8Array(shx.buffer) };
+}
+// .dbf: dBASE III, кодировка 1251 (байт 29 = 0xC9 и файл .cpg)
+function dbfFile(recs) {
+  const nf = SHP_FIELDS.length, hl = 32 + 32 * nf + 1, rl = 1 + SHP_FIELDS.reduce((n, f) => n + f[2], 0);
+  const out = new Uint8Array(hl + rl * recs.length + 1).fill(0x20, hl), v = new DataView(out.buffer), d = new Date();
+  out.fill(0, 0, hl);
+  out[0] = 3; out[1] = d.getFullYear() - 1900; out[2] = d.getMonth() + 1; out[3] = d.getDate();
+  v.setUint32(4, recs.length, true); v.setUint16(8, hl, true); v.setUint16(10, rl, true); out[29] = 0xC9;
+  SHP_FIELDS.forEach(([name, t, len, dec], i) => { const b = 32 + 32 * i;
+    for (let k = 0; k < name.length; k++) out[b + k] = name.charCodeAt(k);
+    out[b + 11] = t.charCodeAt(0); out[b + 16] = len; out[b + 17] = dec || 0; });
+  out[hl - 1] = 0x0D;
+  recs.forEach((r, j) => { let at = hl + rl * j + 1;
+    for (const [name, t, len, dec] of SHP_FIELDS) { const val = r[name];
+      if (t === 'N') { if (val != null && val !== '' && isFinite(val)) { const txt = Number(val).toFixed(dec || 0); if (txt.length <= len) out.set(cp1251(txt.padStart(len)), at); } }
+      else out.set(cp1251(String(val == null ? '' : val).replace(/\s+/g, ' ')).slice(0, len), at);
+      at += len; } });
+  out[out.length - 1] = 0x1A;
+  return out;
+}
+// .prj: та же система, что в остальных выгрузках, с параметрами перехода к WGS-84 (QGIS их понимает)
+function shpPrj(zone) {
+  const d = crs().def(zone), g = k => (d.match(new RegExp('\\+' + k + '=([^ ]+)')) || [])[1];
+  const c = crs(), nm = c === CRS.gsk ? 'GSK-2011' : c === CRS.sk42 ? 'Pulkovo_1942' : 'MSK';
+  const sph = g('a') ? `SPHEROID["GSK-2011",${g('a')},${g('rf')}]` : 'SPHEROID["Krassowsky_1940",6378245,298.3]';
+  return `PROJCS["${nm}${zone ? ' zone ' + zone : ''}",GEOGCS["${nm}",DATUM["${nm}",${sph},TOWGS84[${g('towgs84')}]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],` +
+    `PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",${g('lat_0') || 0}],PARAMETER["central_meridian",${g('lon_0')}],PARAMETER["scale_factor",${g('k') || 1}],` +
+    `PARAMETER["false_easting",${g('x_0') || 0}],PARAMETER["false_northing",${g('y_0') || 0}],UNIT["metre",1]]`;
+}
+// весь план — в одной зоне (по первому объекту), чтобы слои легли вместе
+function toShpFiles(dir) {
+  const lngs = [...data.points.map(p => p.lng), ...data.lines.flatMap(l => l.latlngs.map(a => a[1]))].filter(isFinite).sort((a, b) => a - b);
+  if (!lngs.length) return [];
+  const zone = zoneOf(lngs[lngs.length >> 1]), def = gkDef(zone), xy = a => { const [x, y] = proj4('WGS84', def, [a[1], a[0]]); return { x, y }; };
+  const okLine = l => l.latlngs.every(a => isFinite(a[0]) && isFinite(a[1]));
+  const ring = pts => { const r = pts.concat([pts[0]]); let s2 = 0; for (let i = 1; i < r.length; i++) s2 += (r[i].x - r[i - 1].x) * (r[i].y + r[i - 1].y); return s2 > 0 ? r : r.reverse(); };   // внешний контур — по часовой
+  const layers = [
+    { name: 'tochki', type: 1, items: data.points.filter(p => isFinite(p.lat) && isFinite(p.lng)).map(p => ({ parts: [[xy([p.lat, p.lng])]], a: shpAttrs(p, 'point') })) },
+    { name: 'linii', type: 3, items: data.lines.filter(l => okLine(l) && l.latlngs.length >= 2 && !((LINES[l.type] || {}).closed && l.latlngs.length >= 3)).map(l => ({ parts: [l.latlngs.map(xy)], a: shpAttrs(l, 'line') })) },
+    { name: 'kontury', type: 5, items: data.lines.filter(l => okLine(l) && (LINES[l.type] || {}).closed && l.latlngs.length >= 3).map(l => ({ parts: [ring(l.latlngs.map(xy))], a: shpAttrs(l, 'line') })) }];
+  const prj = new TextEncoder().encode(shpPrj(zone)), cpg = new TextEncoder().encode('1251');
+  return layers.filter(L => L.items.length).flatMap(L => { const { shp, shx } = shpFiles(L.type, L.items);
+    return [['shp', shp], ['shx', shx], ['dbf', dbfFile(L.items.map(i => i.a))], ['prj', prj], ['cpg', cpg]].map(([ext, d]) => ({ name: `${dir || ''}${L.name}.${ext}`, data: d })); });
 }
 // GeoJSON для QGIS и ИСОГД: WGS-84 (так требует формат), отметка третьей координатой, все свойства
 function toGeoJson() {
