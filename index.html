@@ -991,7 +991,7 @@ function spoofSigns(g) {
     const netAgrees = netKm != null && netKm <= SPOOF.netKm;            // вышки согласны с GPS — значит, мы правда уехали
     if ((was && d > SPOOF.backKm && !netAgrees) || (!was && d > SPOOF.jumpKm && d * 1000 / dt > SPOOF.jumpMps)) out.push({ k: 'jump', text: `скачок на ${Math.round(d)} км от последней верной позиции` });
   }
-  if (spoofNative.gpsDt != null && Math.abs(spoofNative.gpsDt) > SPOOF.timeMs) { const mn = Math.abs(spoofNative.gpsDt) / 60000; out.push({ k: 'time', text: `время спутников расходится с часами на ${mn >= 2880 ? Math.round(mn / 1440) + ' сут.' : mn >= 120 ? Math.round(mn / 60) + ' ч' : Math.round(mn) + ' мин'}` }); }
+  if (!rxLive() && spoofNative.gpsDt != null && Math.abs(spoofNative.gpsDt) > SPOOF.timeMs) { const mn = Math.abs(spoofNative.gpsDt) / 60000; out.push({ k: 'time', text: `время спутников расходится с часами на ${mn >= 2880 ? Math.round(mn / 1440) + ' сут.' : mn >= 120 ? Math.round(mn / 60) + ' ч' : Math.round(mn) + ' мин'}` }); }
   const far = n || Date.now() - spoofGpsStart > SPOOF.farWaitMs ? nearestObjectKm(here) : null;   // без вышек — дать 15 с на первые данные
   if (far != null && far > SPOOF.farKm && !(netKm != null && netKm <= SPOOF.netKm)) out.push({ k: 'far', text: `в ${Math.round(far)} км от объекта на плане` });
   return out;
@@ -1061,6 +1061,31 @@ function spoofSheet() {
     spoof = null; spoofCalm = 0; spoofTrusted = { lat: gps.lat, lng: gps.lng, at: gps.at }; renderSpoof(); closeSheet(); toast('Доверяю GPS здесь 12 часов. Если позиция снова прыгнет — предупрежу');
   };
 }
+/** Новая позиция: от GPS телефона или от внешнего приёмника. */
+function gpsFeed(p) {
+  const first = !gps;
+  gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, altAcc: p.coords.altitudeAccuracy, at: Date.now() };
+  spoofUpdate(gps);
+  if (measuring && !spoof) measuring.onFix(p);                       // при подмене отсчёты в измерение не идут
+  fixWatch(gps.acc);
+  const ll = [gps.lat, gps.lng];
+  if (!gpsMarker) {
+    gpsCircle = L.circle(ll, { radius: gps.acc, color: '#1e88e5', weight: 1, fillOpacity: .12, interactive: false }).addTo(map);
+    gpsMarker = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1, interactive: false }).addTo(map);
+  } else { gpsMarker.setLatLng(ll); gpsCircle.setLatLng(ll).setRadius(gps.acc); }
+  if (first && !mode && !spoof) map.setView(ll, Math.max(map.getZoom(), 18));
+  const acc = gps.acc;
+  // RTK-приёмник даёт сантиметры — показываем их, а не округлённые метры
+  const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
+  const rtk = acc <= RTK_FIX_M ? ' · RTK (похоже на FIX)' : acc < 1 ? ' · RTK (похоже на FLOAT)' : '';
+  $('gpsDot').className = 'dot ' + (acc <= 5 ? 'ok' : acc <= 15 ? 'mid' : 'bad');
+  const noSat = gpsNoSat();
+  $('gpsLine').dataset.st = spoof ? 'spoof' : noSat ? 'bad' : acc <= RTK_FIX_M ? 'fix' : acc < 1 ? 'float' : acc > 15 ? 'bad' : 'phone';
+  const H = normalHeight(gps.lat, gps.lng, gps.alt);
+  $('gpsText').textContent = gpsPlaqueText(acc, accText); $('gpsLine').title = (spoof ? 'подмена? ' : '') + `GPS ±${accText} м${rtk}` + (H != null ? ` · H ${H.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} м` : '') +
+    (acc > 15 ? ' — подождите на открытом месте' : '');
+  $('fabMe').classList.add('on');
+}
 function startGps() {
   startGnss();                                       // в Android-приложении — заодно и спутники
   if (!navigator.geolocation) { toast('В этом браузере нет GPS'); return; }
@@ -1068,31 +1093,11 @@ function startGps() {
   spoofGpsStart = Date.now(); if (typeof spoofPoll === 'function') setTimeout(spoofPoll, 1500);   // данные вышек — сразу, не через 10 с
   $('gpsText').textContent = 'Ищу спутники…'; $('gpsDot').className = 'dot mid';
   gpsWatch = navigator.geolocation.watchPosition(p => {
-    const first = !gps;
-    gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, altAcc: p.coords.altitudeAccuracy, at: Date.now() };
-    spoofUpdate(gps);
-    if (measuring && !spoof) measuring.onFix(p);                       // при подмене отсчёты в измерение не идут
-    fixWatch(gps.acc);
-    const ll = [gps.lat, gps.lng];
-    if (!gpsMarker) {
-      gpsCircle = L.circle(ll, { radius: gps.acc, color: '#1e88e5', weight: 1, fillOpacity: .12, interactive: false }).addTo(map);
-      gpsMarker = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1, interactive: false }).addTo(map);
-    } else { gpsMarker.setLatLng(ll); gpsCircle.setLatLng(ll).setRadius(gps.acc); }
-    if (first && !mode && !spoof) map.setView(ll, Math.max(map.getZoom(), 18));
-    const acc = gps.acc;
-    // RTK-приёмник через «фиктивное местоположение» даёт сантиметры — показываем их, а не округлённые метры
-    const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
-    const rtk = acc <= RTK_FIX_M ? ' · RTK (похоже на FIX)' : acc < 1 ? ' · RTK (похоже на FLOAT)' : '';
-    $('gpsDot').className = 'dot ' + (acc <= 5 ? 'ok' : acc <= 15 ? 'mid' : 'bad');
-    const noSat = gpsNoSat();
-    $('gpsLine').dataset.st = spoof ? 'spoof' : noSat ? 'bad' : acc <= RTK_FIX_M ? 'fix' : acc < 1 ? 'float' : acc > 15 ? 'bad' : 'phone';
-    const H = normalHeight(gps.lat, gps.lng, gps.alt);
-    $('gpsText').textContent = gpsPlaqueText(acc, accText); $('gpsLine').title = (spoof ? 'подмена? ' : '') + `GPS ±${accText} м${rtk}` + (H != null ? ` · H ${H.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} м` : '') +
-      (acc > 15 ? ' — подождите на открытом месте' : '');
-    $('fabMe').classList.add('on');
+    if (!rxLive()) gpsFeed(p);                                         // пока говорит внешний приёмник, телефон молчит
   }, err => {
     if (gpsWatch != null) navigator.geolocation.clearWatch(gpsWatch);
     gpsWatch = null;
+    if (rxLive()) return;
     $('gpsDot').className = 'dot bad'; $('gpsLine').dataset.st = 'bad';
     $('gpsText').textContent = ({ 1: 'GPS: нет разрешения', 2: 'GPS: нет сигнала', 3: 'GPS: нет ответа' }[err.code] || 'GPS: нет доступа');
     toast({ 1: 'Разрешите местоположение для «Полевого плана» в настройках телефона', 2: 'Нет сигнала GPS — выйдите на открытое место', 3: 'GPS не ответил — нажмите плашку ещё раз' }[err.code] || 'Нет доступа к GPS');
@@ -1512,7 +1517,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 55;
+const APP_BUILD = 56;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1664,7 +1669,7 @@ $('spoofLine').onclick = () => spoofSheet();
 $('gpsLine').onclick = () => { if (spoof) { spoofSheet(); return; } if (!gps || gpsWatch == null) { startGps(); startGnss(); return; } if (sats && sats.total) { $('satLine').onclick(); return; } toast(satMsg || $('gpsLine').title || 'GPS'); };
 // плашка: «FIX ±2 см · 18/30», «±5 м · 12/30», «⚠ подмена · 0/42», «без спутников ±843 м»
 function gpsPlaqueText(acc, accText) {
-  const st = sats && sats.total ? ` · ${sats.used}/${sats.total}` : '';
+  const st = rxLive() ? ` · ${rxFix.sats}` : sats && sats.total ? ` · ${sats.used}/${sats.total}` : '';
   if (spoof) return '⚠ подмена' + st;
   if (gpsNoSat()) return `без спутников ±${Math.round(acc)} м`;
   if (acc <= RTK_FIX_M) return `FIX ±${cmText(acc)}${st}`;
@@ -1672,7 +1677,7 @@ function gpsPlaqueText(acc, accText) {
   return `±${accText} м${st}`;
 }
 // координаты есть, а спутников в решении нет — это место по сотовой сети (свой чип телефона; внешний приёмник — не про это)
-const gpsNoSat = () => !!(NATIVE && sats && sats.total > 0 && sats.used === 0 && Date.now() - (sats.at || 0) < 10000 && spoofNative.at && spoofNative.mock !== true && gps && gps.acc > 30);
+const gpsNoSat = () => !!(NATIVE && !rxLive() && sats && sats.total > 0 && sats.used === 0 && Date.now() - (sats.at || 0) < 10000 && spoofNative.at && spoofNative.mock !== true && gps && gps.acc > 30);
 // касание координат — по кругу: ГСК → WGS-84 → обе
 $('coords').onclick = () => { const order = ['sk', 'wgs', 'both'], cur = document.querySelector('#coordSeg button.on'), i = order.indexOf(cur ? cur.dataset.c : 'sk');
   const b = document.querySelector(`#coordSeg [data-c="${order[(i + 1) % 3]}"]`); if (b) { b.click(); toast(b.textContent === 'оба' ? 'Координаты: в обеих системах' : 'Координаты: ' + b.textContent); } };
@@ -1691,6 +1696,108 @@ $('antChip').onclick = () => openList('Высота вехи (антенны) н
 antChipText();
 // признаки подмены от Android: место по вышкам и Wi-Fi, расхождение времени спутников с часами
 if (NATIVE && GNSS && GNSS.spoofInfo) setInterval(() => { if (gnssOn) spoofPoll(); }, SPOOF.pollMs);
+/* ───────────── Внешний приёмник: Bluetooth + поправки NTRIP ───────────── */
+
+// RX:NMEA-START
+const RX_FIX_M = 0.02, RX_FLOAT_M = 0.3, RX_HDOP_M = 2.5;   // если приёмник не прислал GST: оценка точности по виду решения
+const nmeaDeg = (v, dir) => {
+  const n = Number(v); if (!v || !isFinite(n)) return null;
+  const d = Math.floor(n / 100), deg = d + (n - d * 100) / 60;
+  return dir === 'S' || dir === 'W' ? -deg : deg;
+};
+/** Разбор строки NMEA: GGA и GST любого talker; неверная контрольная сумма — null. */
+function nmeaParse(line) {
+  const m = /^\$(.+)\*([0-9A-Fa-f]{2})\s*$/.exec(String(line)); if (!m) return null;
+  let sum = 0; for (let i = 0; i < m[1].length; i++) sum ^= m[1].charCodeAt(i);
+  if (sum !== parseInt(m[2], 16)) return null;
+  const p = m[1].split(','), kind = p[0].slice(-3);
+  if (kind === 'GGA') {
+    const lat = nmeaDeg(p[2], p[3]), lng = nmeaDeg(p[4], p[5]), alt = p[9] === '' ? null : Number(p[9]), sep = p[11] === '' ? 0 : Number(p[11]);
+    return { kind, q: Number(p[6]) || 0, lat, lng, sats: Number(p[7]) || 0, hdop: p[8] === '' ? null : Number(p[8]), hEll: alt == null ? null : alt + sep };
+  }
+  if (kind === 'GST') return { kind, sLat: p[6] === '' ? null : Number(p[6]), sLon: p[7] === '' ? null : Number(p[7]), sAlt: p[8] === '' ? null : Number(p[8]) };
+  return null;
+}
+/** Точность по виду решения: FIX и FLOAT определяет сам приёмник, а не оценка в метрах. */
+function rxAccuracy(q, hdop, g) {
+  const sig = g && g.sLat != null && g.sLon != null ? Math.hypot(g.sLat, g.sLon) : null;
+  if (q === 4) return Math.min(sig != null ? sig : RX_FIX_M, RTK_FIX_M);
+  if (q === 5) return Math.min(Math.max(sig != null ? sig : RX_FLOAT_M, RTK_FIX_M + 0.01), 0.99);
+  return Math.max(sig != null ? sig : (hdop || 2) * RX_HDOP_M, 1);
+}
+// RX:NMEA-END
+const RX = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Receiver) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Receiver')));
+const RX_STALE_MS = 5000, RX_GST_MS = 10000, RX_SILENT_MS = 10000;
+const RX_Q = { 0: 'нет решения', 1: 'автономно', 2: 'DGPS', 4: 'FIX', 5: 'FLOAT' };
+let rxCfg = pref('rx', { address: '', name: '', host: '', port: 2101, mount: '', user: '', pass: '', init: '', auto: false });
+let rxFix = null, rxGst = null, rxStateNow = { bt: 'off', ntrip: 'off', msg: '', rtcm: 0 }, rxWasLive = false, rxOnAt = 0;
+function rxLive() { return !!(rxFix && rxFix.q > 0 && Date.now() - rxFix.at < RX_STALE_MS); }
+function rxLine(line) {
+  const n = nmeaParse(line); if (!n) return;
+  if (n.kind === 'GST') { rxGst = { ...n, at: Date.now() }; return; }
+  const gst = rxGst && Date.now() - rxGst.at < RX_GST_MS ? rxGst : null;
+  rxFix = { q: n.q, sats: n.sats, at: Date.now() }; renderRx();
+  if (!n.q || n.lat == null || n.lng == null) return;
+  rxWasLive = true;
+  gpsFeed({ timestamp: Date.now(), coords: { latitude: n.lat, longitude: n.lng, accuracy: rxAccuracy(n.q, n.hdop, gst), altitude: n.hEll, altitudeAccuracy: gst && gst.sAlt != null ? gst.sAlt : null } });
+}
+function rxStatusHtml() {
+  const c = rxStateNow, bt = { off: 'не подключён', connecting: 'подключаюсь…', on: 'подключён', error: 'нет связи, пробую снова' }[c.bt] || c.bt;
+  const net = { off: rxCfg.host ? 'выключены' : 'не настроены', connecting: 'подключаюсь…', on: `идут, получено ${Math.round((c.rtcm || 0) / 1024)} КБ`, error: 'нет связи' }[c.ntrip] || c.ntrip;
+  const silent = c.bt === 'on' && !rxFix && Date.now() - rxOnAt > RX_SILENT_MS;
+  const pos = rxLive() ? `${RX_Q[rxFix.q] || 'решение ' + rxFix.q} · спутников ${rxFix.sats}` : rxFix && !rxFix.q ? 'приёмник ещё не решил' : silent ? 'нет данных: включите вывод NMEA (GGA) на Bluetooth' : '—';
+  return `<div>Приёмник: <b>${esc(bt)}</b></div><div>Координаты: <b>${esc(pos)}</b></div><div>Поправки: <b>${esc(net)}</b></div>${c.msg && c.bt !== 'on' || c.ntrip === 'error' ? `<div class="hint">${esc(c.msg)}</div>` : ''}`;
+}
+function renderRx() { const el = $('rxStatus'); if (el) el.innerHTML = rxStatusHtml(); }
+async function rxConnect() {
+  if (!rxCfg.address) { toast('Выберите приёмник'); return false; }
+  rxOnAt = Date.now(); rxFix = null;
+  try { await RX.connect({ address: rxCfg.address, host: rxCfg.host, port: Number(rxCfg.port) || 2101, mount: rxCfg.mount, user: rxCfg.user, pass: rxCfg.pass, init: rxCfg.init }); return true; }
+  catch (e) { toast('Не подключается: ' + (e.message || e)); return false; }
+}
+function rxSheet() {
+  showSheet(`<div class="sh-head"><b>Приёмник и поправки</b><button class="x" data-close>×</button></div><div class="form">
+    <div class="meas-verdict mid" id="rxStatus">${rxStatusHtml()}</div>
+    <div><label for="rx_dev">Приёмник</label><select id="rx_dev"><option value="${esc(rxCfg.address)}">${esc(rxCfg.name || 'Выберите приёмник')}</option></select></div>
+    <div class="hint">Сначала один раз соедините приёмник с устройством в настройках Bluetooth Android. eField и другие программы должны быть отключены от него: приёмник держит одно подключение.</div>
+    <div><label for="rx_host">Сервер поправок (адрес)</label><input id="rx_host" autocomplete="off" autocapitalize="off" value="${esc(rxCfg.host)}" placeholder="адрес NTRIP"></div>
+    <div><label for="rx_port">Порт</label><input id="rx_port" inputmode="numeric" value="${esc(rxCfg.port)}"></div>
+    <div><label for="rx_mount">Точка подключения</label><input id="rx_mount" list="rx_mounts" autocomplete="off" autocapitalize="off" value="${esc(rxCfg.mount)}"><datalist id="rx_mounts"></datalist></div>
+    <div><label for="rx_user">Логин</label><input id="rx_user" autocomplete="off" autocapitalize="off" value="${esc(rxCfg.user)}"></div>
+    <div><label for="rx_pass">Пароль</label><input id="rx_pass" type="password" autocomplete="off" value="${esc(rxCfg.pass)}"></div>
+    <div class="hint">Логин и пароль хранятся только на этом устройстве и уходят только на сервер поправок. Без сервера приёмник работает автономно.</div>
+    <details class="more"><summary>Если нет координат</summary><div><label for="rx_init">Команды приёмнику при подключении, по одной в строке</label><textarea id="rx_init" rows="3" autocomplete="off" autocapitalize="off">${esc(rxCfg.init)}</textarea></div><div class="hint">Обычно не нужны. Команды зависят от приёмника, берите их из его инструкции.</div></details>
+    <div class="acts"><button class="btn" id="rxMounts">Найти точки</button><button class="btn" id="rxOff">Отключить</button><button class="btn primary" id="rxOn">Подключить</button></div></div>`);
+  const read = () => {
+    const sel = $('rx_dev'), opt = sel.options[sel.selectedIndex];
+    rxCfg = { address: sel.value, name: opt && sel.value ? opt.textContent : '', host: $('rx_host').value.trim(), port: Number($('rx_port').value) || 2101, mount: $('rx_mount').value.trim(), user: $('rx_user').value.trim(), pass: $('rx_pass').value, init: $('rx_init').value, auto: rxCfg.auto };
+    setPref('rx', rxCfg);
+  };
+  RX.devices().then(r => {
+    const list = (r && r.devices) || [], sel = $('rx_dev'); if (!sel) return;
+    sel.innerHTML = '<option value="">Выберите приёмник</option>' + list.map(d => `<option value="${esc(d.address)}"${d.address === rxCfg.address ? ' selected' : ''}>${esc(d.name || d.address)}</option>`).join('');
+    if (!list.length) toast('Нет соединённых устройств. Соедините приёмник в настройках Bluetooth');
+  }).catch(e => toast(e.message || 'Bluetooth недоступен'));
+  $('rxOn').onclick = async () => { read(); if (await rxConnect()) { rxCfg.auto = true; setPref('rx', rxCfg); renderRx(); } };
+  $('rxOff').onclick = async () => { read(); rxCfg.auto = false; setPref('rx', rxCfg); rxFix = null; rxWasLive = false; await RX.disconnect().catch(() => {}); renderRx(); toast('Приёмник отключён, работает GPS телефона'); };
+  $('rxMounts').onclick = async () => {
+    read();
+    if (!rxCfg.host) { toast('Впишите адрес сервера'); return; }
+    const b = $('rxMounts'); b.disabled = true; b.textContent = 'Ищу…';
+    try { const r = await RX.mounts({ host: rxCfg.host, port: rxCfg.port }), l = (r && r.mounts) || []; const d = $('rx_mounts'); if (d) d.innerHTML = l.map(m => `<option value="${esc(m.name)}">${esc(m.format)}</option>`).join(''); toast(l.length ? `Точек: ${l.length}. Нажмите поле «Точка подключения»` : 'Сервер не прислал список точек'); }
+    catch (e) { toast(e.message || 'Сервер не отвечает'); }
+    if ($('rxMounts')) { b.disabled = false; b.textContent = 'Найти точки'; }
+  };
+}
+if (RX) {
+  RX.addListener('nmea', e => rxLine(e.line));
+  RX.addListener('state', e => { rxStateNow = e; renderRx(); });
+  setInterval(() => {
+    if (rxWasLive && !rxLive()) { rxWasLive = false; cue('bad'); toast('Приёмник молчит, перешёл на GPS телефона'); say('Приёмник потерян'); }
+    renderRx();
+  }, 2000);
+}
+
 function spoofPoll() { if (NATIVE && GNSS && GNSS.spoofInfo) GNSS.spoofInfo().then(r => { spoofNative = { ...(r || {}), at: Date.now() }; }).catch(() => {}); }
 $('satLine').onclick = () => {
   if (!sats) return;
@@ -4215,6 +4322,7 @@ function exportMenu() {
 // настройки: переключатели — лист остаётся открытым, видно, что включилось
 function settingsMenu() {
   openList('Настройки', [
+    ...(NATIVE ? [{ header: 'ГНСС' }, { id: 'receiver', icon: '📡', text: rxLive() ? 'Приёмник: ' + (RX_Q[rxFix.q] || 'подключён') : rxCfg.address ? 'Приёмник: ' + rxCfg.name : 'Приёмник и поправки: подключить' }] : []),
     { header: 'Сигналы' },
     { id: 'sound', icon: '♪', text: 'Звук и вибрация: в допуске / брак / потеря FIX', on: soundOn, check: true },
     { id: 'voice', icon: '🗣', text: 'Озвучивать результат голосом', on: voiceOn, check: true },
@@ -4267,6 +4375,7 @@ const MENU = {
   pnezd: () => guardExport(() => download(`civil3d_PNEZD_${today()}.csv`, new Blob([toPnezd()], { type: 'text/csv' }), 'text/csv')),
   screen: () => { const on = !pref('keepScreen', true); setPref('keepScreen', on); if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); toast(on ? 'Экран не будет гаснуть, пока открыт план' : 'Экран гаснет как обычно'); },
   ai: () => aiSettings(),
+  receiver: () => rxSheet(),
   report: () => guardExport(exportReport),
   cal: () => calibrate(),
   offline: () => saveArea(),
@@ -6030,7 +6139,7 @@ function rasterMenu() {
 
 ready = true;
 loadGeoid().catch(() => { /* без сети и кэша — попробуем при съёмке */ });
-if (NATIVE) { startGnss(); startGps(); checkUpdate(); }   // в Android-приложении спутники и GPS включаются сразу, проверяется обновление
+if (NATIVE) { startGnss(); startGps(); checkUpdate(); if (RX && rxCfg.auto) rxConnect(); }   // в Android-приложении спутники и GPS включаются сразу, проверяется обновление
 // вернулись в приложение (из другого окна, после сна телефона) — ещё раз проверить обновление, перезапускать не нужно
 if (NATIVE) document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 if (NATIVE) { setInterval(checkUpdate, UPDATE_EVERY_MS); addEventListener('online', () => checkUpdate()); }
