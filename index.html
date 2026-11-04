@@ -1517,7 +1517,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 56;
+const APP_BUILD = 57;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1746,8 +1746,9 @@ function rxStatusHtml() {
   const net = { off: rxCfg.host ? 'выключены' : 'не настроены', connecting: 'подключаюсь…', on: `идут, получено ${Math.round((c.rtcm || 0) / 1024)} КБ`, error: 'нет связи' }[c.ntrip] || c.ntrip;
   const silent = c.bt === 'on' && !rxFix && Date.now() - rxOnAt > RX_SILENT_MS;
   const pos = rxLive() ? `${RX_Q[rxFix.q] || 'решение ' + rxFix.q} · спутников ${rxFix.sats}` : rxFix && !rxFix.q ? 'приёмник ещё не решил' : silent ? 'нет данных: включите вывод NMEA (GGA) на Bluetooth' : '—';
-  return `<div>Приёмник: <b>${esc(bt)}</b></div><div>Координаты: <b>${esc(pos)}</b></div><div>Поправки: <b>${esc(net)}</b></div>${c.msg && c.bt !== 'on' || c.ntrip === 'error' ? `<div class="hint">${esc(c.msg)}</div>` : ''}`;
+  return `<div>Приёмник: <b>${esc(bt)}</b></div><div>Координаты: <b>${esc(pos)}</b></div><div>Поправки: <b>${esc(net)}</b></div>${c.msg && c.bt !== 'on' || c.ntrip === 'error' ? `<div class="hint">${esc(rxHumanError(c.msg))}</div>` : ''}`;
 }
+const rxHumanError = m => /read failed|socket|timeout|closed|refused|Service discovery/i.test(m || '') ? 'Приёмник не отвечает. Проверьте, что он включён, рядом и отключён от eField' : m;
 function renderRx() { const el = $('rxStatus'); if (el) el.innerHTML = rxStatusHtml(); }
 async function rxConnect() {
   if (!rxCfg.address) { toast('Выберите приёмник'); return false; }
@@ -1757,7 +1758,6 @@ async function rxConnect() {
 }
 function rxSheet() {
   showSheet(`<div class="sh-head"><b>Приёмник и поправки</b><button class="x" data-close>×</button></div><div class="form">
-    <div class="meas-verdict mid" id="rxStatus">${rxStatusHtml()}</div>
     <div><label for="rx_dev">Приёмник</label><select id="rx_dev"><option value="${esc(rxCfg.address)}">${esc(rxCfg.name || 'Выберите приёмник')}</option></select></div>
     <div class="hint">Сначала один раз соедините приёмник с устройством в настройках Bluetooth Android. eField и другие программы должны быть отключены от него: приёмник держит одно подключение.</div>
     <div><label for="rx_host">Сервер поправок (адрес)</label><input id="rx_host" autocomplete="off" autocapitalize="off" value="${esc(rxCfg.host)}" placeholder="адрес NTRIP"></div>
@@ -1767,6 +1767,7 @@ function rxSheet() {
     <div><label for="rx_pass">Пароль</label><input id="rx_pass" type="password" autocomplete="off" value="${esc(rxCfg.pass)}"></div>
     <div class="hint">Логин и пароль хранятся только на этом устройстве и уходят только на сервер поправок. Без сервера приёмник работает автономно.</div>
     <details class="more"><summary>Если нет координат</summary><div><label for="rx_init">Команды приёмнику при подключении, по одной в строке</label><textarea id="rx_init" rows="3" autocomplete="off" autocapitalize="off">${esc(rxCfg.init)}</textarea></div><div class="hint">Обычно не нужны. Команды зависят от приёмника, берите их из его инструкции.</div></details>
+    <div class="meas-verdict mid" id="rxStatus">${rxStatusHtml()}</div>
     <div class="acts"><button class="btn" id="rxMounts">Найти точки</button><button class="btn" id="rxOff">Отключить</button><button class="btn primary" id="rxOn">Подключить</button></div></div>`);
   const read = () => {
     const sel = $('rx_dev'), opt = sel.options[sel.selectedIndex];
@@ -1778,7 +1779,14 @@ function rxSheet() {
     sel.innerHTML = '<option value="">Выберите приёмник</option>' + list.map(d => `<option value="${esc(d.address)}"${d.address === rxCfg.address ? ' selected' : ''}>${esc(d.name || d.address)}</option>`).join('');
     if (!list.length) toast('Нет соединённых устройств. Соедините приёмник в настройках Bluetooth');
   }).catch(e => toast(e.message || 'Bluetooth недоступен'));
-  $('rxOn').onclick = async () => { read(); if (await rxConnect()) { rxCfg.auto = true; setPref('rx', rxCfg); renderRx(); } };
+  $('rxOn').onclick = async () => {
+    read();
+    if (!rxCfg.address) { toast('Сначала выберите приёмник в списке вверху'); $('rx_dev').scrollIntoView({ block: 'center' }); return; }
+    const b = $('rxOn'); b.disabled = true; b.textContent = 'Подключаюсь…';
+    rxStateNow = { ...rxStateNow, bt: 'connecting', msg: '' }; renderRx();
+    if (await rxConnect()) { rxCfg.auto = true; setPref('rx', rxCfg); renderRx(); }
+    if ($('rxOn')) { b.disabled = false; b.textContent = 'Подключить'; }
+  };
   $('rxOff').onclick = async () => { read(); rxCfg.auto = false; setPref('rx', rxCfg); rxFix = null; rxWasLive = false; await RX.disconnect().catch(() => {}); renderRx(); toast('Приёмник отключён, работает GPS телефона'); };
   $('rxMounts').onclick = async () => {
     read();
