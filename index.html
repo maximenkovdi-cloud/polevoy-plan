@@ -307,6 +307,7 @@
 <svg id="cross" viewBox="0 0 34 34"><path d="M17 3v10M17 21v10M3 17h10M21 17h10" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/><path d="M17 3v10M17 21v10M3 17h10M21 17h10" stroke="#c62828" stroke-width="2.4" stroke-linecap="round" paint-order="stroke"/><circle cx="17" cy="17" r="2" fill="#c62828"/></svg>
 
 <div id="fabs">
+  <button class="fab" id="fabSearch" aria-label="Найти место"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/></svg></button>
   <button class="fab" id="fabLayers" aria-label="Слои"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5z"/><path d="m3 13 9 5 9-5"/></svg></button>
   <button class="fab" id="fabTheme" aria-label="Яркость"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></button>
   <button class="fab" id="fabUndo" aria-label="Вернуть" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
@@ -1545,7 +1546,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 63;
+const APP_BUILD = 64;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3265,6 +3266,85 @@ function planeZone(y) {
   const zone = Math.floor(y / 1e6) || zoneOf(gps ? gps.lng : map.getCenter().lng);
   return { zone, y: y < 1e6 ? y + zone * 1e6 : y };
 }
+
+/* ───────────── Поиск (лупа справа): перейти к координатам; точка по расстоянию и азимуту ───────────── */
+
+const foundLayer = L.layerGroup().addTo(map);
+// «X Y» в плоской системе, «52.9701, 36.0701» (градусы) или 52°58'12" 36°04'12" → L.LatLng; не понять — null
+function parsePlace(txt) {
+  const t = String(txt || '').trim();
+  const dms = [...t.matchAll(/(\d+(?:[.,]\d+)?)\s*°\s*(?:(\d+(?:[.,]\d+)?)\s*['′]\s*)?(?:(\d+(?:[.,]\d+)?)\s*["″]?)?/g)];
+  if (dms.length >= 2) { const v = dms.slice(0, 2).map(m => parseNum(m[1]) + (m[2] ? parseNum(m[2]) / 60 : 0) + (m[3] ? parseNum(m[3]) / 3600 : 0)); return okLL(v[0], v[1]); }
+  const n = (t.match(/-?\d+(?:[.,]\d+)?/g) || []).map(parseNum);
+  if (n.length < 2) return null;
+  const [a, b] = n;
+  if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return okLL(a, b);
+  if (a > 1000 && b > 1000) { const z = planeZone(b); if (!z) return null; try { return fromSk42(a, z.y, z.zone); } catch (e) { return null; } }
+  return null;
+}
+function okLL(lat, lng) { return isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? L.latLng(lat, lng) : null; }
+// азимут: «45», «45,5» — градусы; «7-50» — тысячные (полный круг 60-00)
+function parseAz(txt) {
+  const t = String(txt || '').trim(), m = /^(\d{1,2})\s*[-–—]\s*(\d{1,2})$/.exec(t);
+  const deg = m ? (Number(m[1]) * 100 + Number(m[2])) * 0.06 : parseNum(t);
+  return isFinite(deg) && deg >= 0 && deg <= 360 ? deg % 360 : null;
+}
+// точка на расстоянии d (м) по азимуту az (°) от ll
+function polarPoint(ll, d, az) {
+  const R = 6371008.8, r = Math.PI / 180, dl = d / R, f1 = ll.lat * r, th = az * r;
+  const f2_ = Math.asin(Math.sin(f1) * Math.cos(dl) + Math.cos(f1) * Math.sin(dl) * Math.cos(th));
+  const l2 = ll.lng * r + Math.atan2(Math.sin(th) * Math.sin(dl) * Math.cos(f1), Math.cos(dl) - Math.sin(f1) * Math.sin(f2_));
+  return L.latLng(f2_ / r, l2 / r);
+}
+function showFound(ll, label) {
+  foundLayer.clearLayers();
+  L.marker(ll, { interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15],
+    html: `<svg width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="11" fill="none" stroke="#fff" stroke-width="5"/><circle cx="15" cy="15" r="11" fill="none" stroke="#e65100" stroke-width="2.5"/><circle cx="15" cy="15" r="2.5" fill="#e65100"/></svg>` +
+      `<span style="position:absolute;left:32px;top:6px;white-space:nowrap;font:700 13px/1 var(--draft);color:#e65100;background:var(--panel);padding:2px 5px;border-radius:6px">${esc(label)}</span>` }) }).addTo(foundLayer);
+  if (gpsView !== 'off') { followPaused = true; $('fabMe').dataset.paused = '1'; }   // слежение не утащит карту обратно
+  map.setView(ll, Math.max(map.getZoom(), 18), { animate: false });
+}
+function placeFound(ll, how, label) {
+  const pt = { id: uid(), no: nextNo(data.points), type: GENERIC.point, lat: ll.lat, lng: ll.lng, name: '', how, made: new Date().toISOString(), color: pref('color', VIS_COLOR) };
+  data.points.push(pt); save(); drawPoints(); foundLayer.clearLayers();
+  map.setView(ll, Math.max(map.getZoom(), 18), { animate: false }); showCard('point', pt); toast('Точка поставлена: ' + label);
+}
+function openSearch() {
+  const fromGps = !!gps, last = pref('search', {});
+  showSheet(`<div class="sh-head"><b>Найти место</b><button class="x" data-close>×</button></div>
+    <div class="form">
+      <label for="sPlace">Координаты</label>
+      <input id="sPlace" autocomplete="off" value="${esc(last.place || '')}" placeholder="X Y (${esc(planeName())}) или 52.9701, 36.0701">
+      <div class="hint" style="margin:4px 0 8px">${esc(planeName())}: сначала X (на север), потом Y. Градусы — можно вставить из сообщения, в том числе 52°58'12".</div>
+      <div class="row2"><button class="btn" id="sGo">Перейти</button><button class="btn primary" id="sPut">Поставить точку</button></div>
+      <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+      <b>Точка по расстоянию и азимуту</b>
+      <div class="seg" id="sFrom" style="margin:8px 0"><button data-f="gps" class="${fromGps ? 'on' : ''}">От меня (GPS)</button><button data-f="cross" class="${fromGps ? '' : 'on'}">От крестика</button></div>
+      <div class="row2"><div><label for="sDist">Расстояние, м</label><input id="sDist" inputmode="decimal" autocomplete="off" value="${esc(last.dist || '')}" placeholder="50"></div>
+        <div><label for="sAz">Азимут</label><input id="sAz" autocomplete="off" value="${esc(last.az || '')}" placeholder="45 или 7-50"></div></div>
+      <div class="hint" style="margin:4px 0 8px">Азимут — от севера по часовой стрелке: 0 — север, 90 — восток, 180 — юг, 270 — запад. Тысячные пишите через дефис: 15-00 — восток.</div>
+      <div class="row2"><button class="btn" id="pGo">Перейти</button><button class="btn primary" id="pPut">Поставить точку</button></div>
+      ${foundLayer.getLayers().length ? '<button class="btn" id="sClear" style="width:100%;margin-top:12px">Убрать отметку поиска</button>' : ''}
+    </div>`);
+  $('sFrom').onclick = e => { const b = e.target.closest('[data-f]'); if (!b) return; for (const x of $('sFrom').children) x.classList.toggle('on', x === b); };
+  const place = () => { const v = $('sPlace').value, ll = parsePlace(v); setPref('search', { ...pref('search', {}), place: v });
+    if (!ll) toast('Не понял координаты: X и Y в метрах или широта и долгота в градусах'); return ll; };
+  const polar = () => {
+    const d = parseNum($('sDist').value), az = parseAz($('sAz').value), fromMe = $('sFrom').querySelector('.on').dataset.f === 'gps';
+    setPref('search', { ...pref('search', {}), dist: $('sDist').value, az: $('sAz').value });
+    if (!(d > 0)) { toast('Расстояние — число метров больше нуля'); return null; }
+    if (az == null) { toast('Азимут — градусы от 0 до 360 или тысячные через дефис (7-50)'); return null; }
+    if (fromMe && !gps) { toast('Нет GPS — выберите «От крестика»'); return null; }
+    const from = fromMe ? L.latLng(gps.lat, gps.lng) : map.getCenter();
+    return { ll: polarPoint(from, d, az), label: `${mText(d, d < 100 ? 2 : 1)} м, ${mText(az, 1)}° ${fromMe ? 'от меня' : 'от крестика'}` };
+  };
+  $('sGo').onclick = () => { const ll = place(); if (ll) { closeSheet(); showFound(ll, 'Найдено'); } };
+  $('sPut').onclick = () => { const ll = place(); if (ll) { closeSheet(); placeFound(ll, 'coords', 'по координатам'); } };
+  $('pGo').onclick = () => { const r = polar(); if (r) { closeSheet(); showFound(r.ll, r.label); } };
+  $('pPut').onclick = () => { const r = polar(); if (r) { closeSheet(); placeFound(r.ll, 'polar', r.label); } };
+  if ($('sClear')) $('sClear').onclick = () => { foundLayer.clearLayers(); closeSheet(); };
+}
+$('fabSearch').onclick = openSearch;
 function soImport() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.txt,.csv,.xyz,.prn,text/plain,text/csv';
@@ -3890,7 +3970,7 @@ function redoRecord(id) {
 /* ───────────── Журнал съёмки: все точки таблицей — как снята, точность, отметка; фильтры — ошибки видны до отъезда ───────────── */
 
 let lastPlacedId = null;                                               // для «отменить последнюю» кнопкой громкости
-const HOW_NAME = { gps: 'по GPS', measure: 'Измерить', offset: 'смещение', center: 'перекрестье', tap: 'касанием', resect: 'засечка', axisoff: 'створ' };
+const HOW_NAME = { gps: 'по GPS', measure: 'Измерить', offset: 'смещение', center: 'перекрестье', tap: 'касанием', resect: 'засечка', axisoff: 'створ', coords: 'по координатам', polar: 'расстояние и азимут' };
 const pointHow = p => p.q && p.q.redone ? 'доснята' : p.q ? HOW_NAME[p.q.src] || 'по GPS' : HOW_NAME[p.how] || 'касанием';
 const JOURNAL_FILTERS = [
   ['all', 'Все', () => true],
