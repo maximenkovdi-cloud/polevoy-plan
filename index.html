@@ -1101,6 +1101,7 @@ function gpsFeed(p) {
   } else { gpsMarker.setLatLng(ll); gpsCircle.setLatLng(ll).setRadius(gps.acc); }
   if (first && !mode && !spoof) map.setView(ll, Math.max(map.getZoom(), 18));
   else followGps(ll);
+  if (selected) updateToObj();
   const acc = gps.acc;
   // RTK-приёмник даёт сантиметры — показываем их, а не округлённые метры
   const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
@@ -1544,7 +1545,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 62;
+const APP_BUILD = 63;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2712,12 +2713,13 @@ function showCard(kind, obj) {
       if (parts.length) kv.push(['Сеть', parts.join(' · ')]); }
     if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${obj.pk0}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
   }
+  kv.splice(obj.no ? 1 : 0, 0, ['От меня', `<span id="fromMe">${gps ? '' : 'нет GPS'}</span>`]);   // расстояние и азимут — сразу видно, далеко ли
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x trash-h" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <details class="sw-wrap"><summary>Цвет: ${esc((COLORS.find(c => c[0] === (obj.color || '')) || COLORS[0])[1])} ▾</summary><div class="swatches">${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div></details>
-    <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts" style="grid-column:span 2">Вершины</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
+    <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts" style="grid-column:span 2">Вершины</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button><button class="btn" data-act="go" style="grid-column:1/-1">➤ Куда ехать — отправить координаты</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -2732,6 +2734,7 @@ function showCard(kind, obj) {
     if (act === 'type') openPicker(kind === 'point' ? 'point' : 'line', id => changeType(kind, obj, id));
     if (act === 'edit') { kind === 'point' ? editPoint(obj) : editLine(obj); }
     if (act === 'copy') copyCoords(kind, obj);
+    if (act === 'go') shareGo(kind, obj);
     if (act === 'verts') showVertices(obj);
     if (act === 'stake') startStake(kind === 'point' ? [obj.lat, obj.lng] : obj.latlngs[0], kind === 'point' ? (pointLabel(obj) || (POINTS[obj.type] || POINTS.mark).name) : 'L' + (obj.no || '') + '.1');
     if (act === 'photo') addPhoto(kind, obj);
@@ -2749,6 +2752,54 @@ function showCard(kind, obj) {
   };
   if (kind === 'point' && ll) map.panInside(ll, { paddingBottomRight: [0, card.offsetHeight + 90], paddingTopLeft: [0, $('top').offsetHeight + 20] });
   redrawAll();
+  updateToObj();
+}
+
+/* ───────────── От меня до объекта: расстояние, азимут и полупрозрачные стрелки на карте; «Куда ехать» ───────────── */
+
+const toObjLayer = L.layerGroup().addTo(map);
+const TO_ARROW_PX = 70, TO_ARROW_MAX = 12;           // стрелки через ~70 px, не больше 12
+// цель: точка — сама точка; линия — её ближайшая ко мне вершина
+function objTarget(kind, obj) {
+  if (kind === 'point') return L.latLng(obj.lat, obj.lng);
+  const vs = obj.latlngs.map(a => L.latLng(a));
+  if (!gps) return vs[0];
+  const me = L.latLng(gps.lat, gps.lng);
+  return vs.reduce((b, a) => me.distanceTo(a) < me.distanceTo(b) ? a : b);
+}
+// истинный азимут с a на b, градусы 0…360
+function azimuth(a, b) {
+  const r = Math.PI / 180, f1 = a.lat * r, f2_ = b.lat * r, dl = (b.lng - a.lng) * r;
+  return (Math.atan2(Math.sin(dl) * Math.cos(f2_), Math.cos(f1) * Math.sin(f2_) - Math.sin(f1) * Math.cos(f2_) * Math.cos(dl)) / r + 360) % 360;
+}
+function updateToObj() {
+  toObjLayer.clearLayers();
+  const el = $('fromMe');
+  if (!selected || !gps) { if (el) el.textContent = 'нет GPS'; return; }
+  const me = L.latLng(gps.lat, gps.lng), t = objTarget(selected.kind, selected.obj), d = me.distanceTo(t), az = azimuth(me, t);
+  if (el) el.textContent = (d < 1000 ? mText(d, d < 100 ? 2 : 1) + ' м' : mText(d / 1000, 2) + ' км') + ` · азимут ${Math.round(az) % 360}° (${milText(az)})` + (spoof ? ' · GPS под подозрением' : '');
+  if (d < 0.05) return;
+  L.polyline([me, t], { color: '#1e88e5', weight: 3, opacity: 0.4, dashArray: '8 8', interactive: false }).addTo(toObjLayer);
+  const pa = map.latLngToContainerPoint(me), pb = map.latLngToContainerPoint(t), ang = Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180 / Math.PI;
+  const n = Math.min(TO_ARROW_MAX, Math.floor(pa.distanceTo(pb) / TO_ARROW_PX));
+  for (let i = 1; i <= n; i++) {
+    const p = pa.add(pb.subtract(pa).multiplyBy(i / (n + 1)));
+    L.marker(map.containerPointToLatLng(p), { interactive: false, keyboard: false, icon: L.divIcon({ className: 'to-arrow', iconSize: [20, 20], iconAnchor: [10, 10],
+      html: `<svg viewBox="0 0 20 20" width="20" height="20" style="transform:rotate(${ang}deg);opacity:.6"><path d="M6 4l7 6-7 6" fill="none" stroke="#1e88e5" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>` }) }).addTo(toObjLayer);
+  }
+}
+map.on('zoomend', () => { if (selected) updateToObj(); });
+async function shareGo(kind, obj) {
+  const t = objTarget(kind, obj), s = coordText(t).s;
+  const name = kind === 'point' ? pointLabel(obj) || (POINTS[obj.type] || POINTS.mark).name : (LINES[obj.type] || LINES.plain).name + (obj.no ? ' L' + obj.no : '');
+  const lat = t.lat.toFixed(6), lng = t.lng.toFixed(6);
+  const text = `Куда ехать: ${name}\n${lat}, ${lng}\nhttps://yandex.ru/maps/?pt=${lng},${lat}&z=17&l=map\n${planeName()}: X ${f2(s.x)}  Y ${f2(s.y)}`;
+  try {
+    if (FILES && FILES.shareText) { await FILES.shareText({ text, title: 'Куда ехать' }); return; }
+    if (navigator.share) { await navigator.share({ text }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }               // отказались — молча
+  try { await navigator.clipboard.writeText(text); toast('Координаты и ссылка на карту скопированы — вставьте в мессенджер'); }
+  catch (e) { prompt('Скопируйте:', text.replace(/\n/g, ' | ')); }
 }
 const TRACER_MAX_M = 20;                                                // глубже трассоискатели не берут
 function showVertices(line) {
@@ -2771,7 +2822,7 @@ function showVertices(line) {
     save();
   };
 }
-function hideCard() { $('card').style.display = 'none'; selected = null; redrawAll(); }
+function hideCard() { $('card').style.display = 'none'; selected = null; toObjLayer.clearLayers(); redrawAll(); }
 map.on('click', () => { if (!mode && selected) hideCard(); });
 async function copyCoords(kind, obj) {
   let txt;
