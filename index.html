@@ -25,7 +25,7 @@
   body { --rel:#8a4b1c; } body.sun { --rel:#5e2e0c; } body.night { --rel:#d6a06e; }
   body { --veg:#2e7d32; } body.sun { --veg:#1b5e20; } body.night { --veg:#81c784; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html, body { height:100%; margin:0; background:var(--bg); font:var(--fs)/1.35 system-ui, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
+  html, body { height:100%; margin:0; overflow:hidden; background:var(--bg);   /* повёрнутая карта больше экрана — страница не должна прокручиваться */ font:var(--fs)/1.35 system-ui, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
   #map { position:absolute; inset:0; background:var(--bg); }
   .leaflet-tile-pane { opacity:var(--baseOp, .7); }
   body.day .leaflet-tile-pane { filter: saturate(.6); }
@@ -1106,7 +1106,7 @@ function gpsFeed(p) {
   if (first && !mode && !spoof) map.setView(ll, Math.max(map.getZoom(), 18));
   else followGps(ll);
   if (selected) updateToObj();
-  trackFeed();
+  trackFeed(); updateDecl();
   const acc = gps.acc;
   // RTK-приёмник даёт сантиметры — показываем их, а не округлённые метры
   const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
@@ -1550,7 +1550,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 67;
+const APP_BUILD = 68;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1868,6 +1868,7 @@ function setGpsView(v, quiet) {
   if (v === 'compass' && compassDeg == null) { if (!quiet) toast('Компас телефона не отвечает — только слежение'); v = 'follow'; }
   gpsView = v; followPaused = false;
   $('fabMe').dataset.view = v; delete $('fabMe').dataset.paused;
+  map.options.touchZoom = map.options.doubleClickZoom = v === 'off' ? true : 'center';   // при слежении масштаб — вокруг своего места
   setBearing(v === 'compass' ? compassDeg : null);
   if (v !== 'off' && gps) map.setView([gps.lat, gps.lng], Math.max(map.getZoom(), 17), { animate: false });
   followGps(null);
@@ -1886,9 +1887,18 @@ $('fabMe').onclick = () => {
     followPaused = false; delete $('fabMe').dataset.paused;
     map.setView([gps.lat, gps.lng], map.getZoom(), { animate: false }); toast('Карта снова следует за вами'); return;
   }
-  setGpsView({ off: 'follow', follow: 'compass', compass: 'off' }[gpsView]);
+  let next = { off: 'follow', follow: 'compass', compass: 'off' }[gpsView];
+  if (next === 'compass' && compassDeg == null) { next = 'off'; toast('Компас телефона не отвечает — слежение выключено'); setGpsView(next, true); return; }   // без компаса: слежение ↔ выкл.
+  setGpsView(next);
 };
-map.on('dragstart', () => { if (gpsView !== 'off' && !followPaused) { followPaused = true; $('fabMe').dataset.paused = '1'; } });
+function pauseFollow() { if (gpsView !== 'off' && !followPaused) { followPaused = true; $('fabMe').dataset.paused = '1'; } }
+map.on('dragstart', pauseFollow);
+// карту увели к объекту (журнал, поиск, «показать все»…) — слежение не тянет её обратно; масштаб пальцами — вокруг центра, слежению не мешает
+const FOLLOW_TOL_PX = 12;
+map.on('moveend', () => {
+  if (gpsView === 'off' || followPaused || !gps) return;
+  if (map.latLngToContainerPoint(map.getCenter()).distanceTo(map.latLngToContainerPoint([gps.lat, gps.lng])) > FOLLOW_TOL_PX) pauseFollow();
+});
 // протяжка по повёрнутой карте: сдвиг пальца поворачиваем в систему карты, иначе карта поедет вбок
 (() => {
   const dr = map.dragging && map.dragging._draggable;
@@ -1928,9 +1938,26 @@ map.mouseEventToContainerPoint = e => {
   const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
   return L.point(dx * Math.cos(a) - dy * Math.sin(a) + el.clientWidth / 2, dx * Math.sin(a) + dy * Math.cos(a) + el.clientHeight / 2);
 };
+// Направление задней стороны телефона по полной ориентации (alpha, beta, gamma) — верно и когда телефон держат стоя, не только плашмя.
+// Датчик даёт магнитный север; азимуты на плане — истинные, поэтому прибавляем магнитное склонение (в Орле ≈ +11°)
+let magDecl = 0, magDeclAt = null;
+function headingOf(alpha, beta, gamma) {
+  const r = Math.PI / 180, x = (beta || 0) * r, y = (gamma || 0) * r, z = alpha * r;
+  const vx = -Math.cos(z) * Math.sin(y) - Math.sin(z) * Math.sin(x) * Math.cos(y), vy = -Math.sin(z) * Math.sin(y) + Math.cos(z) * Math.sin(x) * Math.cos(y);
+  if (Math.abs(vx) < 1e-6 && Math.abs(vy) < 1e-6) return (360 - alpha) % 360;   // строго плашмя — по одному alpha
+  return (Math.atan2(vx, vy) / r + 360) % 360;
+}
+// склонение — от телефона (модель магнитного поля Земли), раз в 50 км; без Android-приложения — 0
+const DECL_KM = 50;
+function updateDecl() {
+  if (!gps || !TRACK_N || !TRACK_N.declination) return;
+  if (magDeclAt && magDeclAt.distanceTo([gps.lat, gps.lng]) < DECL_KM * 1000) return;
+  magDeclAt = L.latLng(gps.lat, gps.lng);
+  TRACK_N.declination({ lat: gps.lat, lng: gps.lng, alt: gps.alt || 0 }).then(r => { if (r && isFinite(r.deg)) magDecl = r.deg; }).catch(() => { magDeclAt = null; });
+}
 addEventListener('deviceorientationabsolute', e => {
   if (e.alpha == null) return;
-  const h = (360 - e.alpha + ((screen.orientation && screen.orientation.angle) || 0)) % 360;
+  const h = (headingOf(e.alpha, e.beta, e.gamma) + magDecl + ((screen.orientation && screen.orientation.angle) || 0) + 360) % 360;
   compassDeg = compassDeg == null ? h : (compassDeg + angDiff(h, compassDeg) * COMPASS_SMOOTH + 360) % 360;
   if (!compassTick) compassTick = setTimeout(() => { compassTick = 0; if (gpsView === 'compass') setBearing(compassDeg); else drawCompass(); }, COMPASS_MS);
 });
@@ -3278,7 +3305,7 @@ const foundLayer = L.layerGroup().addTo(map);
 // «X Y» в плоской системе, «52.9701, 36.0701» (градусы) или 52°58'12" 36°04'12" → L.LatLng; не понять — null
 function parsePlace(txt) {
   const t = String(txt || '').trim();
-  const dms = [...t.matchAll(/(\d+(?:[.,]\d+)?)\s*°\s*(?:(\d+(?:[.,]\d+)?)\s*['′]\s*)?(?:(\d+(?:[.,]\d+)?)\s*["″]?)?/g)];
+  const dms = [...t.matchAll(/(\d+(?:[.,]\d+)?)\s*°\s*(?:(\d+(?:[.,]\d+)?)\s*['′]\s*)?(?:(\d+(?:[.,]\d+)?)\s*["″])?/g)];   // секунды — только со значком ″, иначе «52°58' 36°04'» склеится
   if (dms.length >= 2) { const v = dms.slice(0, 2).map(m => parseNum(m[1]) + (m[2] ? parseNum(m[2]) / 60 : 0) + (m[3] ? parseNum(m[3]) / 3600 : 0)); return okLL(v[0], v[1]); }
   const n = (t.match(/-?\d+(?:[.,]\d+)?/g) || []).map(parseNum);
   if (n.length < 2) return null;
@@ -3291,6 +3318,7 @@ function okLL(lat, lng) { return isFinite(lat) && isFinite(lng) && Math.abs(lat)
 // азимут: «45», «45,5» — градусы; «7-50» — тысячные (полный круг 60-00)
 function parseAz(txt) {
   const t = String(txt || '').trim(), m = /^(\d{1,2})\s*[-–—]\s*(\d{1,2})$/.exec(t);
+  if (!t) return null;                                                  // пусто — не «север»
   const deg = m ? (Number(m[1]) * 100 + Number(m[2])) * 0.06 : parseNum(t);
   return isFinite(deg) && deg >= 0 && deg <= 360 ? deg % 360 : null;
 }
@@ -3360,10 +3388,14 @@ let trackRec = null, trackSavedAt = 0, tracksShown = pref('tracksShown', true);
 const trackLayer = L.layerGroup().addTo(map);
 for (const t of tracks) delete t.native;
 for (const t of tracks) if (!t.end) t.end = t.pts.length ? new Date(t.pts[t.pts.length - 1][2] * 1000).toISOString() : t.start;   // запись прервалась с закрытием приложения
+let trackFullWarned = false, trackBusy = false;                         // trackBusy — идёт запуск или остановка: повторное нажатие не учитываем
+const trackLiveLayer = L.layerGroup().addTo(map);                      // записываемый трек — отдельно: новая точка не перерисовывает все старые
 function saveTracks() {
-  try { localStorage.setItem(TRACK_KEY, JSON.stringify(tracks)); } catch (e) { toast('Память для треков переполнена — удалите старые треки'); }
+  try { localStorage.setItem(TRACK_KEY, JSON.stringify(tracks)); trackFullWarned = false; }
+  catch (e) { if (!trackFullWarned) { trackFullWarned = true; toast('Память для треков переполнена — удалите старые треки'); } }
   trackSavedAt = Date.now();
 }
+const saveTracksSoon = () => { if (Date.now() - trackSavedAt > TRACK_SAVE_MS) saveTracks(); };
 function trackLen(t) { let m = 0; for (let i = 1; i < t.pts.length; i++) m += L.latLng(t.pts[i - 1][0], t.pts[i - 1][1]).distanceTo([t.pts[i][0], t.pts[i][1]]); return m; }
 const kmText = m => m < 1000 ? Math.round(m) + ' м' : mText(m / 1000, 2) + ' км';
 // новая точка трека: при подмене и плохой точности не пишем (скачки испортят путь); стоя на месте — тоже
@@ -3372,8 +3404,7 @@ function trackFeed() {
   const last = trackRec.pts[trackRec.pts.length - 1];
   if (last && L.latLng(last[0], last[1]).distanceTo([gps.lat, gps.lng]) < Math.max(TRACK_MIN_M, gps.acc / 2)) return;
   trackRec.pts.push([+gps.lat.toFixed(7), +gps.lng.toFixed(7), Math.round(gps.at / 1000)]);
-  if (Date.now() - trackSavedAt > TRACK_SAVE_MS) saveTracks();
-  drawTracks();
+  saveTracksSoon(); drawLive();
 }
 // плавная линия: сглаживание углов (Чайкин) — трек не спутать с ломаными сетей
 function chaikin(a, n) {
@@ -3385,30 +3416,35 @@ function chaikin(a, n) {
   return a;
 }
 // вид трека: широкая полупрозрачная оранжевая полоса с белым пунктиром посередине — ни на один знак не похоже
+function drawTrack(t, layer) {
+  if (t.pts.length < 2) return;
+  const ll = chaikin(t.pts.map(p => [p[0], p[1]]), TRACK_SMOOTH);
+  L.polyline(ll, { color: '#ff6d00', weight: 8, opacity: t === trackRec ? 0.5 : 0.35, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(layer);
+  L.polyline(ll, { color: '#fff', weight: 1.8, opacity: 0.9, dashArray: '2 8', lineCap: 'round', interactive: false }).addTo(layer);
+  L.circleMarker(ll[0], { radius: 5, color: '#ff6d00', weight: 3, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(layer);   // начало пути
+}
+function drawLive() { trackLiveLayer.clearLayers(); if (trackRec) drawTrack(trackRec, trackLiveLayer); }
 function drawTracks() {
   trackLayer.clearLayers();
-  const list = tracksShown ? tracks : trackRec ? [trackRec] : [];
-  for (const t of list) {
-    if (t.pts.length < 2) continue;
-    const ll = chaikin(t.pts.map(p => [p[0], p[1]]), TRACK_SMOOTH);
-    L.polyline(ll, { color: '#ff6d00', weight: 8, opacity: t === trackRec ? 0.5 : 0.35, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(trackLayer);
-    L.polyline(ll, { color: '#fff', weight: 1.8, opacity: 0.9, dashArray: '2 8', lineCap: 'round', interactive: false }).addTo(trackLayer);
-    L.circleMarker(ll[0], { radius: 5, color: '#ff6d00', weight: 3, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(trackLayer);   // начало пути
-  }
+  if (tracksShown) for (const t of tracks) if (t !== trackRec) drawTrack(t, trackLayer);
+  drawLive();
 }
 function setTrackBtn() { $('fabTrack').classList.toggle('rec', !!trackRec); }
 function screenOn(on) { if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); }
 // В Android-приложении трек пишет служба телефона (TrackPlugin) — и с выключенным экраном; страница раз в 5 с забирает новые точки
 const TRACK_N = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Track) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Track')));
 const TRACK_POLL_MS = 5000;
-let trackPoll = 0, trackPulling = false;
-async function trackPull() {
+let trackPoll = 0, trackPulling = null;                                // trackPulling — идущий запрос: второй не шлём, а ждём его
+function trackPull() {
   const t = trackRec;
-  if (!t || !t.native || trackPulling) return;
-  trackPulling = true;
-  try { const r = await TRACK_N.points({ from: t.pts.length }); if (r && r.pts && r.pts.length) { t.pts.push(...r.pts); saveTracks(); drawTracks(); } }
-  catch (e) { /* служба ответит в следующий раз */ }
-  finally { trackPulling = false; }
+  if (!t || !t.native) return Promise.resolve();
+  if (trackPulling) return trackPulling;
+  trackPulling = (async () => {
+    try { const r = await TRACK_N.points({ from: t.pts.length }); if (r && r.pts && r.pts.length) { t.pts.push(...r.pts); saveTracksSoon(); drawLive(); } }
+    catch (e) { /* служба ответит в следующий раз */ }
+    finally { trackPulling = null; }
+  })();
+  return trackPulling;
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) trackPull(); });   // вернулись в приложение — сразу дорисовать путь
 // служба могла сразу остановиться (нет разрешения, нет GPS) — тогда пишем сами, пока приложение открыто
@@ -3422,6 +3458,10 @@ async function trackCheckNative(t) {
   toast('Запись с выключенным экраном не запустилась (проверьте разрешение на местоположение) — пишу, пока приложение открыто');
 }
 async function trackStart() {
+  trackBusy = true;
+  try { await trackStartInner(); } finally { trackBusy = false; }
+}
+async function trackStartInner() {
   startGps();
   const now = new Date();
   const t = trackRec = { id: uid(), name: 'Трек ' + now.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }), start: now.toISOString(), pts: [] };
@@ -3437,8 +3477,16 @@ async function trackStart() {
   toast(t.native ? 'Запись трека пошла — пишется и с выключенным экраном (уведомление в шторке)' : 'Запись трека пошла. Пишется, пока приложение открыто — экран не гаснет');
 }
 async function trackStop() {
+  trackBusy = true;
+  try { await trackStopInner(); } finally { trackBusy = false; }
+}
+async function trackStopInner() {
   const t = trackRec;
-  if (t.native) { await trackPull(); clearInterval(trackPoll); try { await TRACK_N.stop(); } catch (e) { /* служба уже остановлена */ } setPref('trackLive', null); delete t.native; }
+  if (!t) return;
+  if (t.native) {                                                      // сначала остановить службу, потом забрать все точки из файла (идущий запрос дождаться и спросить ещё раз)
+    clearInterval(trackPoll); try { await TRACK_N.stop(); } catch (e) { /* служба уже остановлена */ }
+    await trackPull(); await trackPull(); setPref('trackLive', null); delete t.native;
+  }
   trackRec = null;
   t.end = new Date().toISOString();
   if (t.pts.length < 2) { tracks = tracks.filter(x => x !== t); toast('Трек пустой — вы почти не двигались, не сохраняю'); }
@@ -3471,7 +3519,7 @@ function openTracks() {
     if (del) { tracks = tracks.filter(x => x.id !== del.dataset.tdel); saveTracks(); drawTracks(); openTracks(); toast('Трек удалён'); }
   };
 }
-$('fabTrack').onclick = () => { if (trackRec) trackStop(); else openTracks(); };
+$('fabTrack').onclick = () => { if (trackBusy) return; if (trackRec) trackStop(); else openTracks(); };
 drawTracks();
 // страницу перезапустили (обновление, система выгрузила), а служба всё ещё пишет — продолжаем тот же трек
 if (TRACK_N) TRACK_N.points({ from: 0 }).then(r => {
@@ -4325,7 +4373,11 @@ function setMode(m) {
 function placePlus() {
   const b = $('fabPlus'), box = $('mode'), on = !!mode && !pickTool && box.style.display === 'block';
   b.style.display = on ? 'flex' : 'none';
-  if (on) b.style.bottom = (parseFloat(box.style.bottom) || 8) + box.offsetHeight + 12 + 'px';
+  if (!on) return;
+  b.style.right = '12px';
+  b.style.bottom = (parseFloat(box.style.bottom) || 8) + box.offsetHeight + 12 + 'px';
+  const fabs = $('fabs').getBoundingClientRect(), me = b.getBoundingClientRect();   // наезжает на столбик кнопок справа — встать левее него
+  if (me.top < fabs.bottom + 8) b.style.right = (innerWidth - fabs.left + 10) + 'px';
 }
 $('fabPlus').onclick = () => { if (mode && !pickTool) { cue('tick'); addAt(map.getCenter(), null, 'center'); } };
 // кнопки громкости в режиме съёмки (Android): «−» — точка по GPS, «+» — измерение с усреднением
