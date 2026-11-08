@@ -103,6 +103,22 @@
   .fab { width:50px; height:50px; border-radius:50%; border:0; background:var(--panel); color:var(--ink); display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow); }
   .fab svg { width:26px; height:26px; }
   .fab.on { background:var(--accent); color:var(--accentInk); }
+  /* кнопка GPS: синий значок — GPS работает; залита — карта следует; с красным кольцом — ещё и вращается по компасу */
+  #fabMe.on { background:var(--panel); color:var(--accent); }
+  #fabMe[data-view=follow], #fabMe[data-view=compass] { background:var(--accent); color:var(--accentInk); }
+  #fabMe[data-view=compass] { box-shadow:0 0 0 3px #c62828, var(--shadow); }
+  #fabCompass { position:absolute; left:10px; top:calc(var(--topH, 92px) + 96px); z-index:1000; width:44px; height:44px; }
+  #fabCompass svg { transition:transform .15s linear; }
+  #map.rot .leaflet-control-container { display:none; }
+  /* круг-компас вокруг крестика */
+  #ring { position:absolute; left:50%; top:50%; width:min(86vw, 70vh); height:min(86vw, 70vh); transform:translate(-50%, -50%); z-index:899; pointer-events:none; display:none; overflow:visible;
+    filter:drop-shadow(0 0 1px var(--panel)) drop-shadow(0 0 1px var(--panel)); }
+  .rg-c { fill:none; stroke:var(--ink); stroke-width:1.2; opacity:.75; }
+  .rg-t { stroke:var(--ink); stroke-width:.7; } .rg-t.big { stroke-width:1.5; }
+  .rg-l, .rg-a { font:600 9px var(--draft, sans-serif); fill:var(--ink); text-anchor:middle; dominant-baseline:central; paint-order:stroke; stroke:var(--panel); stroke-width:2.5px; }
+  .rg-l.cd { font-size:12px; font-weight:800; } .rg-l.n { fill:#c62828; }
+  .rg-h { stroke:#c62828; stroke-width:1.6; stroke-dasharray:4 3; }
+  .rg-a { font-size:11px; font-weight:800; fill:#c62828; }
 
   /* ── масштаб ── */
   #scale { position:absolute; left:10px; z-index:1000; background:var(--panel); color:var(--ink); border-radius:10px; padding:7px 11px 7px; font-size:13px; font-weight:700; box-shadow:var(--shadow); cursor:pointer; }
@@ -296,6 +312,8 @@
   <button class="fab" id="fabMe" aria-label="Где я"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg></button>
 </div>
 
+<svg id="ring" viewBox="-100 -100 200 200"></svg>
+<button class="fab" id="fabCompass" aria-label="Круг-компас"><svg viewBox="0 0 24 24"><path d="M12 2.5 16.2 12H7.8z" fill="#c62828"/><path d="M12 21.5 7.8 12h8.4z" fill="currentColor" opacity=".5"/><circle cx="12" cy="12" r="1.5" fill="var(--panel)"/></svg></button>
 <button id="fabPlus" aria-label="Поставить в крестик"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg></button>
 
 <div id="scale"><span id="scaleText"></span><i id="scaleBar"></i></div>
@@ -709,7 +727,7 @@ function fromSk42(x, y, zone) {   // обратный пересчёт плос�
   const [lng, lat] = proj4(gkDef(zone), 'WGS84', [y, x]);
   return L.latLng(lat, lng);
 }
-const f2 = v => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const f2 = v => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false });   // координаты слитно, как в журналах: 6181590,47
 const f6 = v => v.toFixed(6);
 function coordText(ll) {
   const s = sk42(ll.lat, ll.lng);
@@ -1081,6 +1099,7 @@ function gpsFeed(p) {
     gpsMarker = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1, interactive: false }).addTo(map);
   } else { gpsMarker.setLatLng(ll); gpsCircle.setLatLng(ll).setRadius(gps.acc); }
   if (first && !mode && !spoof) map.setView(ll, Math.max(map.getZoom(), 18));
+  else followGps(ll);
   const acc = gps.acc;
   // RTK-приёмник даёт сантиметры — показываем их, а не округлённые метры
   const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
@@ -1524,7 +1543,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 60;
+const APP_BUILD = 61;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1828,12 +1847,86 @@ $('satLine').onclick = () => {
   showSheet(`<div class="sh-head"><b>Спутники ГНСС</b><button class="x" data-close>×</button></div><div id="satBody">${satSheetBody()}</div>`);
 };
 
+/* ───────────── Кнопка GPS, как в «Тактической карте»: слежение → слежение с компасом (карта вращается) → выкл. ───────────── */
+
+let gpsView = 'off';                                 // 'off' | 'follow' | 'compass'
+let compassDeg = null, mapBearing = null, ringOn = pref('ring', false), compassTick = 0;
+const GPS_VIEW_TEXT = { follow: 'Карта следует за вами', compass: 'Слежение с компасом — карта повёрнута по телефону', off: 'Слежение выключено' };
+const COMPASS_SMOOTH = 0.25, COMPASS_MS = 50;       // сглаживание стрелки и не чаще 20 раз в секунду
+const angDiff = (a, b) => ((a - b + 540) % 360) - 180;
+const milText = deg => { const m = Math.round(deg / 360 * 6000) % 6000; return Math.floor(m / 100) + '-' + String(m % 100).padStart(2, '0'); };   // тысячные: 123° → 20-50
+function setGpsView(v, quiet) {
+  if (v === 'compass' && compassDeg == null) { if (!quiet) toast('Компас телефона не отвечает — только слежение'); v = 'follow'; }
+  gpsView = v;
+  $('fabMe').dataset.view = v;
+  setBearing(v === 'compass' ? compassDeg : null);
+  if (v !== 'off' && gps && !spoof) map.setView([gps.lat, gps.lng], Math.max(map.getZoom(), 17), { animate: false });
+  followGps(null);
+  if (!quiet) toast(GPS_VIEW_TEXT[v]);
+}
+// слежение выключено — своё место видно полупрозрачным
+function followGps(ll) {
+  if (gpsMarker) gpsMarker.setStyle({ fillOpacity: gpsView === 'off' ? 0.45 : 1, opacity: gpsView === 'off' ? 0.6 : 1 });
+  if (ll && gpsView !== 'off' && !spoof) map.panTo(ll, { animate: false });
+}
 $('fabMe').onclick = () => {
   startGnss();
-  if (!gps) { startGps(); return; }
   if (spoof) { cue('bad'); toast('GPS ложный (подмена) — карту туда не веду'); say('GPS ложный'); return; }
-  map.setView([gps.lat, gps.lng], Math.max(map.getZoom(), 17));
+  if (!gps) { startGps(); setGpsView('follow', true); toast('Ищу спутники — карта пойдёт за вами, как только будут координаты'); return; }
+  setGpsView({ off: 'follow', follow: 'compass', compass: 'off' }[gpsView]);
 };
+map.on('dragstart', () => { if (gpsView !== 'off') setGpsView('off'); });   // сдвинули карту рукой — слежение выключается
+
+// Поворот карты: Leaflet сам не вращает, поэтому поворачиваем весь контейнер карты — как лист плана на столе.
+// Чтобы при повороте не было пустых углов, контейнер на время делается квадратом со стороной в диагональ экрана
+function rotSize(on) {
+  const el = map.getContainer(), c = map.getCenter(), z = map.getZoom();
+  if (on) { const w = innerWidth, h = innerHeight, d = Math.ceil(Math.hypot(w, h));
+    Object.assign(el.style, { inset: 'auto', left: (w - d) / 2 + 'px', top: (h - d) / 2 + 'px', width: d + 'px', height: d + 'px' }); el.classList.add('rot'); }
+  else { el.style.cssText = ''; el.classList.remove('rot'); }
+  map.invalidateSize({ pan: false }); map.setView(c, z, { animate: false });
+}
+function setBearing(b) {
+  const el = map.getContainer(), on = el.classList.contains('rot');
+  if (b == null) { mapBearing = null; if (on) rotSize(false); }
+  else { if (!on) rotSize(true); mapBearing = b; el.style.transform = `rotate(${-b}deg)`; }
+  drawCompass();
+}
+addEventListener('resize', () => { if (map.getContainer().classList.contains('rot')) rotSize(true); });
+// касания по повёрнутой карте: экранную точку поворачиваем обратно — точка встаёт туда, куда нажали
+const mouseToContainer = map.mouseEventToContainerPoint.bind(map);
+map.mouseEventToContainerPoint = e => {
+  if (!mapBearing) return mouseToContainer(e);
+  const el = map.getContainer(), r = el.getBoundingClientRect(), a = mapBearing * Math.PI / 180;
+  const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+  return L.point(dx * Math.cos(a) - dy * Math.sin(a) + el.clientWidth / 2, dx * Math.sin(a) + dy * Math.cos(a) + el.clientHeight / 2);
+};
+addEventListener('deviceorientationabsolute', e => {
+  if (e.alpha == null) return;
+  const h = (360 - e.alpha + ((screen.orientation && screen.orientation.angle) || 0)) % 360;
+  compassDeg = compassDeg == null ? h : (compassDeg + angDiff(h, compassDeg) * COMPASS_SMOOTH + 360) % 360;
+  if (!compassTick) compassTick = setTimeout(() => { compassTick = 0; if (gpsView === 'compass') setBearing(compassDeg); else drawCompass(); }, COMPASS_MS);
+});
+
+// Круг-компас вокруг крестика (своё оформление): включается кнопкой-стрелкой слева, чтобы не мешал.
+// Деления через 5°, цифры через 30°; красная линия — куда смотрит телефон; внизу — азимут в градусах и тысячных
+function drawCompass() {
+  const b = mapBearing || 0;
+  $('fabCompass').querySelector('svg').style.transform = `rotate(${-b}deg)`;   // стрелка кнопки показывает север
+  const ring = $('ring');
+  ring.style.display = ringOn ? 'block' : 'none';
+  if (!ringOn) return;
+  const pt = (deg, r) => { const a = (deg - b) * Math.PI / 180; return [(r * Math.sin(a)).toFixed(1), (-r * Math.cos(a)).toFixed(1)]; };
+  let s = '<circle r="92" class="rg-c"/>';
+  for (let d = 0; d < 360; d += 5) { const r0 = d % 30 === 0 ? 80 : d % 10 === 0 ? 85 : 88, [x1, y1] = pt(d, r0), [x2, y2] = pt(d, 92); s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="rg-t${d % 30 ? '' : ' big'}"/>`; }
+  for (let d = 0; d < 360; d += 30) { const [x, y] = pt(d, 70), t = { 0: 'С', 90: 'В', 180: 'Ю', 270: 'З' }[d];
+    s += `<text x="${x}" y="${y}" class="rg-l${t ? ' cd' : ''}${d === 0 ? ' n' : ''}">${t || d}</text>`; }
+  if (compassDeg != null) { const [x, y] = pt(compassDeg, 92), [x0, y0] = pt(compassDeg, 8);
+    s += `<line x1="${x0}" y1="${y0}" x2="${x}" y2="${y}" class="rg-h"/><text x="0" y="40" class="rg-a">${Math.round(compassDeg) % 360}° · ${milText(compassDeg)}</text>`; }
+  ring.innerHTML = s;
+}
+$('fabCompass').onclick = () => { ringOn = !ringOn; setPref('ring', ringOn); drawCompass(); toast(ringOn ? 'Круг-компас включён' + (compassDeg == null ? ' (компас телефона не отвечает — только стороны света)' : '') : 'Круг-компас выключен'); };
+drawCompass();
 
 /* ───────────── Точечные знаки ───────────── */
 
@@ -6008,7 +6101,7 @@ const GridLayer = L.Layer.extend({
     if (((maxX - minX) / step + 2) * ((maxY - minY) / step + 2) > GRID_MAX_CROSSES) return;
     const spacingPx = step / mPerPx, arm = step * GRID_ARM, armPx = arm / mPerPx;
     const fontPx = Math.max(10.5, Math.min(13, spacingPx * 0.075));     // текст тоже растёт с масштабом, но остаётся «чертёжным»
-    const fmt = v => Math.round(v).toLocaleString('ru-RU');
+    const fmt = v => String(Math.round(v));                             // слитно, как координаты сверху
     const ll = (x, y) => { const p = fromSk42(x, y, zone); return [p.lat, p.lng]; };
     const x0 = Math.floor(minX / step) * step, y0 = Math.floor(minY / step) * step;
     const x1 = Math.ceil(maxX / step) * step, y1 = Math.ceil(maxY / step) * step;
