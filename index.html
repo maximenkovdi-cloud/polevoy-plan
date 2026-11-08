@@ -1550,7 +1550,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 65;
+const APP_BUILD = 66;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3357,6 +3357,7 @@ const TRACK_KEY = 'tk.tracks', TRACK_MIN_M = 3, TRACK_MAX_ACC = 30, TRACK_KEEP =
 let tracks = (() => { try { return JSON.parse(localStorage.getItem(TRACK_KEY)) || []; } catch (e) { return []; } })();
 let trackRec = null, trackSavedAt = 0, tracksShown = pref('tracksShown', true);
 const trackLayer = L.layerGroup().addTo(map);
+for (const t of tracks) delete t.native;
 for (const t of tracks) if (!t.end) t.end = t.pts.length ? new Date(t.pts[t.pts.length - 1][2] * 1000).toISOString() : t.start;   // запись прервалась с закрытием приложения
 function saveTracks() {
   try { localStorage.setItem(TRACK_KEY, JSON.stringify(tracks)); } catch (e) { toast('Память для треков переполнена — удалите старые треки'); }
@@ -3366,7 +3367,7 @@ function trackLen(t) { let m = 0; for (let i = 1; i < t.pts.length; i++) m += L.
 const kmText = m => m < 1000 ? Math.round(m) + ' м' : mText(m / 1000, 2) + ' км';
 // новая точка трека: при подмене и плохой точности не пишем (скачки испортят путь); стоя на месте — тоже
 function trackFeed() {
-  if (!trackRec || !gps || spoof || gps.acc > TRACK_MAX_ACC) return;
+  if (!trackRec || trackRec.native || !gps || spoof || gps.acc > TRACK_MAX_ACC) return;   // пишет служба телефона — страница не дублирует
   const last = trackRec.pts[trackRec.pts.length - 1];
   if (last && L.latLng(last[0], last[1]).distanceTo([gps.lat, gps.lng]) < Math.max(TRACK_MIN_M, gps.acc / 2)) return;
   trackRec.pts.push([+gps.lat.toFixed(7), +gps.lng.toFixed(7), Math.round(gps.at / 1000)]);
@@ -3396,16 +3397,37 @@ function drawTracks() {
 }
 function setTrackBtn() { $('fabTrack').classList.toggle('rec', !!trackRec); }
 function screenOn(on) { if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); }
-function trackStart() {
+// В Android-приложении трек пишет служба телефона (TrackPlugin) — и с выключенным экраном; страница раз в 5 с забирает новые точки
+const TRACK_N = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Track) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Track')));
+const TRACK_POLL_MS = 5000;
+let trackPoll = 0, trackPulling = false;
+async function trackPull() {
+  const t = trackRec;
+  if (!t || !t.native || trackPulling) return;
+  trackPulling = true;
+  try { const r = await TRACK_N.points({ from: t.pts.length }); if (r && r.pts && r.pts.length) { t.pts.push(...r.pts); saveTracks(); drawTracks(); } }
+  catch (e) { /* служба ответит в следующий раз */ }
+  finally { trackPulling = false; }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) trackPull(); });   // вернулись в приложение — сразу дорисовать путь
+async function trackStart() {
   startGps();
   const now = new Date();
-  trackRec = { id: uid(), name: 'Трек ' + now.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }), start: now.toISOString(), pts: [] };
-  tracks = [trackRec, ...tracks].slice(0, TRACK_KEEP);
-  saveTracks(); screenOn(true); setTrackBtn(); trackFeed(); drawTracks();
-  toast('Запись трека пошла. Пишется, пока приложение открыто — экран не гаснет');
+  const t = trackRec = { id: uid(), name: 'Трек ' + now.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }), start: now.toISOString(), pts: [] };
+  tracks = [t, ...tracks].slice(0, TRACK_KEEP);
+  setTrackBtn();
+  if (TRACK_N) {
+    try { await TRACK_N.start(); t.native = true; setPref('trackLive', t.id); trackPoll = setInterval(trackPull, TRACK_POLL_MS); }
+    catch (e) { toast((e && e.message || 'Служба записи не запустилась') + ' — пишу, пока приложение открыто'); }
+  }
+  if (!t.native) { screenOn(true); trackFeed(); }
+  saveTracks(); drawTracks();
+  toast(t.native ? 'Запись трека пошла — пишется и с выключенным экраном (уведомление в шторке)' : 'Запись трека пошла. Пишется, пока приложение открыто — экран не гаснет');
 }
-function trackStop() {
-  const t = trackRec; trackRec = null;
+async function trackStop() {
+  const t = trackRec;
+  if (t.native) { await trackPull(); clearInterval(trackPoll); try { await TRACK_N.stop(); } catch (e) { /* служба уже остановлена */ } setPref('trackLive', null); delete t.native; }
+  trackRec = null;
   t.end = new Date().toISOString();
   if (t.pts.length < 2) { tracks = tracks.filter(x => x !== t); toast('Трек пустой — вы почти не двигались, не сохраняю'); }
   else toast(`Трек записан: ${kmText(trackLen(t))} за ${Math.max(1, Math.round((Date.parse(t.end) - Date.parse(t.start)) / 60000))} мин`);
@@ -3420,7 +3442,7 @@ function openTracks() {
     <button class="btn" data-tshow="${t.id}">Показать</button><button class="x" data-tdel="${t.id}" aria-label="Удалить">🗑</button></div>`).join('');
   showSheet(`<div class="sh-head"><b>Треки — пройденный путь</b><button class="x" data-close>×</button></div>
     <button class="btn primary" id="tStart" style="width:100%">● Начать запись трека</button>
-    <div class="hint" style="margin:6px 0 10px">Путь пишется, пока «Полевой план» открыт: экран на время записи не гаснет. Остановить — ещё раз нажать кнопку «следы». При подмене GPS точки не пишутся.</div>
+    <div class="hint" style="margin:6px 0 10px">${TRACK_N ? 'Путь пишется и с выключенным экраном, и когда приложение свёрнуто — в шторке будет уведомление «Идёт запись трека». Если телефон спросит про уведомления — разрешите.' : 'Путь пишется, пока «Полевой план» открыт: экран на время записи не гаснет.'} Остановить — ещё раз нажать кнопку «следы».</div>
     ${tracks.length ? `<label class="meas-row" style="cursor:pointer"><input type="checkbox" id="tShown" ${tracksShown ? 'checked' : ''}> <span style="flex:1">Показывать треки на карте</span></label>
       <div style="max-height:40vh;overflow:auto">${rows}</div>
       <div class="row2" style="margin-top:10px"><button class="btn" id="tGpx">Выгрузить GPX</button><button class="btn" id="tClear">Удалить все</button></div>` : '<div class="hint">Записанных треков пока нет.</div>'}`);
@@ -3439,6 +3461,16 @@ function openTracks() {
 }
 $('fabTrack').onclick = () => { if (trackRec) trackStop(); else openTracks(); };
 drawTracks();
+// страницу перезапустили (обновление, система выгрузила), а служба всё ещё пишет — продолжаем тот же трек
+if (TRACK_N) TRACK_N.points({ from: 0 }).then(r => {
+  const liveId = pref('trackLive', null);
+  if (!r || !r.running) { if (liveId) setPref('trackLive', null); return; }
+  let t = tracks.find(x => x.id === liveId);
+  if (!t) { t = { id: uid(), name: 'Трек (продолжение)', start: new Date().toISOString(), pts: [] }; tracks = [t, ...tracks].slice(0, TRACK_KEEP); }
+  delete t.end; t.native = true; t.pts = r.pts || []; trackRec = t;
+  setPref('trackLive', t.id); trackPoll = setInterval(trackPull, TRACK_POLL_MS);
+  saveTracks(); setTrackBtn(); drawTracks(); toast('Идёт запись трека — продолжаю');
+}).catch(() => { /* старое приложение без службы трека */ });
 function soImport() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.txt,.csv,.xyz,.prn,text/plain,text/csv';
