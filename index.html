@@ -107,6 +107,7 @@
   #fabMe.on { background:var(--panel); color:var(--accent); }
   #fabMe[data-view=follow], #fabMe[data-view=compass] { background:var(--accent); color:var(--accentInk); }
   #fabMe[data-view=compass] { box-shadow:0 0 0 3px #c62828, var(--shadow); }
+  #fabMe[data-paused="1"] { background:var(--panel); color:var(--accent); }   /* карту сдвинули рукой — нажать, чтобы вернуть к себе */
   #fabCompass { position:absolute; left:10px; top:calc(var(--topH, 92px) + 96px); z-index:1000; width:44px; height:44px; }
   #fabCompass svg { transition:transform .15s linear; }
   #map.rot .leaflet-control-container { display:none; }
@@ -1543,7 +1544,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 61;
+const APP_BUILD = 62;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1855,27 +1856,46 @@ const GPS_VIEW_TEXT = { follow: 'Карта следует за вами', compa
 const COMPASS_SMOOTH = 0.25, COMPASS_MS = 50;       // сглаживание стрелки и не чаще 20 раз в секунду
 const angDiff = (a, b) => ((a - b + 540) % 360) - 180;
 const milText = deg => { const m = Math.round(deg / 360 * 6000) % 6000; return Math.floor(m / 100) + '-' + String(m % 100).padStart(2, '0'); };   // тысячные: 123° → 20-50
+// followPaused — карту сдвинули рукой: режим (и поворот по компасу) остаётся, но карта не тянется обратно, пока снова не нажать GPS
+let followPaused = false;
 function setGpsView(v, quiet) {
   if (v === 'compass' && compassDeg == null) { if (!quiet) toast('Компас телефона не отвечает — только слежение'); v = 'follow'; }
-  gpsView = v;
-  $('fabMe').dataset.view = v;
+  gpsView = v; followPaused = false;
+  $('fabMe').dataset.view = v; delete $('fabMe').dataset.paused;
   setBearing(v === 'compass' ? compassDeg : null);
-  if (v !== 'off' && gps && !spoof) map.setView([gps.lat, gps.lng], Math.max(map.getZoom(), 17), { animate: false });
+  if (v !== 'off' && gps) map.setView([gps.lat, gps.lng], Math.max(map.getZoom(), 17), { animate: false });
   followGps(null);
-  if (!quiet) toast(GPS_VIEW_TEXT[v]);
+  if (!quiet) toast(GPS_VIEW_TEXT[v] + (spoof && v !== 'off' ? ' — но GPS, похоже, ложный (подмена)' : ''));
 }
-// слежение выключено — своё место видно полупрозрачным
+// слежение выключено — своё место видно полупрозрачным; при подмене карта всё равно идёт за GPS — так решил пользователь
 function followGps(ll) {
   if (gpsMarker) gpsMarker.setStyle({ fillOpacity: gpsView === 'off' ? 0.45 : 1, opacity: gpsView === 'off' ? 0.6 : 1 });
-  if (ll && gpsView !== 'off' && !spoof) map.panTo(ll, { animate: false });
+  if (ll && gpsView !== 'off' && !followPaused) map.panTo(ll, { animate: false });
 }
 $('fabMe').onclick = () => {
   startGnss();
-  if (spoof) { cue('bad'); toast('GPS ложный (подмена) — карту туда не веду'); say('GPS ложный'); return; }
+  if (spoof) { cue('bad'); say('GPS может быть ложным'); }
   if (!gps) { startGps(); setGpsView('follow', true); toast('Ищу спутники — карта пойдёт за вами, как только будут координаты'); return; }
+  if (gpsView !== 'off' && followPaused) {                             // после протяжки — сначала просто вернуть карту к себе
+    followPaused = false; delete $('fabMe').dataset.paused;
+    map.setView([gps.lat, gps.lng], map.getZoom(), { animate: false }); toast('Карта снова следует за вами'); return;
+  }
   setGpsView({ off: 'follow', follow: 'compass', compass: 'off' }[gpsView]);
 };
-map.on('dragstart', () => { if (gpsView !== 'off') setGpsView('off'); });   // сдвинули карту рукой — слежение выключается
+map.on('dragstart', () => { if (gpsView !== 'off' && !followPaused) { followPaused = true; $('fabMe').dataset.paused = '1'; } });
+// протяжка по повёрнутой карте: сдвиг пальца поворачиваем в систему карты, иначе карта поедет вбок
+(() => {
+  const dr = map.dragging && map.dragging._draggable;
+  if (!dr) return;
+  const move = dr._onMove;
+  dr._onMove = function (e) {
+    if (!mapBearing || (e.touches && e.touches.length > 1)) return move.call(this, e);
+    const t = e.touches && e.touches.length === 1 ? e.touches[0] : e, s = this._startPoint, a = mapBearing * Math.PI / 180;
+    const sc = this._parentScale || { x: 1, y: 1 }, dx = t.clientX - s.x, dy = t.clientY - s.y;
+    return move.call(this, { clientX: s.x + (dx * Math.cos(a) - dy * Math.sin(a)) * sc.x, clientY: s.y + (dx * Math.sin(a) + dy * Math.cos(a)) * sc.y,
+      target: e.target, srcElement: e.srcElement, type: e.type, preventDefault: () => e.preventDefault() });
+  };
+})();
 
 // Поворот карты: Leaflet сам не вращает, поэтому поворачиваем весь контейнер карты — как лист плана на столе.
 // Чтобы при повороте не было пустых углов, контейнер на время делается квадратом со стороной в диагональ экрана
