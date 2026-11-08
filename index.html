@@ -1550,7 +1550,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 66;
+const APP_BUILD = 67;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1916,6 +1916,7 @@ function setBearing(b) {
   const el = map.getContainer(), on = el.classList.contains('rot');
   if (b == null) { mapBearing = null; if (on) rotSize(false); }
   else { if (!on) rotSize(true); mapBearing = b; el.style.transform = `rotate(${-b}deg)`; }
+  $('cross').style.transform = b == null ? '' : `rotate(${-b}deg)`;   // крестик поворачивается с картой: верхний луч — на север
   drawCompass();
 }
 addEventListener('resize', () => { if (map.getContainer().classList.contains('rot')) rotSize(true); });
@@ -3410,6 +3411,16 @@ async function trackPull() {
   finally { trackPulling = false; }
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) trackPull(); });   // вернулись в приложение — сразу дорисовать путь
+// служба могла сразу остановиться (нет разрешения, нет GPS) — тогда пишем сами, пока приложение открыто
+const TRACK_CHECK_MS = 2500;
+async function trackCheckNative(t) {
+  if (trackRec !== t || !t.native) return;
+  let r = null; try { r = await TRACK_N.points({ from: t.pts.length }); } catch (e) { /* ниже — как будто не работает */ }
+  if (r && r.running) return;
+  if (trackRec !== t) return;
+  t.native = false; clearInterval(trackPoll); setPref('trackLive', null); screenOn(true); trackFeed();
+  toast('Запись с выключенным экраном не запустилась (проверьте разрешение на местоположение) — пишу, пока приложение открыто');
+}
 async function trackStart() {
   startGps();
   const now = new Date();
@@ -3419,6 +3430,7 @@ async function trackStart() {
   if (TRACK_N) {
     try { await TRACK_N.start(); t.native = true; setPref('trackLive', t.id); trackPoll = setInterval(trackPull, TRACK_POLL_MS); }
     catch (e) { toast((e && e.message || 'Служба записи не запустилась') + ' — пишу, пока приложение открыто'); }
+    if (t.native) setTimeout(() => trackCheckNative(t), TRACK_CHECK_MS);
   }
   if (!t.native) { screenOn(true); trackFeed(); }
   saveTracks(); drawTracks();
