@@ -107,6 +107,8 @@
   #fabMe.on { background:var(--panel); color:var(--accent); }
   #fabMe[data-view=follow], #fabMe[data-view=compass] { background:var(--accent); color:var(--accentInk); }
   #fabMe[data-view=compass] { box-shadow:0 0 0 3px #c62828, var(--shadow); }
+  #fabTrack.rec { background:#c62828; color:#fff; animation:recPulse 1.6s ease-in-out infinite; }   /* идёт запись трека */
+  @keyframes recPulse { 50% { box-shadow:0 0 0 7px rgba(198,40,40,.25), var(--shadow); } }
   #fabMe[data-paused="1"] { background:var(--panel); color:var(--accent); }   /* карту сдвинули рукой — нажать, чтобы вернуть к себе */
   #fabCompass { position:absolute; left:10px; top:calc(var(--topH, 92px) + 96px); z-index:1000; width:44px; height:44px; }
   #fabCompass svg { transition:transform .15s linear; }
@@ -308,6 +310,7 @@
 
 <div id="fabs">
   <button class="fab" id="fabSearch" aria-label="Найти место"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/></svg></button>
+  <button class="fab" id="fabTrack" aria-label="Трек — пройденный путь"><svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="8" cy="7" rx="2.6" ry="3.6"/><ellipse cx="8" cy="14.3" rx="1.9" ry="1.4"/><ellipse cx="16" cy="11" rx="2.6" ry="3.6"/><ellipse cx="16" cy="18.3" rx="1.9" ry="1.4"/></svg></button>
   <button class="fab" id="fabLayers" aria-label="Слои"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5z"/><path d="m3 13 9 5 9-5"/></svg></button>
   <button class="fab" id="fabTheme" aria-label="Яркость"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></button>
   <button class="fab" id="fabUndo" aria-label="Вернуть" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
@@ -1103,6 +1106,7 @@ function gpsFeed(p) {
   if (first && !mode && !spoof) map.setView(ll, Math.max(map.getZoom(), 18));
   else followGps(ll);
   if (selected) updateToObj();
+  trackFeed();
   const acc = gps.acc;
   // RTK-приёмник даёт сантиметры — показываем их, а не округлённые метры
   const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
@@ -1546,7 +1550,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 64;
+const APP_BUILD = 65;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3345,6 +3349,96 @@ function openSearch() {
   if ($('sClear')) $('sClear').onclick = () => { foundLayer.clearLayers(); closeSheet(); };
 }
 $('fabSearch').onclick = openSearch;
+
+/* ───────────── Трек — пройденный путь (кнопка «следы» справа): чтобы в полях было видно, как доехать обратно ───────────── */
+
+// Треки хранятся отдельно от плана: не попадают в выгрузки съёмки и в «Вернуть». Пишется, пока приложение открыто
+const TRACK_KEY = 'tk.tracks', TRACK_MIN_M = 3, TRACK_MAX_ACC = 30, TRACK_KEEP = 30, TRACK_SAVE_MS = 10000, TRACK_SMOOTH = 2;
+let tracks = (() => { try { return JSON.parse(localStorage.getItem(TRACK_KEY)) || []; } catch (e) { return []; } })();
+let trackRec = null, trackSavedAt = 0, tracksShown = pref('tracksShown', true);
+const trackLayer = L.layerGroup().addTo(map);
+for (const t of tracks) if (!t.end) t.end = t.pts.length ? new Date(t.pts[t.pts.length - 1][2] * 1000).toISOString() : t.start;   // запись прервалась с закрытием приложения
+function saveTracks() {
+  try { localStorage.setItem(TRACK_KEY, JSON.stringify(tracks)); } catch (e) { toast('Память для треков переполнена — удалите старые треки'); }
+  trackSavedAt = Date.now();
+}
+function trackLen(t) { let m = 0; for (let i = 1; i < t.pts.length; i++) m += L.latLng(t.pts[i - 1][0], t.pts[i - 1][1]).distanceTo([t.pts[i][0], t.pts[i][1]]); return m; }
+const kmText = m => m < 1000 ? Math.round(m) + ' м' : mText(m / 1000, 2) + ' км';
+// новая точка трека: при подмене и плохой точности не пишем (скачки испортят путь); стоя на месте — тоже
+function trackFeed() {
+  if (!trackRec || !gps || spoof || gps.acc > TRACK_MAX_ACC) return;
+  const last = trackRec.pts[trackRec.pts.length - 1];
+  if (last && L.latLng(last[0], last[1]).distanceTo([gps.lat, gps.lng]) < Math.max(TRACK_MIN_M, gps.acc / 2)) return;
+  trackRec.pts.push([+gps.lat.toFixed(7), +gps.lng.toFixed(7), Math.round(gps.at / 1000)]);
+  if (Date.now() - trackSavedAt > TRACK_SAVE_MS) saveTracks();
+  drawTracks();
+}
+// плавная линия: сглаживание углов (Чайкин) — трек не спутать с ломаными сетей
+function chaikin(a, n) {
+  for (let k = 0; k < n && a.length > 2; k++) {
+    const b = [a[0]];
+    for (let i = 0; i < a.length - 1; i++) { const p = a[i], q = a[i + 1]; b.push([p[0] * 0.75 + q[0] * 0.25, p[1] * 0.75 + q[1] * 0.25], [p[0] * 0.25 + q[0] * 0.75, p[1] * 0.25 + q[1] * 0.75]); }
+    b.push(a[a.length - 1]); a = b;
+  }
+  return a;
+}
+// вид трека: широкая полупрозрачная оранжевая полоса с белым пунктиром посередине — ни на один знак не похоже
+function drawTracks() {
+  trackLayer.clearLayers();
+  const list = tracksShown ? tracks : trackRec ? [trackRec] : [];
+  for (const t of list) {
+    if (t.pts.length < 2) continue;
+    const ll = chaikin(t.pts.map(p => [p[0], p[1]]), TRACK_SMOOTH);
+    L.polyline(ll, { color: '#ff6d00', weight: 8, opacity: t === trackRec ? 0.5 : 0.35, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(trackLayer);
+    L.polyline(ll, { color: '#fff', weight: 1.8, opacity: 0.9, dashArray: '2 8', lineCap: 'round', interactive: false }).addTo(trackLayer);
+    L.circleMarker(ll[0], { radius: 5, color: '#ff6d00', weight: 3, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(trackLayer);   // начало пути
+  }
+}
+function setTrackBtn() { $('fabTrack').classList.toggle('rec', !!trackRec); }
+function screenOn(on) { if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); }
+function trackStart() {
+  startGps();
+  const now = new Date();
+  trackRec = { id: uid(), name: 'Трек ' + now.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }), start: now.toISOString(), pts: [] };
+  tracks = [trackRec, ...tracks].slice(0, TRACK_KEEP);
+  saveTracks(); screenOn(true); setTrackBtn(); trackFeed(); drawTracks();
+  toast('Запись трека пошла. Пишется, пока приложение открыто — экран не гаснет');
+}
+function trackStop() {
+  const t = trackRec; trackRec = null;
+  t.end = new Date().toISOString();
+  if (t.pts.length < 2) { tracks = tracks.filter(x => x !== t); toast('Трек пустой — вы почти не двигались, не сохраняю'); }
+  else toast(`Трек записан: ${kmText(trackLen(t))} за ${Math.max(1, Math.round((Date.parse(t.end) - Date.parse(t.start)) / 60000))} мин`);
+  saveTracks(); screenOn(pref('keepScreen', true)); setTrackBtn(); drawTracks();
+}
+function tracksGpx(list) {
+  const trk = t => `<trk><name>${esc(t.name)}</name><trkseg>${t.pts.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}"><time>${new Date(p[2] * 1000).toISOString()}</time></trkpt>`).join('')}</trkseg></trk>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Полевой план" xmlns="http://www.topografix.com/GPX/1/1">\n${list.map(trk).join('\n')}\n</gpx>\n`;
+}
+function openTracks() {
+  const rows = tracks.map(t => `<div class="meas-row" data-tid="${t.id}"><span style="flex:1;min-width:0"><b>${esc(t.name)}</b><br><span style="color:var(--muted)">${kmText(trackLen(t))}${t.end ? ', ' + Math.max(1, Math.round((Date.parse(t.end) - Date.parse(t.start)) / 60000)) + ' мин' : ''}</span></span>
+    <button class="btn" data-tshow="${t.id}">Показать</button><button class="x" data-tdel="${t.id}" aria-label="Удалить">🗑</button></div>`).join('');
+  showSheet(`<div class="sh-head"><b>Треки — пройденный путь</b><button class="x" data-close>×</button></div>
+    <button class="btn primary" id="tStart" style="width:100%">● Начать запись трека</button>
+    <div class="hint" style="margin:6px 0 10px">Путь пишется, пока «Полевой план» открыт: экран на время записи не гаснет. Остановить — ещё раз нажать кнопку «следы». При подмене GPS точки не пишутся.</div>
+    ${tracks.length ? `<label class="meas-row" style="cursor:pointer"><input type="checkbox" id="tShown" ${tracksShown ? 'checked' : ''}> <span style="flex:1">Показывать треки на карте</span></label>
+      <div style="max-height:40vh;overflow:auto">${rows}</div>
+      <div class="row2" style="margin-top:10px"><button class="btn" id="tGpx">Выгрузить GPX</button><button class="btn" id="tClear">Удалить все</button></div>` : '<div class="hint">Записанных треков пока нет.</div>'}`);
+  $('tStart').onclick = () => { closeSheet(); trackStart(); };
+  if (!tracks.length) return;
+  $('tShown').onchange = e => { tracksShown = e.target.checked; setPref('tracksShown', tracksShown); drawTracks(); };
+  $('tGpx').onclick = () => download('треки.gpx', tracksGpx(tracks.filter(t => t.pts.length > 1)), 'application/gpx+xml');
+  $('tClear').onclick = () => ask(`Удалить все треки (${tracks.length})? Вернуть будет нельзя.`, 'Удалить', true).then(ok => { if (!ok) return; tracks = []; saveTracks(); drawTracks(); closeSheet(); toast('Треки удалены'); });
+  $('sheetPanel').onclick = e => {
+    const sh = e.target.closest('[data-tshow]'), del = e.target.closest('[data-tdel]');
+    if (sh) { const t = tracks.find(x => x.id === sh.dataset.tshow); if (t && t.pts.length) { closeSheet(); if (!tracksShown) { tracksShown = true; setPref('tracksShown', true); drawTracks(); }
+      if (gpsView !== 'off') { followPaused = true; $('fabMe').dataset.paused = '1'; }
+      map.fitBounds(L.latLngBounds(t.pts.map(p => [p[0], p[1]])), { padding: [40, 40], maxZoom: 18 }); } }
+    if (del) { tracks = tracks.filter(x => x.id !== del.dataset.tdel); saveTracks(); drawTracks(); openTracks(); toast('Трек удалён'); }
+  };
+}
+$('fabTrack').onclick = () => { if (trackRec) trackStop(); else openTracks(); };
+drawTracks();
 function soImport() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.txt,.csv,.xyz,.prn,text/plain,text/csv';
