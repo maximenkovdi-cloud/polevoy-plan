@@ -93,6 +93,10 @@
 
   /* ── перекрестье ── */
   #cross { position:absolute; left:50%; top:50%; width:34px; height:34px; margin:-17px 0 0 -17px; z-index:900; pointer-events:none; }
+  #cross.snap path + path { stroke:#2e7d32; } #cross.snap circle { fill:#2e7d32; }   /* крестик зелёный — «+» прилипнет к точке под ним */
+  #fabPlus { position:absolute; right:12px; z-index:1001; width:66px; height:66px; border-radius:50%; border:0; background:var(--accent); color:var(--accentInk); display:none; align-items:center; justify-content:center; box-shadow:var(--shadow); }
+  #fabPlus svg { width:36px; height:36px; }
+  body.glove #fabPlus { width:78px; height:78px; }
 
   /* ── круглые кнопки справа ── */
   #fabs { position:absolute; right:10px; z-index:1000; display:flex; flex-direction:column; gap:10px; }
@@ -291,6 +295,8 @@
   <button class="fab" id="fabUndo" aria-label="Вернуть" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
   <button class="fab" id="fabMe" aria-label="Где я"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg></button>
 </div>
+
+<button id="fabPlus" aria-label="Поставить в крестик"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg></button>
 
 <div id="scale"><span id="scaleText"></span><i id="scaleBar"></i></div>
 
@@ -813,6 +819,7 @@ function layout() {
   $('mode').style.bottom = barH ? (barH + 8) + 'px' : 'calc(8px + env(safe-area-inset-bottom))';
   if (typeof layoutStake === 'function' && $('stake').style.display === 'block') layoutStake();
   $('card').style.bottom = (barH + 8) + 'px';
+  if (typeof placePlus === 'function') placePlus();
 }
 function plural(n, one, few, many) { const a = n % 10, b = n % 100; return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many; }
 function toast(msg) {
@@ -1517,7 +1524,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 59;
+const APP_BUILD = 60;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3803,7 +3810,7 @@ const PICK_TEXT = {
 };
 function pickStart(kind) {
   pickTool = { kind, step: 0 }; pickLayer.clearLayers();
-  $('mode').style.display = 'none'; pickPanel(); cue('tick');
+  $('mode').style.display = 'none'; placePlus(); updateRubber(); pickPanel(); cue('tick');
 }
 function pickPanel(html) {
   const box = $('pick');
@@ -3910,7 +3917,7 @@ function setMode(m) {
   syncVolKeys();                                                      // громкость «−» — По GPS, «+» — Измерить
   setBarState();
   const box = $('mode');
-  if (!mode) { box.style.display = 'none'; return; }
+  if (!mode) { box.style.display = 'none'; placePlus(); return; }
   if (selected) hideCard();
   box.style.display = 'block';
   const isPt = mode.kind === 'point', spec = isPt ? POINTS[mode.type] : LINES[mode.type];
@@ -3919,8 +3926,8 @@ function setMode(m) {
   const snapBtn = ['snap', snapOn ? 'Привязка: вкл' : 'Привязка: выкл', snapOn ? 'on' : ''];
   const noGps = !!spoof || gpsNoSat(), gpsBtns = [['gps', noGps ? 'GPS ✕' : 'По GPS', noGps ? 'off' : ''], ['measure', noGps ? 'Измерить ✕' : 'Измерить', noGps ? 'off' : '']];
   const btns = isPt
-    ? [['center', 'В перекрестье'], ...gpsBtns, ['photo', '📷 Фото'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']]
-    : [['center', 'В перекрестье'], ...gpsBtns, ['undo', '↶ Убрать'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']];
+    ? [...gpsBtns, ['photo', '📷 Фото'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']]
+    : [...gpsBtns, ['undo', '↶ Убрать'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']];   // «В перекрестье» — теперь круглая кнопка «+» справа
   mode.more = [['resect', '📐 Засечка: два промера рулеткой от известных точек'], ['axisline', '⟂ Створ: от А в сторону Б и вправо/влево'], ['tape', '📏 Рулетка: расстояние между точками'], ['offset', '↗ Смещение: расстояние и угол от последней точки'], snapBtn];
   if (pickTool) box.style.display = 'none';                           // идёт выбор точек инструмента — панель инструмента вместо панели съёмки
   // «Знак…» — выбрать условный знак заранее; без него ставится простая точка или линия, знак выбирается потом в карточке
@@ -3930,7 +3937,15 @@ function setMode(m) {
     return `<button data-quick="${id}" class="${id === mode.type ? 'on' : ''}">${isPt ? symbolSvg(sp.svg, 20, netColor(id, sp.color)) : linePreview(sp, 28, 20)}<span>${esc(sp.name)}</span></button>`; }).join('');
   $('modeQuick').style.display = recent.length ? 'flex' : 'none';
   $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}">${t}</button>`).join('');
+  placePlus();
 }
+// Кнопка «+», как в «Тактической карте»: двигаешь карту под крестик и ставишь знак или вершину линии туда, где крестик
+function placePlus() {
+  const b = $('fabPlus'), box = $('mode'), on = !!mode && !pickTool && box.style.display === 'block';
+  b.style.display = on ? 'flex' : 'none';
+  if (on) b.style.bottom = (parseFloat(box.style.bottom) || 8) + box.offsetHeight + 12 + 'px';
+}
+$('fabPlus').onclick = () => { if (mode && !pickTool) { cue('tick'); addAt(map.getCenter(), null, 'center'); } };
 // кнопки громкости в режиме съёмки (Android): «−» — точка по GPS, «+» — измерение с усреднением
 // в окне измерения: «+» — Начать / Стоп — принять / Принять, «−» — Отмена / Повторить; в вопросе: «+» — да, «−» — нет
 addEventListener('volumeKey', e => {
@@ -4105,10 +4120,16 @@ function refreshTemp() {
 }
 // «Резинка»: еле видный пунктир от последней вершины до перекрестья и расстояние по нему — видно, сколько метров до следующей точки
 const rubber = L.layerGroup().addTo(map);
-function updateRubber() {
+// Пока карту двигают — подсказка, к какой точке или вершине прилипнет «+» (кольцо, крестик зелёный); пунктир идёт уже к ней
+let rubberFrame = 0;
+function updateRubber() { if (!rubberFrame) rubberFrame = setTimeout(() => { rubberFrame = 0; drawRubber(); }, 30); }   // не чаще ~30 раз в секунду: поиск привязки перебирает все точки
+function drawRubber() {
   rubber.clearLayers();
+  const snap = mode && snapOn && !pickTool ? snapTarget(map.getCenter()) : null;
+  $('cross').classList.toggle('snap', !!snap);
+  if (snap) L.circleMarker(snap.ll, { radius: 14, color: '#2e7d32', weight: 3, fill: false, interactive: false }).addTo(rubber);
   if (!mode || mode.kind !== 'line' || !mode.latlngs.length) return;
-  const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = map.getCenter(), d = a.distanceTo(b);
+  const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = snap ? snap.ll : map.getCenter(), d = a.distanceTo(b);
   if (d < 0.01) return;
   L.polyline([a, b], { color: '#1e88e5', weight: 1.5, opacity: 0.55, dashArray: '3 5', interactive: false }).addTo(rubber);
   const pa = map.latLngToContainerPoint(a), pb = map.latLngToContainerPoint(b);
