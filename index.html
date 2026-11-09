@@ -40,7 +40,11 @@
   #coords { flex:1 1 130px; min-width:0; cursor:pointer; }
   #coords .xy .nw { white-space:nowrap; }
   #coords .xy { margin:0; font-size:14px; line-height:1.25; white-space:normal; }
-  #top > #updLine { flex-basis:100%; }
+  #top > #updLine, #top > #recLine { flex-basis:100%; }
+  /* идёт запись трека — красная полоса вверху: видно в любой теме и на солнце */
+  #recLine { display:flex; align-items:center; gap:8px; margin-top:6px; padding:6px 10px; border-radius:10px; background:#c62828; color:#fff; font-size:13px; font-weight:800; cursor:pointer; }
+  #recLine .dot { width:10px; height:10px; border-radius:50%; background:#fff; flex:none; animation:recBlink 1.2s steps(2) infinite; }
+  @keyframes recBlink { 50% { opacity:.25; } }
   .seg { display:flex; background:var(--line); border-radius:9px; padding:2px; }
   body.sun .seg { background:#fff; border:2px solid #000; }
   .seg button { border:0; background:none; padding:7px 12px; min-height:36px; border-radius:7px; color:var(--muted); font-size:14px; }
@@ -93,9 +97,14 @@
 
   /* ── перекрестье ── */
   #cross { position:absolute; left:50%; top:50%; width:34px; height:34px; margin:-17px 0 0 -17px; z-index:900; pointer-events:none; }
-  #cross.snap path + path { stroke:#2e7d32; } #cross.snap circle { fill:#2e7d32; }   /* крестик зелёный — «+» прилипнет к точке под ним */
+  /* служебная графика — графитом, не красным: красный занят знаками (трасса демонтажа и др.) */
+  #cross path + path { stroke:var(--svc); } #cross circle { fill:var(--svc); }
+  #cross.snap path + path { stroke:#00c853; } #cross.snap circle { fill:#00c853; }   /* ярко-зелёный — «+» прилипнет к точке под ним (не путать с сеткой) */
+  body { --svc:#263238; --svcPath:#5e35b1; } body.night { --svc:#eceff1; --svcPath:#b39ddb; } body.sun { --svc:#000; --svcPath:#4a148c; }
   #fabPlus { position:absolute; right:12px; z-index:1001; width:66px; height:66px; border-radius:50%; border:0; background:var(--accent); color:var(--accentInk); display:none; align-items:center; justify-content:center; box-shadow:var(--shadow); }
   #fabPlus svg { width:36px; height:36px; }
+  #fabPlus .sym { position:absolute; right:-4px; top:-4px; width:28px; height:28px; border-radius:50%; background:var(--panel); box-shadow:var(--shadow); display:flex; align-items:center; justify-content:center; }
+  #fabPlus .sym svg { width:20px; height:20px; }
   body.glove #fabPlus { width:78px; height:78px; }
 
   /* ── круглые кнопки справа ── */
@@ -103,25 +112,41 @@
   .fab { width:50px; height:50px; border-radius:50%; border:0; background:var(--panel); color:var(--ink); display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow); }
   .fab svg { width:26px; height:26px; }
   .fab.on { background:var(--accent); color:var(--accentInk); }
-  /* кнопка GPS: синий значок — GPS работает; залита — карта следует; с красным кольцом — ещё и вращается по компасу */
+  /* Кнопка GPS — четыре состояния, различимые и на солнце (по форме, не по оттенку):
+     выкл. — значок серый; GPS есть, не следит — синий значок; следит — синяя заливка; компас — заливка + толстое кольцо;
+     пауза (карту сдвинули) — пунктирное кольцо и подпись «вернуть» */
+  #fabMe { position:relative; color:var(--muted); }
   #fabMe.on { background:var(--panel); color:var(--accent); }
   #fabMe[data-view=follow], #fabMe[data-view=compass] { background:var(--accent); color:var(--accentInk); }
-  #fabMe[data-view=compass] { box-shadow:0 0 0 3px #c62828, var(--shadow); }
+  #fabMe[data-view=compass] { box-shadow:0 0 0 4px var(--panel), 0 0 0 7px var(--accent), var(--shadow); }
+  #fabMe[data-paused="1"] { background:var(--panel); color:var(--accent); outline:3px dashed var(--accent); outline-offset:2px; }
+  #fabMe[data-paused="1"]::after { content:'вернуть'; position:absolute; left:50%; bottom:-15px; transform:translateX(-50%); font:800 10px/1 system-ui, sans-serif; color:#fff; background:var(--accent); padding:2px 5px; border-radius:7px; white-space:nowrap; }
+  #fabTrack { position:relative; }
   #fabTrack.rec { background:#c62828; color:#fff; animation:recPulse 1.6s ease-in-out infinite; }   /* идёт запись трека */
+  #fabTrack.rec::after { content:''; position:absolute; right:3px; top:3px; width:11px; height:11px; border-radius:50%; background:#fff; box-shadow:0 0 0 2px #c62828; }   /* «●» — видно и без пульсации */
   @keyframes recPulse { 50% { box-shadow:0 0 0 7px rgba(198,40,40,.25), var(--shadow); } }
-  #fabMe[data-paused="1"] { background:var(--panel); color:var(--accent); }   /* карту сдвинули рукой — нажать, чтобы вернуть к себе */
-  #fabCompass { position:absolute; left:10px; top:calc(var(--topH, 92px) + 96px); z-index:1000; width:44px; height:44px; }
+  #fabCompass { position:absolute; left:10px; top:calc(var(--topH, 92px) + 96px); z-index:1000; width:52px; height:52px; }
+  body.glove #fabCompass { width:62px; height:62px; top:calc(var(--topH, 92px) + 112px); }
   #fabCompass svg { transition:transform .15s linear; }
+  #fabUndo { position:absolute; left:10px; top:calc(var(--topH, 92px) + 160px); z-index:1000; }   /* «Вернуть» — слева, под компасом: правый столбец короче */
+  body.glove #fabUndo { top:calc(var(--topH, 92px) + 186px); }
+  /* низкий экран (телефон боком): «Вернуть» — рядом с компасом, а не под ним, чтобы не наезжать на масштаб внизу */
+  @media (max-height:520px) { #fabUndo, body.glove #fabUndo { top:calc(var(--topH, 92px) + 96px); left:72px; } body.glove #fabUndo { left:84px; } }
+  /* ночью светлый крестик — с тёмным ободком (белый ободок сливается со светлым крестиком) */
+  body.night #cross path:first-child { stroke:#000; stroke-opacity:.75; }
   #map.rot .leaflet-control-container { display:none; }
-  /* круг-компас вокруг крестика */
-  #ring { position:absolute; left:50%; top:50%; width:min(86vw, 70vh); height:min(86vw, 70vh); transform:translate(-50%, -50%); z-index:899; pointer-events:none; display:none; overflow:visible;
+  /* круг-компас вокруг крестика: поменьше и полупрозрачный, чтобы не закрывать подписи знаков */
+  #ring { position:absolute; left:50%; top:50%; width:min(64vw, 48vh); height:min(64vw, 48vh); transform:translate(-50%, -50%); z-index:899; pointer-events:none; display:none; overflow:visible; opacity:.8;
     filter:drop-shadow(0 0 1px var(--panel)) drop-shadow(0 0 1px var(--panel)); }
-  .rg-c { fill:none; stroke:var(--ink); stroke-width:1.2; opacity:.75; }
-  .rg-t { stroke:var(--ink); stroke-width:.7; } .rg-t.big { stroke-width:1.5; }
-  .rg-l, .rg-a { font:600 9px var(--draft, sans-serif); fill:var(--ink); text-anchor:middle; dominant-baseline:central; paint-order:stroke; stroke:var(--panel); stroke-width:2.5px; }
-  .rg-l.cd { font-size:12px; font-weight:800; } .rg-l.n { fill:#c62828; }
-  .rg-h { stroke:#c62828; stroke-width:1.6; stroke-dasharray:4 3; }
-  .rg-a { font-size:11px; font-weight:800; fill:#c62828; }
+  .rg-c { fill:none; stroke:var(--svc); stroke-width:.9; opacity:.6; }
+  .rg-t { stroke:var(--svc); stroke-width:.6; opacity:.8; } .rg-t.big { stroke-width:1.3; }
+  .rg-l, .rg-a { font:600 9px var(--draft, sans-serif); fill:var(--svc); text-anchor:middle; dominant-baseline:central; paint-order:stroke; stroke:var(--panel); stroke-width:2.5px; }
+  .rg-l.cd { font-size:12px; font-weight:800; } .rg-l.n { fill:#c62828; } body.night .rg-l.n { fill:#ff8a80; }
+  .rg-h { stroke:var(--svc); stroke-width:1.6; stroke-dasharray:5 3; }
+  .rg-a { font-size:11px; font-weight:800; }
+  .found-lbl { position:absolute; left:32px; top:7px; white-space:nowrap; font:700 13px/1 var(--draft); color:#e65100; paint-order:stroke;
+    text-shadow:0 0 2px var(--panel), 0 0 2px var(--panel), 0 0 3px var(--panel), 0 0 3px var(--panel); }
+  body.night .found-lbl { color:#ffab40; }
 
   /* ── масштаб ── */
   #scale { position:absolute; left:10px; z-index:1000; background:var(--panel); color:var(--ink); border-radius:10px; padding:7px 11px 7px; font-size:13px; font-weight:700; box-shadow:var(--shadow); cursor:pointer; }
@@ -302,6 +327,7 @@
   <div id="coords"></div>
   <div id="gpsRow"><div id="gpsLine" data-st="off" role="button"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS выкл.</span></div><button id="antChip" aria-label="Высота вехи"></button></div>
   <div id="spoofLine" style="display:none"><span id="spoofText"></span><button class="btn" id="spoofMore">Что делать</button></div>
+  <div id="recLine" style="display:none" role="button"><span class="dot"></span><span id="recText"></span></div>
   <div id="updLine" style="display:none"><span>⬆ Доступна новая версия <b id="updVer"></b></span><button class="btn primary" id="updBtn">Обновить</button></div>
   <div id="satLine" style="display:none"><span class="sat-ic">🛰</span><span id="satText"></span><span class="more">▾</span></div>
 </div>
@@ -312,12 +338,13 @@
   <button class="fab" id="fabSearch" aria-label="Найти место"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/></svg></button>
   <button class="fab" id="fabTrack" aria-label="Трек — пройденный путь"><svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="8" cy="7" rx="2.6" ry="3.6"/><ellipse cx="8" cy="14.3" rx="1.9" ry="1.4"/><ellipse cx="16" cy="11" rx="2.6" ry="3.6"/><ellipse cx="16" cy="18.3" rx="1.9" ry="1.4"/></svg></button>
   <button class="fab" id="fabLayers" aria-label="Слои"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5z"/><path d="m3 13 9 5 9-5"/></svg></button>
-  <button class="fab" id="fabTheme" aria-label="Яркость"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></button>
-  <button class="fab" id="fabUndo" aria-label="Вернуть" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+  <!-- тема (день / солнце / ночь) — теперь в «Слоях»: столбец короче; кнопка оставлена скрытой, её обработчик зовут из «Слоёв» -->
+  <button class="fab" id="fabTheme" aria-label="Яркость" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></button>
   <button class="fab" id="fabMe" aria-label="Где я"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg></button>
 </div>
 
 <svg id="ring" viewBox="-100 -100 200 200"></svg>
+<button class="fab" id="fabUndo" aria-label="Вернуть" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
 <button class="fab" id="fabCompass" aria-label="Круг-компас"><svg viewBox="0 0 24 24"><path d="M12 2.5 16.2 12H7.8z" fill="#c62828"/><path d="M12 21.5 7.8 12h8.4z" fill="currentColor" opacity=".5"/><circle cx="12" cy="12" r="1.5" fill="var(--panel)"/></svg></button>
 <button id="fabPlus" aria-label="Поставить в крестик"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg></button>
 
@@ -830,7 +857,7 @@ function applyTheme() {
 applyTheme();
 $('fabTheme').onclick = () => {
   theme = { day: 'sun', sun: 'night', night: 'day' }[theme] || 'day';
-  setPref('theme', theme); applyTheme(); toast(THEMES[theme]);
+  setPref('theme', theme); applyTheme(); drawTracks(); toast(THEMES[theme]);   // трек ночью — светлее
 };
 // раскладка: кнопки, масштаб, панели — относительно реальной высоты верхней плашки и нижней панели
 function layout() {
@@ -851,7 +878,7 @@ function toast(msg) {
   t.style.top = 'auto';
   t.style.bottom = (above ? above + ($('sheet').style.display === 'block' ? 0 : $('bar').offsetHeight + 8) + 10 : $('bar').offsetHeight + 56) + 'px';
   t.textContent = String(msg).replace(/(\d) (см|мм|м|с|км)(?![а-яё])/g, '$1\u00a0$2').replace(/± /g, '±');
-  t.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = 'none', 3200);
+  t.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = 'none', document.body.classList.contains('glove') ? 5000 : 3200);   // в перчатках — дольше
 }
 
 /* ───────────── Карта ───────────── */
@@ -1550,7 +1577,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 69;
+const APP_BUILD = 70;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2005,7 +2032,7 @@ function drawCompass() {
     s += `<text x="${x}" y="${y}" class="rg-l${t ? ' cd' : ''}${d === 0 ? ' n' : ''}">${t || d}</text>`; }
   if (compassDeg != null) { const [x, y] = pt(compassDeg, 92), [x0, y0] = pt(compassDeg, 8);
     const dir = (compassDeg - gammaAt(map.getCenter()) + 360) % 360;    // компас даёт истинный азимут; геодезисту нужен дирекционный угол
-    s += `<line x1="${x0}" y1="${y0}" x2="${x}" y2="${y}" class="rg-h"/><text x="0" y="36" class="rg-a">дир. ${degMin(dir)} (${milText(dir)})</text><text x="0" y="50" class="rg-a" style="font-size:9px">ист. ${degMin(compassDeg)}</text>`; }
+    s += `<line x1="${x0}" y1="${y0}" x2="${x}" y2="${y}" class="rg-h"/><text x="0" y="106" class="rg-a">дир. ${degMin(dir)} (${milText(dir)})</text><text x="0" y="119" class="rg-a" style="font-size:9px">ист. ${degMin(compassDeg)}</text>`; }   // подписи — под кругом, не у крестика (там работают)
   ring.innerHTML = s;
 }
 $('fabCompass').onclick = () => { ringOn = !ringOn; setPref('ring', ringOn); drawCompass(); toast(ringOn ? 'Круг-компас включён' + (compassDeg == null ? ' (компас телефона не отвечает — только стороны света)' : '') : 'Круг-компас выключен'); };
@@ -2780,13 +2807,13 @@ function showCard(kind, obj) {
       if (parts.length) kv.push(['Сеть', parts.join(' · ')]); }
     if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${obj.pk0}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
   }
-  kv.splice(obj.no ? 1 : 0, 0, ['От меня', `<span id="fromMe">${gps ? '' : 'нет GPS'}</span>`]);   // расстояние и азимут — сразу видно, далеко ли
+  kv.splice(obj.no ? 1 : 0, 0, ['От меня', '<span id="fromMe"></span>']);   // расстояние и азимут — сразу видно, далеко ли
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x trash-h" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <details class="sw-wrap"><summary>Цвет: ${esc((COLORS.find(c => c[0] === (obj.color || '')) || COLORS[0])[1])} ▾</summary><div class="swatches">${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div></details>
-    <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts" style="grid-column:span 2">Вершины</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button><button class="btn" data-act="go" style="grid-column:1/-1">➤ Куда ехать — отправить координаты</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
+    <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts" style="grid-column:span 2">Вершины</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button><button class="btn" data-act="go" style="grid-column:1/-1">➤ Отправить координаты (куда ехать)</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -2802,6 +2829,7 @@ function showCard(kind, obj) {
     if (act === 'edit') { kind === 'point' ? editPoint(obj) : editLine(obj); }
     if (act === 'copy') copyCoords(kind, obj);
     if (act === 'go') shareGo(kind, obj);
+    if (act === 'gpson') { startGps(); toast('Ищу спутники — расстояние появится само'); }
     if (act === 'verts') showVertices(obj);
     if (act === 'stake') startStake(kind === 'point' ? [obj.lat, obj.lng] : obj.latlngs[0], kind === 'point' ? (pointLabel(obj) || (POINTS[obj.type] || POINTS.mark).name) : 'L' + (obj.no || '') + '.1');
     if (act === 'photo') addPhoto(kind, obj);
@@ -2814,7 +2842,7 @@ function showCard(kind, obj) {
     if (act === 'ai') { if (obj.ai) showSuggestion(kind, obj, obj.ai); else suggestSign(kind, obj); }
     if (act === 'del') {                                              // без лишнего вопроса — случайное удаление отменяет «Вернуть»
       if (kind === 'point') data.points = data.points.filter(x => x !== obj); else data.lines = data.lines.filter(x => x !== obj);
-      save(); hideCard(); toast((kind === 'point' ? 'Удалено' : 'Линия удалена') + ' — кнопка ↶ справа вернёт');
+      save(); hideCard(); toast((kind === 'point' ? 'Удалено' : 'Линия удалена') + ' — кнопка ↶ слева вернёт');
     }
   };
   if (kind === 'point' && ll) map.panInside(ll, { paddingBottomRight: [0, card.offsetHeight + 90], paddingTopLeft: [0, $('top').offsetHeight + 20] });
@@ -2825,7 +2853,7 @@ function showCard(kind, obj) {
 /* ───────────── От меня до объекта: расстояние, азимут и полупрозрачные стрелки на карте; «Куда ехать» ───────────── */
 
 const toObjLayer = L.layerGroup().addTo(map);
-const TO_ARROW_PX = 70, TO_ARROW_MAX = 12;           // стрелки через ~70 px, не больше 12
+const TO_ARROW_PX = 70;                              // одна стрелка — в 70 px от меня по пути к объекту
 // цель: точка — сама точка; линия — её ближайшая ко мне вершина
 function objTarget(kind, obj) {
   if (kind === 'point') return L.latLng(obj.lat, obj.lng);
@@ -2859,18 +2887,18 @@ const distText = d => d < 1000 ? mText(d, 2) + ' м' : mText(d / 1000, 3) + ' к
 function updateToObj() {
   toObjLayer.clearLayers();
   const el = $('fromMe');
-  if (!selected || !gps) { if (el) el.textContent = 'нет GPS'; return; }
+  if (!selected || !gps) { if (el) el.innerHTML = 'нет GPS <button class="btn" data-act="gpson" style="min-height:30px;padding:2px 10px;margin-left:6px">включить</button>'; return; }
   const me = L.latLng(gps.lat, gps.lng), t = objTarget(selected.kind, selected.obj), pl = planeInverse(me, t), d = pl.d, az = azimuth(me, t);
   if (el) el.textContent = distText(d) + ` · дир. угол ${degMin(pl.dir)} (${milText(pl.dir)}) · азимут ист. ${degMin(az)}` + (spoof ? ' · GPS под подозрением' : '');
   if (d < 0.05) return;
-  L.polyline([me, t], { color: '#1e88e5', weight: 3, opacity: 0.4, dashArray: '8 8', interactive: false }).addTo(toObjLayer);
-  const pa = map.latLngToContainerPoint(me), pb = map.latLngToContainerPoint(t), ang = Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180 / Math.PI;
-  const n = Math.min(TO_ARROW_MAX, Math.floor(pa.distanceTo(pb) / TO_ARROW_PX));
-  for (let i = 1; i <= n; i++) {
-    const p = pa.add(pb.subtract(pa).multiplyBy(i / (n + 1)));
-    L.marker(map.containerPointToLatLng(p), { interactive: false, keyboard: false, icon: L.divIcon({ className: 'to-arrow', iconSize: [20, 20], iconAnchor: [10, 10],
-      html: `<svg viewBox="0 0 20 20" width="20" height="20" style="transform:rotate(${ang}deg);opacity:.6"><path d="M6 4l7 6-7 6" fill="none" stroke="#1e88e5" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>` }) }).addTo(toObjLayer);
-  }
+  // тонкий фиолетовый пунктир и одна стрелка рядом со мной: синий занят GPS и водопроводом, много стрелок — шум (замечание картографа)
+  const col = getComputedStyle(document.body).getPropertyValue('--svcPath').trim() || '#5e35b1';
+  L.polyline([me, t], { color: col, weight: 2, opacity: 0.6, dashArray: '8 8', interactive: false }).addTo(toObjLayer);
+  const pa = map.latLngToContainerPoint(me), pb = map.latLngToContainerPoint(t), len = pa.distanceTo(pb), ang = Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180 / Math.PI;
+  if (len < TO_ARROW_PX) return;
+  const p = pa.add(pb.subtract(pa).multiplyBy(Math.min(0.5, TO_ARROW_PX / len)));
+  L.marker(map.containerPointToLatLng(p), { interactive: false, keyboard: false, icon: L.divIcon({ className: 'to-arrow', iconSize: [22, 22], iconAnchor: [11, 11],
+    html: `<svg viewBox="0 0 22 22" width="22" height="22" style="transform:rotate(${ang}deg)"><path d="M7 4l8 7-8 7" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 4l8 7-8 7" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>` }) }).addTo(toObjLayer);
 }
 map.on('zoomend', () => { if (selected) updateToObj(); });
 async function shareGo(kind, obj) {
@@ -3437,7 +3465,7 @@ function showFound(ll, label) {
   foundLayer.clearLayers();
   L.marker(ll, { interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15],
     html: `<svg width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="11" fill="none" stroke="#fff" stroke-width="5"/><circle cx="15" cy="15" r="11" fill="none" stroke="#e65100" stroke-width="2.5"/><circle cx="15" cy="15" r="2.5" fill="#e65100"/></svg>` +
-      `<span style="position:absolute;left:32px;top:6px;white-space:nowrap;font:700 13px/1 var(--draft);color:#e65100;background:var(--panel);padding:2px 5px;border-radius:6px">${esc(label)}</span>` }) }).addTo(foundLayer);
+      `<span class="found-lbl">${esc(label)}</span>` }) }).addTo(foundLayer);   // подпись без плашки — только ореол, не закрывает знаки рядом
   if (gpsView !== 'off') { followPaused = true; $('fabMe').dataset.paused = '1'; }   // слежение не утащит карту обратно
   map.setView(ll, Math.max(map.getZoom(), 18), { animate: false });
 }
@@ -3565,12 +3593,16 @@ function chaikin(a, n) {
   return a;
 }
 // вид трека: широкая полупрозрачная оранжевая полоса с белым пунктиром посередине — ни на один знак не похоже
+// Трек — сплошная полупрозрачная фиолетовая полоса: фиолетового нет ни в знаках, ни в другой служебной графике (оранжевый — вынос в натуру),
+// пунктир не нужен (его можно спутать с осью дороги или ограждением). Лежит под знаками и сетями (своя панель ниже линий)
+const TRACK_COLOR = '#7b1fa2';
+map.createPane('trackPane').style.zIndex = 380;
 function drawTrack(t, layer) {
   if (t.pts.length < 2) return;
-  const ll = chaikin(t.pts.map(p => [p[0], p[1]]), TRACK_SMOOTH);
-  L.polyline(ll, { color: '#ff6d00', weight: 8, opacity: t === trackRec ? 0.5 : 0.35, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(layer);
-  L.polyline(ll, { color: '#fff', weight: 1.8, opacity: 0.9, dashArray: '2 8', lineCap: 'round', interactive: false }).addTo(layer);
-  L.circleMarker(ll[0], { radius: 5, color: '#ff6d00', weight: 3, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(layer);   // начало пути
+  const ll = chaikin(t.pts.map(p => [p[0], p[1]]), TRACK_SMOOTH), pane = 'trackPane';
+  const night = document.body.classList.contains('night');             // на тёмной подложке — светлее и плотнее
+  L.polyline(ll, { pane, color: night ? '#ce93d8' : TRACK_COLOR, weight: 6, opacity: (t === trackRec ? 0.5 : 0.35) + (night ? 0.15 : 0), lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(layer);
+  L.circleMarker(ll[0], { pane, radius: 5, color: TRACK_COLOR, weight: 3, fillColor: '#fff', fillOpacity: 1, opacity: 0.8, interactive: false }).addTo(layer);   // начало пути
 }
 function drawLive() { trackLiveLayer.clearLayers(); if (trackRec) drawTrack(trackRec, trackLiveLayer); }
 function drawTracks() {
@@ -3578,7 +3610,22 @@ function drawTracks() {
   if (tracksShown) for (const t of tracks) if (t !== trackRec) drawTrack(t, trackLayer);
   drawLive();
 }
-function setTrackBtn() { $('fabTrack').classList.toggle('rec', !!trackRec); }
+// красная полоса «● ЗАПИСЬ 12:40 · 2,3 км» вверху, пока пишется трек; нажатие — остановить (с вопросом)
+const REC_LINE_MS = 10000;
+let recLineTimer = 0;
+function recLineUpdate() {
+  const t = trackRec, on = !!t;
+  if ($('recLine').style.display !== (on ? 'flex' : 'none')) { $('recLine').style.display = on ? 'flex' : 'none'; layout(); }
+  if (!on) return;
+  const min = Math.max(0, Math.round((Date.now() - Date.parse(t.start)) / 60000));
+  $('recText').textContent = `ЗАПИСЬ ТРЕКА · с ${new Date(Date.parse(t.start)).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · ${kmText(trackLen(t))} · ${min} мин${t.native ? ' · пишется и при выключенном экране' : ''}`;
+}
+function setTrackBtn() {
+  $('fabTrack').classList.toggle('rec', !!trackRec);
+  clearInterval(recLineTimer); if (trackRec) recLineTimer = setInterval(recLineUpdate, REC_LINE_MS);
+  recLineUpdate();
+}
+$('recLine').onclick = () => $('fabTrack').onclick();
 function screenOn(on) { if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).catch(() => {}); }
 // В Android-приложении трек пишет служба телефона (TrackPlugin) — и с выключенным экраном; страница раз в 5 с забирает новые точки
 const TRACK_N = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Track) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Track')));
@@ -3637,7 +3684,7 @@ async function trackStartInner() {
     if (t.native) setTimeout(() => trackCheckNative(t), TRACK_CHECK_MS);
   }
   if (!t.native) { screenOn(true); trackFeed(); }
-  saveTracks(); drawTracks();
+  saveTracks(); drawTracks(); recLineUpdate();
   toast(t.native ? 'Запись трека пошла — пишется и с выключенным экраном (уведомление в шторке)' : 'Запись трека пошла. Пишется, пока приложение открыто — экран не гаснет');
 }
 async function trackStop() {
@@ -3666,7 +3713,7 @@ function openTracks() {
     <button class="btn" data-tshow="${t.id}">Показать</button><button class="x" data-tdel="${t.id}" aria-label="Удалить">🗑</button></div>`).join('');
   showSheet(`<div class="sh-head"><b>Треки — пройденный путь</b><button class="x" data-close>×</button></div>
     <button class="btn primary" id="tStart" style="width:100%">● Начать запись трека</button>
-    <div class="hint" style="margin:6px 0 10px">${TRACK_N ? 'Путь пишется и с выключенным экраном, и когда приложение свёрнуто — в шторке будет уведомление «Идёт запись трека». Если телефон спросит про уведомления — разрешите.' : 'Путь пишется, пока «Полевой план» открыт: экран на время записи не гаснет.'} Остановить — ещё раз нажать кнопку «следы».</div>
+    <div class="hint" style="margin:6px 0 10px">${TRACK_N ? 'Путь пишется и с выключенным экраном, и когда приложение свёрнуто — в шторке будет уведомление «Идёт запись трека». Если телефон спросит про уведомления — разрешите.' : 'Путь пишется, пока «Полевой план» открыт: экран на время записи не гаснет.'} Остановить — красная кнопка с отпечатками ног справа или красная полоса «ЗАПИСЬ ТРЕКА» вверху.</div>
     ${tracks.length ? `<label class="meas-row" style="cursor:pointer"><input type="checkbox" id="tShown" ${tracksShown ? 'checked' : ''}> <span style="flex:1">Показывать треки на карте</span></label>
       <div style="max-height:40vh;overflow:auto">${rows}</div>
       <div class="row2" style="margin-top:10px"><button class="btn" id="tGpx">Выгрузить GPX</button><button class="btn" id="tClear">Удалить все</button></div>` : '<div class="hint">Записанных треков пока нет.</div>'}`);
@@ -4557,6 +4604,13 @@ function placePlus() {
   const b = $('fabPlus'), box = $('mode'), on = !!mode && !pickTool && box.style.display === 'block';
   b.style.display = on ? 'flex' : 'none';
   if (!on) return;
+  // в уголке «+» — значок знака, который сейчас поставится (замечание дизайнера: «на плюсе не видно, что поставится»)
+  const isPt = mode.kind === 'point', spec = isPt ? POINTS[mode.type] : LINES[mode.type], key = mode.kind + ':' + mode.type + ':' + netColors;   // цвет значка зависит и от «Цветов сетей»
+  if (spec && b.dataset.sym !== key) {
+    b.dataset.sym = key;
+    const old = b.querySelector('.sym'); if (old) old.remove();
+    b.insertAdjacentHTML('beforeend', `<span class="sym" title="${esc(spec.name)}">${isPt ? symbolSvg(spec.svg, 20, netColor(mode.type, spec.color)) : linePreview(spec, 22, 20)}</span>`);
+  }
   b.style.right = '12px';
   b.style.bottom = (parseFloat(box.style.bottom) || 8) + box.offsetHeight + 12 + 'px';
   const fabs = $('fabs').getBoundingClientRect(), me = b.getBoundingClientRect();   // наезжает на столбик кнопок справа — встать левее него
@@ -4637,7 +4691,7 @@ let rainHintAt = 0;
 map.on('click', e => {
   if (!mode) return;
   if (pickTool) { pickTap(e.latlng); return; }                          // выбор точки для засечки / створа / рулетки
-  if (rainOn) { if (Date.now() - rainHintAt > 4000) { rainHintAt = Date.now(); toast('Режим «дождь»: касание карты точку не ставит — «В перекрестье», «По GPS» или «Измерить»'); } return; }
+  if (rainOn) { if (Date.now() - rainHintAt > 4000) { rainHintAt = Date.now(); toast('Режим «дождь»: касание карты точку не ставит — ставьте кнопкой «+» (в крестик), «По GPS» или «Измерить»'); } return; }
   addAt(e.latlng);
 });
 
@@ -4744,7 +4798,10 @@ function drawRubber() {
   rubber.clearLayers();
   const snap = mode && snapOn && !pickTool ? snapTarget(map.getCenter()) : null;
   $('cross').classList.toggle('snap', !!snap);
-  if (snap) L.circleMarker(snap.ll, { radius: 14, color: '#2e7d32', weight: 3, fill: false, interactive: false }).addTo(rubber);
+  if (snap) {                                                         // ярко-зелёное кольцо с белым ободком — не сливается с зелёной сеткой и растительностью
+    L.circleMarker(snap.ll, { radius: 14, color: '#fff', weight: 6, fill: false, interactive: false }).addTo(rubber);
+    L.circleMarker(snap.ll, { radius: 14, color: '#00c853', weight: 3, fill: false, interactive: false }).addTo(rubber);
+  }
   if (!mode || mode.kind !== 'line' || !mode.latlngs.length) return;
   const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = snap ? snap.ll : map.getCenter(), d = a.distanceTo(b);
   if (d < 0.01) return;
@@ -4834,7 +4891,7 @@ function openPicker(kind, onPick, note) {
     const id = t.dataset.pick;
     remember(kind, id); closeSheet();
     if (onPick) { onPick(id); return; }
-    if (kind === 'point') { setMode({ kind: 'point', type: id }); toast('Нажмите на карту или «В перекрестье»'); }
+    if (kind === 'point') { setMode({ kind: 'point', type: id }); toast('Наведите крестик и нажмите «+» — или нажмите на карту'); }
     else { setMode({ kind: 'line', type: id, latlngs: [] }); toast('Ставьте точки линии касанием карты'); }
   };
   render();
@@ -4899,12 +4956,14 @@ const BASE_FADES = [[1, 'ярко'], [0.7, 'приглушённо'], [0.45, 'б
 let baseOp = Number(pref('baseOp', 0.7)) || 0.7;
 document.documentElement.style.setProperty('--baseOp', baseOp);
 $('fabLayers').onclick = () => {
-  const items = [{ header: 'Подложка' }, ...Object.keys(bases).map(n => ({ id: 'base:' + n, icon: '🗺', text: n, on: n === baseName, radio: true })),
+  const items = [{ header: 'Экран' }, { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] + ' (нажмите — сменить)' },
+    { header: 'Подложка' }, ...Object.keys(bases).map(n => ({ id: 'base:' + n, icon: '🗺', text: n, on: n === baseName, radio: true })),
     { id: 'fade', icon: '◑', text: 'Яркость подложки: ' + (BASE_FADES.find(f => f[0] === baseOp) || BASE_FADES[1])[1] + ' (нажмите — сменить)' },
     { header: 'Поверх карты' }, { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
     { id: 'netcolors', icon: '🎨', text: 'Цвета сетей (традиционные)', on: netColors, check: true },
     ...Object.keys(rasterLayers).map(id => ({ id: 'r:' + id, icon: '🖼', text: rasterLayers[id].r.name, on: map.hasLayer(rasterLayers[id]), check: true }))];
   openList('Слои', items, pick => {
+    if (pick === 'theme') $('fabTheme').onclick();
     if (pick.startsWith('base:')) setBase(pick.slice(5));
     if (pick === 'fade') { const i = BASE_FADES.findIndex(f => f[0] === baseOp); baseOp = BASE_FADES[(i + 1) % BASE_FADES.length][0]; setPref('baseOp', baseOp); document.documentElement.style.setProperty('--baseOp', baseOp); }
     if (pick === 'grid') MENU.grid();
