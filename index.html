@@ -149,6 +149,12 @@
   body.night .found-lbl { color:#ffab40; }
   /* подписи чертежа DXF: точка привязки — левый нижний угол, сдвиг и поворот — от неё */
   .dxf-ti { pointer-events:none; }
+  /* привязка чертежа по двум точкам: панель шагов и метки Ч1/М1 */
+  #calBar { position:fixed; left:8px; right:8px; top:calc(62px + env(safe-area-inset-top)); z-index:1200;   /* сверху: внизу всплывают подсказки */ background:var(--panel); color:var(--ink);
+    border-radius:12px; box-shadow:var(--shadow); padding:10px 12px; font-size:var(--fs); max-width:560px; margin:0 auto; }
+  #calBar .cal-b { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:8px; }
+  .cal-m span { position:absolute; transform:translate(-50%,-50%); background:#7b1fa2; color:#fff; font:700 12px Arial, sans-serif; padding:2px 5px; border-radius:9px; white-space:nowrap; box-shadow:0 0 0 2px #fff; }
+  .cal-m.g span { background:#2e7d32; }
   .dxf-t { position:absolute; left:0; bottom:0; white-space:pre; line-height:1.1; transform-origin:0 100%; font-family:Arial, sans-serif;
     text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo); pointer-events:none; }
 
@@ -1582,7 +1588,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 73;
+const APP_BUILD = 74;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -5250,6 +5256,8 @@ const DXF_MAX_TEXTS = 300000;
 const DXF_MAX_MB = 60, DXF_MAX_VERTS = 1500000,DXF_BLOCK_DEPTH = 4, DXF_ARC_STEP = 6;   // дуга — отрезками не длиннее 6°
 const DXF_OPS = [[1, 'ярко'], [0.6, 'приглушённо'], [0.35, 'бледно']];
 const DXF_TEXT_MIN_PX = 6, DXF_TEXT_MAX_PX = 80, DXF_TEXT_MAX = 400;  // подписи мельче 6 px не рисуем; на экране — не больше 400
+let cal = null;                                                        // привязка по двум точкам, пока идёт: { file, P, opt, sim, zone, gz, crs, s, shown, step, pairs, layer, k }
+const CAL_VIEW = { op: 0.75 };                                         // временный чертёж — чуть прозрачнее
 const DXF_H_TAG = /^(ОТМ|ОТМЕТКА|ВЫСОТА|H|Z|ELEV|ELEVATION|HEIGHT)$/i;  // атрибут знака с отметкой
 const DXF_FAR_KM = 300, DXF_LOCAL_M = 20000;                         // дальше 300 км от карты — спросить; все координаты меньше 20 км — условные
 map.createPane('dxfPane').style.zIndex = 360;                           // над подложкой и своими картами, под треком и знаками
@@ -5504,16 +5512,22 @@ function dxfEmitInsert(e, T, P, inh, depth, ctx) {
 const DXF_OUTLIER_M = 100000;                                           // дальше 100 км от середины чертежа — случайный объект
 function dxfMedians(P) {
   const xs = [], ys = [], take = (x, y) => { xs.push(x); ys.push(y); };
-  const st = Math.max(1, Math.floor(P.lines.length / 3000));
-  for (let i = 0; i < P.lines.length; i += st) take(P.lines[i].p[0], P.lines[i].p[1]);
+  const verts = P.lines.reduce((n, l) => n + l.p.length / 3, 0), st = Math.max(1, Math.floor(verts / 5000));   // все вершины, не больше ~5000
+  let n = 0;
+  for (const l of P.lines) for (let j = 0; j < l.p.length; j += 3) if (n++ % st === 0) take(l.p[j], l.p[j + 1]);
   P.pts.slice(0, 2000).forEach(o => take(o.x, o.y));
   for (let k = 0; k < Math.min(P.snap.length, 6000); k += 3) take(P.snap[k], P.snap[k + 1]);
   P.texts.slice(0, 2000).forEach(o => take(o.x, o.y));
   const med = a => { const s = a.slice().sort((p, q) => p - q); return s.length ? s[s.length >> 1] : 0; };
-  return [med(xs), med(ys)];
+  const r = [med(xs), med(ys)];
+  // размах чертежа без случайных объектов: 4 медианных отклонения (одиночная точка у нуля его не раздувает) — для «чертёж в миллиметрах?»
+  const mad = (a, m0) => med(a.map(v => Math.abs(v - m0)));
+  r.span = 4 * Math.max(mad(xs, r[0]), mad(ys, r[1]));
+  return r;
 }
 // система отсчёта для пересчёта: перестановка X↔Y, миллиметры, зона; ok — середина чертежа похожа на эту систему
-function dxfRefFrame(P, id, swap, zoneSel) {
+function dxfRefFrame(P, id, swap, zoneSel, sim) {
+  if (sim) return dxfSimFrame(P, swap, sim);
   const cr = crsById(id), m = dxfMedians(P);
   let E0 = swap ? m[1] : m[0], N0 = swap ? m[0] : m[1];
   const k = Math.max(Math.abs(E0), Math.abs(N0)) > 1e8 ? 0.001 : 1;   // чертёж в миллиметрах
@@ -5529,6 +5543,13 @@ function dxfRefFrame(P, id, swap, zoneSel) {
   const ok = isFinite(q[0]) && isFinite(q[1]) && Math.abs(q[1]) < 85 && (!cr.zoned || (N0 > 3.5e6 && N0 < 8.6e6 && q[0] > zone * 6 - 7 && q[0] < zone * 6 + 1));
   return { cr, conv, zone, off, k, swap, E0, N0, prefixed, ok };
 }
+// Привязка по двум точкам: координаты чертежа (после X↔Y) → плоские координаты места подобием
+// sim = { a, b, tx, ty, zone, crs }: E = a·x − b·y + tx, N = b·x + a·y + ty (a = s·cos θ, b = s·sin θ — масштаб и поворот)
+function dxfSimFrame(P, swap, sim) {
+  const cr = crsById(sim.crs), m = dxfMedians(P), [x, y] = swap ? [m[1], m[0]] : m;
+  return { cr, conv: proj4(cr.def(sim.zone), 'WGS84'), zone: sim.zone, off: 0, k: 1, swap, sim, prefixed: true, ok: true,
+    E0: sim.a * x - sim.b * y + sim.tx, N0: sim.b * x + sim.a * y + sim.ty };
+}
 // угадать перестановку X↔Y: если как есть не похоже, а переставленные похожи — переставить
 function dxfGuess(P, id) {
   let f;
@@ -5537,8 +5558,11 @@ function dxfGuess(P, id) {
   return { swap: false };
 }
 async function dxfPlace(P, id, opt) {
-  const F = dxfRefFrame(P, id, !!opt.swap, opt.zone), { conv, off, k } = F;
-  const xy = (x, y) => opt.swap ? [y * k, x * k] : [x * k, y * k];
+  const F0 = dxfRefFrame(P, id, !!opt.swap, opt.zone, opt.sim), S = F0.sim;
+  const F = S ? { ...F0, k: S.k || 1 } : F0, { conv, off, k } = F;   // k — единицы чертежа (мм → м): отметки Z и высота подписей
+  const xy = S ? (x, y) => { if (opt.swap) [x, y] = [y, x]; return [S.a * x - S.b * y + S.tx, S.b * x + S.a * y + S.ty]; }   // привязка по двум точкам
+    : (x, y) => opt.swap ? [y * k, x * k] : [x * k, y * k];
+  const sScale = S ? Math.hypot(S.a, S.b) : 1, sRot = S ? Math.atan2(S.b, S.a) * 180 / Math.PI : 0;   // подписи — с тем же масштабом и поворотом
   const far = (x, y) => { const [E, N] = xy(x, y); return Math.abs(E - F.E0) > DXF_OUTLIER_M || Math.abs(N - F.N0) > DXF_OUTLIER_M; };
   // check — отбросить, если точка далеко от середины (случайный объект); у линии достаточно одной близкой вершины
   const ll = (x, y, check) => {
@@ -5561,12 +5585,13 @@ async function dxfPlace(P, id, opt) {
   }
   const one = o => { const q = ll(o.x, o.y, true); if (!q) { dropped++; return null; } grow(q[1], q[0]); return [q[1], q[0]]; };
   const pts = P.pts.map(o => { const c = one(o); return c && { lat: c[0], lng: c[1], z: o.z * k, c: o.c }; }).filter(Boolean);
-  const texts = P.texts.map(o => { const c = one(o); return c && { lat: c[0], lng: c[1], t: o.t, h: o.h * k, r: o.r, ax: o.ax, ay: o.ay, c: o.c }; }).filter(Boolean);
+  const texts = P.texts.map(o => { const c = one(o); return c && { lat: c[0], lng: c[1], t: o.t, h: o.h * (S ? sScale : k), r: o.r + sRot, ax: o.ax, ay: o.ay, c: o.c }; }).filter(Boolean);
   const sn = [];
   for (let j = 0; j < P.snap.length; j += 3) { const q = ll(P.snap[j], P.snap[j + 1], true); if (q) sn.push(q[1], q[0], P.snap[j + 2] * k); }   // привязки — без счёта «не показано»
   pts.forEach(p => sn.push(p.lat, p.lng, p.z));
   if (!lines.length && !pts.length && !texts.length) throw new Error('Чертёж не попадает на карту в системе ' + F.cr.name + ' — выберите другую систему координат или поменяйте X↔Y');
-  return { lines, pts, texts, snap: new Float64Array(sn), box, dropped, crsName: F.cr.name + (F.zone ? ', зона ' + F.zone : '') + (k !== 1 ? ', в мм' : '') + (opt.swap ? ', X↔Y' : '') };
+  const how = S ? `по 2 точкам (${F.cr.name}${S.k && S.k !== 1 ? ', в мм' : ''}, масштаб ${(sScale / (S.k || 1)).toFixed(4).replace('.', ',')})` : F.cr.name + (F.zone ? ', зона ' + F.zone : '') + (k !== 1 ? ', в мм' : '');
+  return { lines, pts, texts, snap: new Float64Array(sn), box, dropped, crsName: how + (opt.swap ? ', X↔Y' : '') };
 }
 
 // Цвета AutoCAD (ACI): 7 — чёрный днём и светлый ночью, жёлтый днём темнее — иначе не виден на светлой карте
@@ -5606,13 +5631,15 @@ async function dxfShow(m) {
 }
 function dxfHide(id) { const s = dxfShown[id]; if (s) { map.removeLayer(s.group); map.removeLayer(s.texts); } }
 const dxfVisible = () => myDxf.filter(m => m.on && dxfShown[m.id] && map.hasLayer(dxfShown[m.id].group));
-function dxfRedraw() { for (const m of dxfVisible()) dxfDraw(m, dxfShown[m.id]); dxfTexts(); }
+// показанные чертежи [настройки, слой] — и временный чертёж привязки по двум точкам, если он на экране
+const dxfLive = () => [...dxfVisible().map(m => [m, dxfShown[m.id]]), ...(cal && cal.s && cal.shown ? [[CAL_VIEW, cal.s]] : [])];
+function dxfRedraw() { for (const [m, s] of dxfLive()) dxfDraw(m, s); dxfTexts(); }
 // подписи — только на экране и только когда их можно прочесть (высота на местности / метров в пикселе ≥ 6 px)
 function dxfTexts() {
-  const vis = dxfVisible(); if (!vis.length) return;
+  const vis = dxfLive(); if (!vis.length) return;
   const c = map.getCenter(), mpp = 40075016.686 * Math.cos(c.lat * Math.PI / 180) / (256 * Math.pow(2, map.getZoom())), b = map.getBounds().pad(0.1);
-  for (const m of vis) {
-    const s = dxfShown[m.id], op = m.op != null ? m.op : 1;
+  for (const [m, s] of vis) {
+    const op = m.op != null ? m.op : 1;
     s.texts.clearLayers();
     let n = 0;
     for (const t of s.d.texts) {
@@ -5709,8 +5736,11 @@ function dxfAskCrs(file, P, sel, opt) {
     ${opt.auto ? '<div class="hint">X и Y в файле переставлены — я поменял их местами сам.</div>' : ''}
     ${F && F.cr.zoned && !F.prefixed ? `<div class="hint">У X нет номера зоны — взял зону ${F.zone} (по карте). Если чертёж из другой зоны — смените.</div>` : ''}
     ${warn ? `<div class="hint" style="color:var(--red)">${esc(warn)}</div>` : ''}
-    <button class="btn primary" id="dxfGo" style="width:100%;margin-top:10px"${err ? ' disabled' : ''}>Положить на карту</button>`);
+    <button class="btn primary" id="dxfGo" style="width:100%;margin-top:10px"${err ? ' disabled' : ''}>Положить на карту</button>
+    <button class="btn${err ? ' primary' : ''}" data-dcal="1" style="width:100%;margin-top:6px">Условные или неизвестные координаты — привязать по 2 точкам</button>
+    <div class="hint">Для городских систем, «нуля на углу дома» и непонятных архивов: отметите две точки чертежа и эти же места на местности.</div>`);
   $('sheetPanel').onclick = e => {
+    if (e.target.closest('[data-dcal]')) { $('sheetPanel').onclick = null; closeSheet(); dxfCalStart(file, P, { swap: opt.swap }); return; }   // перестановка X↔Y (и угаданная) сохраняется — её видно на панели
     const c = e.target.closest('[data-dcrs]'), s = e.target.closest('[data-dswap]'), z = e.target.closest('[data-dzone]');
     if (c) dxfAskCrs(file, P, c.dataset.dcrs, { swap: opt.swap, zone: opt.zone });
     if (s) dxfAskCrs(file, P, sel, { swap: !opt.swap, zone: opt.zone });
@@ -5722,9 +5752,9 @@ function dxfAskCrs(file, P, sel, opt) {
 }
 async function dxfSave(file, P, id, opt) {
   let D;
-  try { toast('Кладу чертёж на карту…'); D = await dxfPlace(P, id, opt); } catch (e) { toast(e.message); dxfAskCrs(file, P, id, opt); return; }
+  try { toast('Кладу чертёж на карту…'); D = await dxfPlace(P, id, opt); } catch (e) { toast(e.message); if (!opt.sim) dxfAskCrs(file, P, id, opt); return; }
   const mid = L.latLng((D.box[0] + D.box[2]) / 2, (D.box[1] + D.box[3]) / 2), km = map.getCenter().distanceTo(mid) / 1000;
-  if (km > DXF_FAR_KM && !await ask(`Чертёж оказался в ${Math.round(km)} км от карты. Если это не то место — выберите другую систему координат, зону или поменяйте X↔Y. Положить так?`, 'Положить', false)) { dxfAskCrs(file, P, id, opt); return; }
+  if (!opt.sim && km > DXF_FAR_KM &&!await ask(`Чертёж оказался в ${Math.round(km)} км от карты. Если это не то место — выберите другую систему координат, зону или поменяйте X↔Y. Положить так?`, 'Положить', false)) { dxfAskCrs(file, P, id, opt); return; }
   const did = 'd' + Date.now(), name = file.name.replace(/\.dxf$/i, '');
   try { await dxfStore('readwrite', s => s.put({ id: did, lines: D.lines, pts: D.pts, texts: D.texts, snap: D.snap })); }
   catch (e) { toast('Не удалось сохранить чертёж в телефоне: ' + ((e && e.message) || 'нет места?')); return; }
@@ -5733,6 +5763,168 @@ async function dxfSave(file, P, id, opt) {
   try { await dxfShow(m); } catch (e) { toast(e.message); return; }
   dxfFit(m);
   toast(`Чертёж «${name}» на карте (${D.crsName}).${D.dropped ? ` ${D.dropped} ${plural(D.dropped, 'объект', 'объекта', 'объектов')} далеко от чертежа — ${D.dropped === 1 ? 'не показан' : 'не показаны'}.` : ''} К нему липнет крестик`);
+}
+/* ───────────── Привязка чертежа по двум точкам: условные, городские и неизвестные системы ───────────── */
+
+// Чертёж сначала кладётся «как есть» в середину экрана (север вверх, масштаб 1, а чертёж в миллиметрах — в метры). Потом по шагам:
+// крестик на точку ЧЕРТЕЖА → «Отметить», крестик на это же место НА МЕСТНОСТИ (подложка, своя точка или «По GPS») → «Отметить»;
+// две пары дают сдвиг, поворот и масштаб (подобие). Третья пара — по желанию: проверка, насколько хорошо легло
+const CAL_MIN_M = 5, CAL_SCALE_WARN = 0.005, CAL_GPS_WARN_M = 1, CAL_MM_SPAN_M = 50000, CAL_CHECK_M = 0.5, CAL_MM_TEXT = 50;   // чертёж шире 50 км «в метрах» — на деле в миллиметрах
+const CAL_STEPS = ['Приблизьте карту посильнее и наведите крестик на 1-ю точку ЧЕРТЕЖА (угол здания, колодец, столб) — крестик липнет к вершинам. Нажмите «Отметить»',
+  'Теперь наведите крестик на это же место НА МЕСТНОСТИ — по подложке или своей точке — либо встаньте на него и нажмите «По GPS»',
+  'Наведите крестик на 2-ю точку ЧЕРТЕЖА — подальше от первой — и нажмите «Отметить»',
+  'Наведите крестик на это же место НА МЕСТНОСТИ или встаньте на него и нажмите «По GPS»',
+  'Проверка: наведите крестик на 3-ю точку ЧЕРТЕЖА (в стороне от линии между первыми двумя) и нажмите «Отметить»',
+  'Наведите крестик на это же место НА МЕСТНОСТИ или встаньте на него и нажмите «По GPS»'];
+// плоские координаты [восток, север] места в системе привязки (своя система чертежа, не «текущая» — её могут сменить по ходу)
+function calPlane(ll, c, zone) { const q = proj4('WGS84', crsById(c.crs).def(zone), [ll[1], ll[0]]); return [q[0], q[1]]; }
+function calInv(c, E, N) {                                              // плоские координаты временного чертежа → координаты чертежа
+  const s = c.sim, d = s.a * s.a + s.b * s.b, u = E - s.tx, v = N - s.ty;
+  return [(s.a * u + s.b * v) / d, (s.a * v - s.b * u) / d];
+}
+// временное положение: середина чертежа — в середине экрана, север вверх, единицы k (1 — метры, 0,001 — миллиметры)
+function calHome(c, k) {
+  const center = map.getCenter(), zone = zoneOf(center.lng), m = dxfMedians(c.P), [mx, my] = c.opt.swap ? [m[1], m[0]] : m;
+  const p = calPlane([center.lat, center.lng], c, zone);
+  Object.assign(c, { k, zone, sim: { a: k, b: 0, tx: p[0] - k * mx, ty: p[1] - k * my, zone, crs: c.crs, k } });
+}
+async function dxfCalStart(file, P, opt) {
+  calStop();                                                            // прежняя незаконченная привязка — убрать с карты
+  const m = dxfMedians(P), th = P.texts.map(t => t.h).sort((a, b) => a - b), tMed = th.length ? th[th.length >> 1] : 0;
+  // в миллиметрах: чертёж шире 50 км «в метрах» или подписи выше 50 «метров» (на плане 1:500 подпись — 1–3 м, в мм — 1000–3000)
+  const k = m.span > CAL_MM_SPAN_M || tMed > CAL_MM_TEXT ? 0.001 : 1;
+  const c = cal = { file, P, opt, crs: crsId, gz: null, step: 0, pairs: [], shown: true, layer: L.layerGroup().addTo(map) };
+  calHome(c, k);
+  try { await calRedraw(); } catch (e) { if (c === cal) calStop(); toast(e.message); return; }
+  if (c !== cal) return;                                                // пока клали — начали другую привязку
+  calBar();
+  toast(`Чертёж положен временно в середину экрана${k !== 1 ? ' (он в миллиметрах — показал в метрах)' : ''}. Отметьте две пары точек`);
+}
+async function calRedraw() {
+  const c = cal, D = await dxfPlace(c.P, 'cal', { ...c.opt, sim: c.sim });
+  if (c !== cal) return;
+  if (c.s) { map.removeLayer(c.s.group); map.removeLayer(c.s.texts); }
+  c.s = { d: D, group: L.layerGroup(), texts: L.layerGroup(), rings: D.lines.map(l => { const a = []; for (let k = 0; k < l.p.length; k += 3) a.push([l.p[k], l.p[k + 1]]); return { c: l.c, ll: a }; }) };
+  dxfDraw(CAL_VIEW, c.s); c.s.group.addTo(map); c.s.texts.addTo(map); dxfTexts();
+}
+// точка чертежа под крестиком: настоящая вершина, точка вставки знака или центр окружности рядом, иначе ровно крестик
+function calDrawingPick() {
+  const c = cal, center = map.getCenter(), cp = map.latLngToContainerPoint(center);
+  const rDeg = center.distanceTo(map.containerPointToLatLng([cp.x + SNAP_PX * 1.5, cp.y])) * 1.5 / 111320;
+  const w = { lat: center.lat, lng: center.lng, dLat: rDeg, dLng: rDeg / Math.max(0.1, Math.cos(center.lat * Math.PI / 180)) };
+  let best = null, bd = SNAP_PX * 1.5;
+  const take = (lat, lng) => {
+    if (Math.abs(lat - w.lat) > w.dLat || Math.abs(lng - w.lng) > w.dLng) return;   // грубый отбор — без пересчёта всех вершин
+    const d = map.latLngToContainerPoint([lat, lng]).distanceTo(cp); if (d < bd) { bd = d; best = [lat, lng]; }
+  };
+  for (const l of c.s.d.lines) if (l.v !== false) for (let k = 0; k < l.p.length; k += 3) take(l.p[k], l.p[k + 1]);
+  for (let k = 0; k < c.s.d.snap.length; k += 3) take(c.s.d.snap[k], c.s.d.snap[k + 1]);
+  const ll = best || [center.lat, center.lng], [E, N] = calPlane(ll, c, c.zone);
+  return { ll, d: calInv(c, E, N), snapped: !!best };
+}
+// место на местности: своя точка под крестиком, иначе крестик; или свежий GPS (не при подмене и не без спутников)
+function calGroundPick(byGps) {
+  if (byGps) {
+    if (!gps || Date.now() - gps.at > GPS_FRESH_MS || gpsNoSat()) { toast('Нет свежих координат GPS — подождите сигнал или наведите крестик на место по подложке'); return null; }
+    if (spoof) { toast('GPS похоже ложный (подмена) — отметьте место крестиком по подложке'); return null; }
+    if (gps.acc > CAL_GPS_WARN_M) toast(`Точность GPS ±${mText(gps.acc, 1)} м — чертёж ляжет с такой же ошибкой`);
+    return { ll: [gps.lat, gps.lng], how: 'GPS', acc: gps.acc || 0 };
+  }
+  const own = pointAtCross(), c = map.getCenter();
+  return own ? { ll: [own.lat, own.lng], how: 'своя точка' } : { ll: [c.lat, c.lng], how: 'крестик' };
+}
+// перед новой проверкой — оставить метки только двух главных пар (старые Ч3/М3 убрать)
+function calMarksRedo() {
+  cal.layer.clearLayers();
+  cal.pairs.forEach((p, i) => { calMark(p.dll, 'Ч' + (i + 1), false); calMark(p.gll, 'М' + (i + 1), true); L.polyline([p.dll, p.gll], { color: '#7b1fa2', weight: 2, dashArray: '4 4', interactive: false }).addTo(cal.layer); });
+}
+function calMark(ll, text, ground) {
+  L.marker(ll, { icon: L.divIcon({ className: 'cal-m' + (ground ? ' g' : ''), html: `<span>${esc(text)}</span>`, iconSize: [0, 0] }), interactive: false, keyboard: false }).addTo(cal.layer);
+}
+function calBar(html) {
+  let bar = $('calBar');
+  if (!bar) { bar = document.createElement('div'); bar.id = 'calBar'; document.body.appendChild(bar); }
+  const top = $('top'); bar.style.top = ((top ? top.getBoundingClientRect().bottom : 56) + 6) + 'px';   // сразу под строкой координат — она остаётся видна
+  const c = cal, groundStep = c.step % 2 === 1;
+  const flags = [c.opt.swap ? 'X↔Y переставлены' : '', c.k !== 1 ? 'чертёж в мм' : ''].filter(Boolean).join(', ');
+  bar.innerHTML = html ||
+    `<div class="cal-t"><b>Привязка по точкам · шаг ${c.step + 1} из ${c.step < 4 ? 4 : 6}</b>${flags ? ` <span style="color:var(--muted)">(${flags})</span>` : ''}<br>${esc(CAL_STEPS[c.step])}</div>
+      <div class="cal-b">${c.step === 0 ? `<button class="btn" data-cal="units">${c.k === 1 ? 'Чертёж в мм?' : 'Чертёж в метрах?'}</button>` : ''}<button class="btn" data-cal="hide">${c.shown ? 'Скрыть чертёж' : 'Показать чертёж'}</button>${groundStep ? '<button class="btn" data-cal="gps">По GPS</button>' : ''}<button class="btn primary" data-cal="mark">Отметить</button><button class="btn" data-cal="stop">Отмена</button></div>`;
+  bar.onclick = e => { const b = e.target.closest('[data-cal]'); if (b) calAct(b.dataset.cal); };
+}
+function calAct(act) {
+  const c = cal; if (!c) return;
+  if (act === 'stop') { calStop(); toast('Привязка отменена'); return; }
+  if (act === 'hide') { c.shown = !c.shown; if (c.shown) { dxfDraw(CAL_VIEW, c.s); c.s.group.addTo(map); c.s.texts.addTo(map); dxfTexts(); } else { map.removeLayer(c.s.group); map.removeLayer(c.s.texts); }
+    if (c.result) { const hb = $('calBar').querySelector('[data-cal=hide]'); if (hb) hb.textContent = c.shown ? 'Скрыть чертёж' : 'Показать чертёж'; } else calBar();
+    return; }
+  if (act === 'again') { c.pairs = []; c.step = 0; c.gz = null; c.result = null; c.layer.clearLayers(); calBar(); return; }
+  if (act === 'check') { c.step = 4; c.result = null; calMarksRedo(); calBar(); return; }
+  if (act === 'units') { calHome(c, c.k === 1 ? 0.001 : 1); calRedraw().then(() => { if (cal === c) calBar(); }).catch(e => toast(e.message)); return; }
+  if (act === 'place' || act === 'place1') { calFinish(act === 'place1'); return; }
+  if (c.step % 2 === 0) {
+    if (!c.shown) { toast('Чертёж скрыт — покажите его, чтобы отметить точку чертежа'); return; }
+    const p = calDrawingPick();
+    c.pairs.push({ d: p.d, dll: p.ll }); calMark(p.ll, 'Ч' + (c.step / 2 + 1), false);
+    if (!p.snapped) toast('Рядом нет вершины чертежа — взял точку ровно под крестиком');
+  } else {
+    const g = calGroundPick(act === 'gps'); if (!g) return;
+    if (c.gz == null) c.gz = crsById(c.crs).zoned ? zoneOf(g.ll[1]) : 0;   // зона — по месту на местности, а не по тому, где был экран
+    const pr = c.pairs[c.pairs.length - 1]; pr.g = calPlane(g.ll, c, c.gz); pr.gll = g.ll; pr.how = g.how; pr.acc = g.acc || 0;
+    calMark(g.ll, 'М' + ((c.step + 1) / 2), true);
+    L.polyline([pr.dll, g.ll], { color: '#7b1fa2', weight: 2, dashArray: '4 4', interactive: false }).addTo(c.layer);
+  }
+  c.step++;
+  if (c.step === 4) calSolve(); else if (c.step === 6) calCheck(); else calBar();
+}
+// подобие по двум парам: в комплексных числах g = q·d + t, q = (g2 − g1) / (d2 − d1)
+function calSolve() {
+  const c = cal, [p1, p2] = c.pairs;
+  const dx = p2.d[0] - p1.d[0], dy = p2.d[1] - p1.d[1], gx = p2.g[0] - p1.g[0], gy = p2.g[1] - p1.g[1];
+  const dd = Math.hypot(dx, dy) * c.k, gd = Math.hypot(gx, gy);
+  if (dd < CAL_MIN_M || gd < CAL_MIN_M) { c.result = calResultHtml(`Точки слишком близко (${mText(Math.min(dd, gd), 2)} м) — возьмите их дальше друг от друга, хотя бы на ${CAL_MIN_M} м, лучше по краям чертежа.`, false); calBar(c.result); return; }
+  const n = dx * dx + dy * dy, a = (gx * dx + gy * dy) / n, b = (gy * dx - gx * dy) / n;
+  c.fit = { a, b, scale: Math.hypot(a, b), rot: Math.atan2(b, a) * 180 / Math.PI, dd, gd };
+  const sErr = Math.abs(c.fit.scale / c.k - 1), warn = sErr > CAL_SCALE_WARN;
+  c.result = calResultHtml(`Длина между точками: на чертеже ${mText(dd, 2)} м, на местности ${mText(gd, 2)} м (${warn ? '<b>расходятся на ' + mText(sErr * 100, 2) + ' %</b>' : 'разница ' + mText(Math.abs(gd - dd), 2) + ' м'}). Поворот ${degMin(c.fit.rot)}.` +
+    (warn ? ' Проверьте точки — или у чертежа другие единицы. Если чертёж точный и в метрах — лучше «1:1».' : '') +
+    (c.opt.swap ? ' X и Y чертежа переставлены — если чертёж лёг зеркально, отмените и уберите «Поменять X↔Y».' : ''), true, warn);
+  calBar(c.result);
+}
+// проверка третьей точкой: где она окажется при «с растяжкой» и при «1:1» — расхождение с местностью
+function calCheck() {
+  const c = cal, p3 = c.pairs[2], res = ['place', 'place1'].map(k => { const s = calSim(k === 'place1'); const E = s.a * p3.d[0] - s.b * p3.d[1] + s.tx, N = s.b * p3.d[0] + s.a * p3.d[1] + s.ty; return Math.hypot(E - p3.g[0], N - p3.g[1]); });
+  // допуск — полметра или удвоенная точность GPS, если места отмечали по GPS телефона (±3–5 м)
+  const tol = Math.max(CAL_CHECK_M, 2 * Math.max(...c.pairs.map(p => p.acc || 0))), bad = Math.min(res[0], res[1]) > tol;
+  c.result = calResultHtml(`Проверка 3-й точкой: расхождение ${mText(res[0], 2)} м (с растяжкой) и ${mText(res[1], 2)} м (1:1), допуск ${mText(tol, 2)} м.` +
+    (bad ? ' <b>Больше допуска</b> — похоже, одна из точек отмечена не там (или чертёж зеркальный). Лучше «Заново».' : ' Чертёж лёг хорошо.'), true, !(res[1] > res[0] * 1.5 && res[0] <= tol), true, bad);
+  c.pairs.length = 2; c.step = 4;                                       // третья пара — только для проверки
+  calBar(c.result);
+}
+// bad — проверка не сошлась: главная кнопка — «Заново»
+function calResultHtml(text, ok, oneToOneFirst, checked, bad) {
+  const pr = on => on && !bad ? ' primary' : '';
+  return `<div class="cal-t"><b>Привязка по точкам</b><br>${text}</div><div class="cal-b"><button class="btn" data-cal="hide">${cal && !cal.shown ? 'Показать чертёж' : 'Скрыть чертёж'}</button>` +
+    (ok ? `<button class="btn${pr(!oneToOneFirst)}" data-cal="place">Положить с растяжкой</button><button class="btn${pr(oneToOneFirst)}" data-cal="place1">Положить 1:1</button><button class="btn" data-cal="check">${checked ? 'Проверить ещё раз' : 'Проверить 3-й точкой'}</button>` : '') +
+    `<button class="btn${bad || !ok ? ' primary' : ''}" data-cal="again">Заново</button><button class="btn" data-cal="stop">Отмена</button></div>`;
+}
+// подобие для укладки: «с растяжкой» — точно по двум точкам; «1:1» — масштаб чертежа (метры), поворот по точкам, середина между точками совпадает
+function calSim(oneToOne) {
+  const c = cal, f = c.fit, [p1, p2] = c.pairs, s = oneToOne ? c.k / f.scale : 1, a = f.a * s, b = f.b * s;
+  const dm = [(p1.d[0] + p2.d[0]) / 2, (p1.d[1] + p2.d[1]) / 2], gm = [(p1.g[0] + p2.g[0]) / 2, (p1.g[1] + p2.g[1]) / 2];
+  return { a, b, tx: gm[0] - (a * dm[0] - b * dm[1]), ty: gm[1] - (b * dm[0] + a * dm[1]), zone: c.gz, crs: c.crs, k: c.k };
+}
+function calFinish(oneToOne) {
+  const c = cal, sim = calSim(oneToOne), { file, P, opt } = c;
+  calStop();
+  dxfSave(file, P, 'cal', { ...opt, sim });
+}
+function calStop() {
+  if (!cal) return;
+  if (cal.s) { map.removeLayer(cal.s.group); map.removeLayer(cal.s.texts); }
+  map.removeLayer(cal.layer);
+  const bar = $('calBar'); if (bar) bar.remove();
+  cal = null;
 }
 // кнопки чертежей в окне «Мои карты»; true — нажатие обработано
 function dxfSheetClick(e) {
