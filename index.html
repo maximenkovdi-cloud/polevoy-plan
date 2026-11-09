@@ -1588,7 +1588,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 74;
+const APP_BUILD = 75;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -5361,29 +5361,48 @@ const DXF_MT_AX = [0, 0, 0.5, 1, 0, 0.5, 1, 0, 0.5, 1], DXF_MT_AY = [0, 1, 1, 1,
 
 // Разбор файла: слои (выключенные и замороженные — пропускаем), блоки, потом пространство модели с раскрытием блоков
 async function dxfParse(text, onProgress) {
-  const r = dxfReader(text), layers = {}, blocks = {};
-  const out = { lines: [], pts: [], texts: [], snap: [], verts: 0, skip: {}, ext: [Infinity, Infinity, -Infinity, -Infinity] };
+  const r = dxfReader(text), layers = {}, blocks = {}, ltypes = {};
+  const out = { lines: [], pts: [], texts: [], snap: [], lt: [], ltKey: {}, verts: 0, skip: {}, ext: [Infinity, Infinity, -Infinity, -Infinity] };
+  const ctx = { layers, blocks, out, ltypes, ltscale: 1 };
   let section = null, steps = 0;
   r.next();
   while (!r.end) {
+    if (section === 'HEADER' && r.code === 9 && r.val.trim() === '$LTSCALE') { r.next(); if (r.code === 40) ctx.ltscale = Math.abs(parseFloat(r.val)) || 1; continue; }   // общий масштаб типов линий
     if (r.code !== 0) { r.next(); continue; }
     if (r.val === 'EOF') break;
     if (r.val === 'SECTION') { r.next(); section = String(r.val).trim(); r.next(); continue; }
     if (r.val === 'ENDSEC') { section = null; r.next(); continue; }
     if (section === 'TABLES' && r.val === 'LAYER') { const e = dxfReadEnt(r), name = String(gv(e.g, 2) || '').trim().toUpperCase();
-      if (name) layers[name] = { color: gn(e.g, 62, 7), flags: gn(e.g, 70, 0), tc: gv(e.g, 420) }; continue; }
+      if (name) layers[name] = { color: gn(e.g, 62, 7), flags: gn(e.g, 70, 0), tc: gv(e.g, 420), lt: String(gv(e.g, 6) || 'CONTINUOUS').trim().toUpperCase() }; continue; }
+    if (section === 'TABLES' && r.val === 'LTYPE') {                   // тип линии: штрихи (+), пробелы (−) и точки (0) в единицах чертежа
+      const e = dxfReadEnt(r), name = String(gv(e.g, 2) || '').trim().toUpperCase(), pat = [];
+      for (let k = 0; k < e.g.length; k += 2) if (e.g[k] === 49) pat.push(parseFloat(e.g[k + 1]) || 0);
+      if (name && pat.length > 1) ltypes[name] = pat; continue; }
     if (section === 'BLOCKS' && r.val === 'BLOCK') { const b = dxfReadEnt(r), blk = { bx: gn(b.g, 10, 0), by: gn(b.g, 20, 0), ents: [] };
       while (!r.end && !(r.code === 0 && r.val === 'ENDBLK')) { if (r.code === 0) blk.ents.push(dxfReadFull(r)); else r.next(); }
       if (!r.end) dxfReadEnt(r);
       blocks[String(gv(b.g, 2) || '').trim().toUpperCase()] = blk; continue; }
     if (section === 'ENTITIES') {
-      dxfEmit(dxfReadFull(r), DXF_ID, null, 0, { layers, blocks, out });
+      dxfEmit(dxfReadFull(r), DXF_ID, null, 0, ctx);
       if (++steps % 3000 === 0) { onProgress(r.pos()); await new Promise(res => setTimeout(res, 0)); }   // экран не замирает
       continue;
     }
     dxfReadEnt(r);
   }
   return out;
+}
+// тип линии сущности: свой, «по слою» или «по блоку»; pat — штрихи из таблицы LTYPE (сплошная — без pat)
+function dxfLtOf(e, layer, inh, ctx) {
+  let name = String(gv(e.g, 6) || 'BYLAYER').trim().toUpperCase();
+  if (name === 'BYLAYER') { const l = ctx.layers[layer.toUpperCase()]; name = l ? l.lt : 'CONTINUOUS'; }
+  if (name === 'BYBLOCK') name = inh && inh.lt || 'CONTINUOUS';
+  return { name, pat: ctx.ltypes[name] || null };
+}
+// одинаковые штрихи с одинаковым масштабом — одна запись (линий тысячи, типов — единицы)
+function dxfLtIndex(out, pat, scale) {
+  const key = pat.join(',') + '|' + scale.toPrecision(6);
+  if (out.ltKey[key] == null) { out.ltKey[key] = out.lt.length; out.lt.push(pat.map(v => v * scale)); }
+  return out.ltKey[key];
 }
 function dxfColorOf(e, layer, inh, layers) {
   const css = tc => '#' + (parseInt(tc, 10) & 0xffffff).toString(16).padStart(6, '0');
@@ -5404,8 +5423,8 @@ function dxfEmit(e, T, inh, depth, ctx) {
   if (gn(g, 67, 0) === 1 || gn(g, 60, 0) === 1) return;              // лист (не модель) и невидимые
   let layer = dxfName(g); if (layer === '0' && inh) layer = inh.layer; // слой «0» в блоке — слой вставки
   const L_ = layers[layer.toUpperCase()]; if (L_ && (L_.color < 0 || (L_.flags & 1))) return;   // слой выключен или заморожен
-  const color = dxfColorOf(e, layer, inh, layers);
-  const flip = gn(g, 230, 1) < 0 && (DXF_OCS.has(t) || (t === 'POLYLINE' && !(gn(g, 70, 0) & 8)));
+  const color = dxfColorOf(e, layer, inh, layers), lt = dxfLtOf(e, layer, inh, ctx);
+  const flip =gn(g, 230, 1) < 0 && (DXF_OCS.has(t) || (t === 'POLYLINE' && !(gn(g, 70, 0) & 8)));
   const P = (x, y) => { if (flip) x = -x; return [T[0] * x + T[2] * y + T[4], T[1] * x + T[3] * y + T[5]]; };
   const zOf = z => depth ? 0 : z;                                       // отметка — только у самой вставки знака, не у его рисунка
   // real — вершины настоящие (к ним липнет крестик); у дуг, окружностей и рисунка знаков — нет: только к их отрезкам
@@ -5413,7 +5432,7 @@ function dxfEmit(e, T, inh, depth, ctx) {
     if (pts.length < 2) return;
     const p = [];
     for (const q of pts) { const [X, Y] = P(q[0], q[1]); p.push(X, Y, zOf(q[2] != null ? q[2] : z)); dxfExt(out, X, Y); }
-    out.lines.push({ c: color, p, v: !!real && !depth }); out.verts += pts.length;
+    out.lines.push({ c: color, p, v: !!real && !depth, ...(lt.pat ? { t: dxfLtIndex(out, lt.pat, ctx.ltscale * Math.abs(gn(g, 48, 1) || 1) * Math.sqrt(Math.abs(T[0] * T[3] - T[1] * T[2]))) } : {}) }); out.verts += pts.length;
   };
   const snapPt = (x, y, z) => { if (depth) return; const [X, Y] = P(x, y); out.snap.push(X, Y, z); };
   if (t === 'LINE') return add([[gn(g, 10, 0), gn(g, 20, 0), gn(g, 30, 0)], [gn(g, 11, 0), gn(g, 21, 0), gn(g, 31, 0)]], 0, true);
@@ -5425,10 +5444,10 @@ function dxfEmit(e, T, inh, depth, ctx) {
   if (t === 'SPLINE') return add(dxfSpline(g), 0);
   if (t === 'POINT') { const [X, Y] = P(gn(g, 10, 0), gn(g, 20, 0)); dxfExt(out, X, Y); out.pts.push({ x: X, y: Y, z: zOf(gn(g, 30, 0)), c: color }); return; }
   if (t === 'TEXT' || t === 'ATTRIB' || t === 'MTEXT') return dxfEmitText(e, P, T, flip, color, out);
-  if (t === 'INSERT') return dxfEmitInsert(e, T, P, { layer, color, z: zOf(gn(g, 30, 0)) }, depth, ctx);
+  if (t === 'INSERT') return dxfEmitInsert(e, T, P, { layer, color, lt: lt.name, z: zOf(gn(g, 30, 0)) }, depth, ctx);
   if (t === 'DIMENSION') {                                              // размер рисуется своим блоком «*D…» — он уже в координатах чертежа
     const blk = blocks[String(gv(g, 2) || '').trim().toUpperCase()];
-    if (blk && depth < DXF_BLOCK_DEPTH) for (const be of blk.ents) dxfEmit(be, T, { layer, color, z: 0 }, depth + 1, ctx);
+    if (blk && depth < DXF_BLOCK_DEPTH) for (const be of blk.ents) dxfEmit(be, T, { layer, color, lt: lt.name, z: 0 }, depth + 1, ctx);
     return;
   }
   if (!DXF_QUIET.has(t) && !depth) out.skip[t] = (out.skip[t] || 0) + 1;   // не умеем — посчитаем и скажем
@@ -5580,7 +5599,7 @@ async function dxfPlace(P, id, opt) {
     for (let j = 0; j < l.p.length && good; j += 3) { const q = ll(l.p[j], l.p[j + 1]); if (!q) { good = false; break; } a[j] = q[1]; a[j + 1] = q[0]; a[j + 2] = l.p[j + 2] * k; }
     if (!good) { dropped++; continue; }
     for (let j = 0; j < a.length; j += 3) grow(a[j], a[j + 1]);
-    lines.push({ c: l.c, p: a, v: l.v });
+    lines.push({ c: l.c, p: a, v: l.v, ...(l.t != null ? { t: l.t } : {}) });
     if ((done += a.length) > 60000) { done = 0; await new Promise(res => setTimeout(res, 0)); }   // экран не замирает
   }
   const one = o => { const q = ll(o.x, o.y, true); if (!q) { dropped++; return null; } grow(q[1], q[0]); return [q[1], q[0]]; };
@@ -5591,7 +5610,8 @@ async function dxfPlace(P, id, opt) {
   pts.forEach(p => sn.push(p.lat, p.lng, p.z));
   if (!lines.length && !pts.length && !texts.length) throw new Error('Чертёж не попадает на карту в системе ' + F.cr.name + ' — выберите другую систему координат или поменяйте X↔Y');
   const how = S ? `по 2 точкам (${F.cr.name}${S.k && S.k !== 1 ? ', в мм' : ''}, масштаб ${(sScale / (S.k || 1)).toFixed(4).replace('.', ',')})` : F.cr.name + (F.zone ? ', зона ' + F.zone : '') + (k !== 1 ? ', в мм' : '');
-  return { lines, pts, texts, snap: new Float64Array(sn), box, dropped, crsName: how + (opt.swap ? ', X↔Y' : '') };
+  const lt = (P.lt || []).map(p => p.map(v => v * (S ? sScale : k)));   // штрихи — в метрах на местности
+  return { lines, pts, texts, snap: new Float64Array(sn), lt, box, dropped, crsName: how + (opt.swap ? ', X↔Y' : '') };
 }
 
 // Цвета AutoCAD (ACI): 7 — чёрный днём и светлый ночью, жёлтый днём темнее — иначе не виден на светлой карте
@@ -5606,13 +5626,50 @@ function dxfCss(c) {
   if (n >= 10 && n <= 249) { const hue = Math.floor((n - 10) / 10) * 15, k = n % 10, li = [45, 60, 30, 40, 22, 30, 16, 22, 10, 14][k]; return `hsl(${hue},${k % 2 ? 50 : 100}%,${th === 'night' ? Math.min(75, li + 25) : li}%)`; }
   return '#263238';
 }
+// штрихи типа линии в пикселях при текущем масштабе карты: «+» штрих, «−» пробел, 0 — точка (концы штрихов плоские — пробелы не съедаются);
+// мельче 8 px на весь узор — сплошная (и не рябит, и телефону не считать миллионы штрихов); одни пробелы — 'none' (линию не рисуем)
+const DXF_DASH_MIN_PX = 8, DXF_LINE_W = 1.3, DXF_DOT_PX = DXF_LINE_W;
+const dxfMpp = () => { const c = map.getCenter(); return 40075016.686 * Math.cos(c.lat * Math.PI / 180) / (256 * Math.pow(2, map.getZoom())); };
+function dxfDash(pat, mpp) {
+  if (pat && pat.every(v => v < 0)) return 'none';
+  if (!pat || pat.reduce((s, v) => s + Math.abs(v), 0) / mpp < DXF_DASH_MIN_PX) return null;
+  const i0 = Math.max(0, pat.findIndex(v => v >= 0)), seq = [];           // узор — со штриха; чередование штрих–пробел, соседние одного знака — вместе
+  for (const v of [...pat.slice(i0), ...pat.slice(0, i0)]) {
+    const isGap = v < 0, len = v === 0 ? DXF_DOT_PX : Math.abs(v) / mpp;
+    if (seq.length && seq[seq.length - 1].gap === isGap) seq[seq.length - 1].len += len; else seq.push({ gap: isGap, len });
+  }
+  if (seq[0].gap) return null;                                          // одни пробелы
+  if (seq.length % 2) seq[0].len += seq.pop().len;                      // узор по кругу: последний штрих сливается с первым
+  if (seq.length < 2) return null;
+  return seq.map(x => Math.max(x.len, 0.01).toFixed(2)).join(' ');
+}
+// линии собираются по цвету и типу линии один раз; при приближении меняется только рисунок штриха (dxfRedash), а не сами линии
 function dxfDraw(m, s) {
   s.group.clearLayers();
-  const byColor = new Map();
-  for (const l of s.rings) { const col = dxfCss(l.c); if (!byColor.has(col)) byColor.set(col, []); byColor.get(col).push(l.ll); }
-  const op = m.op != null ? m.op : 1;
-  byColor.forEach((rings, col) => L.polyline(rings, { renderer: dxfRenderer, color: col, weight: 1.3, opacity: op, interactive: false, smoothFactor: 0.5 }).addTo(s.group));
+  const groups = new Map(), op = m.op != null ? m.op : 1;
+  for (const l of s.rings) {
+    const col = dxfCss(l.c), key = col + '|' + (l.t != null ? l.t : '');
+    if (!groups.has(key)) groups.set(key, { col, t: l.t, rings: [] }); groups.get(key).rings.push(l.ll);
+  }
+  s.dashed = [];
+  groups.forEach(g => {
+    const pl = L.polyline(g.rings, { renderer: dxfRenderer, color: g.col, weight: DXF_LINE_W, opacity: op, interactive: false, smoothFactor: 0.5, lineCap: g.t != null ? 'butt' : 'round' });
+    if (g.t != null) s.dashed.push({ pl, t: g.t, op, dash: undefined });
+    pl.addTo(s.group);
+  });
+  dxfRedash(s);
   for (const p of s.d.pts) L.circleMarker([p.lat, p.lng], { renderer: dxfRenderer, radius: 1.6, weight: 0, fillColor: dxfCss(p.c), fillOpacity: op, interactive: false }).addTo(s.group);
+}
+// рисунок штрихов под текущий масштаб — только у тех линий, где он изменился
+function dxfRedash(s) {
+  if (!s.dashed || !s.dashed.length) return;
+  const mpp = dxfMpp(), lts = s.d.lt || [];
+  for (const g of s.dashed) {
+    const dash = dxfDash(lts[g.t], mpp);
+    if (dash === g.dash) continue;
+    g.dash = dash;
+    g.pl.setStyle(dash === 'none' ? { opacity: 0 } : { opacity: g.op, dashArray: dash || null });
+  }
 }
 // чтение из базы — одно на чертёж, даже если «Показать» нажали, пока он ещё грузится при запуске
 const dxfLoading = {};
@@ -5621,7 +5678,7 @@ function dxfLoad(m) {
   return dxfLoading[m.id] || (dxfLoading[m.id] = dxfStore('readonly', st => st.get(m.id)).then(d => {
     if (!d) throw new Error(`Чертёж «${m.name}» не найден в памяти телефона — загрузите его снова`);
     if (!myDxf.includes(m) || m.deleted) throw new Error('Чертёж удалён');
-    return (dxfShown[m.id] = { d, group: L.layerGroup(), texts: L.layerGroup(), rings: d.lines.map(l => { const a = []; for (let k = 0; k < l.p.length; k += 3) a.push([l.p[k], l.p[k + 1]]); return { c: l.c, ll: a }; }) });
+    return (dxfShown[m.id] = { d, group: L.layerGroup(), texts: L.layerGroup(), rings: d.lines.map(l => { const a = []; for (let k = 0; k < l.p.length; k += 3) a.push([l.p[k], l.p[k + 1]]); return { c: l.c, t: l.t, ll: a }; }) });
   }).finally(() => { delete dxfLoading[m.id]; }));
 }
 async function dxfShow(m) {
@@ -5652,6 +5709,8 @@ function dxfTexts() {
   }
 }
 map.on('zoomend moveend', dxfTexts);
+// штрихи пересчитываются под масштаб: на каждом уровне приближения — свои пиксели
+map.on('zoomend', () => { for (const [, s] of dxfLive()) dxfRedash(s); });
 function toggleDxf(id, show) {
   const m = myDxf.find(x => x.id === id); if (!m) return;
   m.on = show != null ? show : !m.on; saveMyDxf();
@@ -5756,7 +5815,7 @@ async function dxfSave(file, P, id, opt) {
   const mid = L.latLng((D.box[0] + D.box[2]) / 2, (D.box[1] + D.box[3]) / 2), km = map.getCenter().distanceTo(mid) / 1000;
   if (!opt.sim && km > DXF_FAR_KM &&!await ask(`Чертёж оказался в ${Math.round(km)} км от карты. Если это не то место — выберите другую систему координат, зону или поменяйте X↔Y. Положить так?`, 'Положить', false)) { dxfAskCrs(file, P, id, opt); return; }
   const did = 'd' + Date.now(), name = file.name.replace(/\.dxf$/i, '');
-  try { await dxfStore('readwrite', s => s.put({ id: did, lines: D.lines, pts: D.pts, texts: D.texts, snap: D.snap })); }
+  try { await dxfStore('readwrite', s => s.put({ id: did, lines: D.lines, pts: D.pts, texts: D.texts, snap: D.snap, lt: D.lt })); }
   catch (e) { toast('Не удалось сохранить чертёж в телефоне: ' + ((e && e.message) || 'нет места?')); return; }
   const m = { id: did, name, file: file.name, crs: id, crsName: D.crsName, size: file.size, n: { lines: D.lines.length, pts: D.pts.length, texts: D.texts.length }, box: D.box, on: true, op: 1 };
   myDxf = [...myDxf, m]; saveMyDxf();
@@ -5804,7 +5863,7 @@ async function calRedraw() {
   const c = cal, D = await dxfPlace(c.P, 'cal', { ...c.opt, sim: c.sim });
   if (c !== cal) return;
   if (c.s) { map.removeLayer(c.s.group); map.removeLayer(c.s.texts); }
-  c.s = { d: D, group: L.layerGroup(), texts: L.layerGroup(), rings: D.lines.map(l => { const a = []; for (let k = 0; k < l.p.length; k += 3) a.push([l.p[k], l.p[k + 1]]); return { c: l.c, ll: a }; }) };
+  c.s = { d: D, group: L.layerGroup(), texts: L.layerGroup(), rings: D.lines.map(l => { const a = []; for (let k = 0; k < l.p.length; k += 3) a.push([l.p[k], l.p[k + 1]]); return { c: l.c, t: l.t, ll: a }; }) };
   dxfDraw(CAL_VIEW, c.s); c.s.group.addTo(map); c.s.texts.addTo(map); dxfTexts();
 }
 // точка чертежа под крестиком: настоящая вершина, точка вставки знака или центр окружности рядом, иначе ровно крестик
