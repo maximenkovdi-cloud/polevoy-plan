@@ -1577,7 +1577,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 70;
+const APP_BUILD = 71;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -4959,11 +4959,15 @@ $('fabLayers').onclick = () => {
   const items = [{ header: 'Экран' }, { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] + ' (нажмите — сменить)' },
     { header: 'Подложка' }, ...Object.keys(bases).map(n => ({ id: 'base:' + n, icon: '🗺', text: n, on: n === baseName, radio: true })),
     { id: 'fade', icon: '◑', text: 'Яркость подложки: ' + (BASE_FADES.find(f => f[0] === baseOp) || BASE_FADES[1])[1] + ' (нажмите — сменить)' },
+    { header: 'Мои карты' }, ...myMaps.map(m => ({ id: 'my:' + m.id, icon: '🗂', text: m.name, on: !!(myMapLayers[m.id] && map.hasLayer(myMapLayers[m.id])), check: true })),
+    { id: 'mymaps', icon: '＋', text: myMaps.length ? 'Мои карты: загрузить ещё, прозрачность, удалить →' : 'Загрузить свою карту (MBTiles из SAS.Planet, QGIS) →' },
     { header: 'Поверх карты' }, { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
     { id: 'netcolors', icon: '🎨', text: 'Цвета сетей (традиционные)', on: netColors, check: true },
     ...Object.keys(rasterLayers).map(id => ({ id: 'r:' + id, icon: '🖼', text: rasterLayers[id].r.name, on: map.hasLayer(rasterLayers[id]), check: true }))];
   openList('Слои', items, pick => {
     if (pick === 'theme') $('fabTheme').onclick();
+    if (pick === 'mymaps') { openMyMaps(); return; }
+    if (pick.startsWith('my:')) toggleMyMap(pick.slice(3));
     if (pick.startsWith('base:')) setBase(pick.slice(5));
     if (pick === 'fade') { const i = BASE_FADES.findIndex(f => f[0] === baseOp); baseOp = BASE_FADES[(i + 1) % BASE_FADES.length][0]; setPref('baseOp', baseOp); document.documentElement.style.setProperty('--baseOp', baseOp); }
     if (pick === 'grid') MENU.grid();
@@ -4972,6 +4976,117 @@ $('fabLayers').onclick = () => {
     $('fabLayers').onclick();
   });
 };
+/* ───────────── «Мои карты»: свои подложки из файлов MBTiles (растровые плитки PNG/JPG/WebP) ───────────── */
+
+// Файл копируется в память приложения (Android: MapsPlugin) — карта работает без интернета и при глушении.
+// Список и настройки (включена, прозрачность) — в pref myMaps; сами плитки читает Android по запросу
+const MAPS = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Maps) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Maps')));
+const MY_MAP_OPS = [[1, 'непрозрачная'], [0.75, '75 %'], [0.5, 'наполовину'], [0.3, 'слабо']];
+const MY_MAP_Z = 50;                                                    // над подложкой, под своими растрами и знаками
+const MY_MAP_UNDER = 2;                                                 // мельче своего наименьшего масштаба карта видна ещё на 2 уровня
+let mapsOk = !!MAPS;                                                    // в старом приложении без MapsPlugin — false (выяснится при запуске)
+let myMaps = pref('myMaps', []);                                        // [{ id, name, file, format, minzoom, maxzoom, bounds, scheme, size, on, op }]
+const myMapLayers = {};
+// Плитки читает Android по одной через мост — не больше MY_TILE_PAR запросов сразу; плитку, которую карта уже убрала
+// (прокрутили дальше), не запрашиваем вовсе — иначе очередь забивается и видимые плитки ждут
+const MY_TILE_PAR = 4;
+let myTileBusy = 0;
+const myTileQueue = [];
+function myTilePump() {
+  while (myTileBusy < MY_TILE_PAR && myTileQueue.length) {
+    const job = myTileQueue.shift();
+    if (!job.img.isConnected && job.started < Date.now() - 50) { job.done(null, job.img); continue; }   // плитку уже убрали с карты
+    myTileBusy++;
+    MAPS.tile(job.req)
+      .then(r => { if (r && r.data) { job.img.onload = job.img.onerror = () => job.done(null, job.img); job.img.src = `data:image/${job.fmt};base64,${r.data}`; } else job.done(null, job.img); })
+      .catch(() => job.done(null, job.img))                             // нет плитки — пустое место, не ошибка
+      .finally(() => { myTileBusy--; myTilePump(); });
+  }
+}
+const MyTiles = L.GridLayer.extend({
+  createTile(coords, done) {
+    const img = document.createElement('img'), o = this.options;
+    img.alt = ''; img.setAttribute('role', 'presentation');
+    myTileQueue.push({ img, done, fmt: o.fmt, started: Date.now(), req: { id: o.mapId, z: coords.z, x: coords.x, y: coords.y, tms: true } });   // в MBTiles строки всегда снизу вверх (TMS)
+    setTimeout(myTilePump, 0);                                          // после того как Leaflet вставит плитку в карту
+    return img;
+  }
+});
+function myMapBounds(m) {
+  const b = String(m.bounds || '').split(',').map(Number);
+  return b.length === 4 && b.every(isFinite) ? L.latLngBounds([b[1], b[0]], [b[3], b[2]]) : null;
+}
+function myMapLayer(m) {
+  if (myMapLayers[m.id]) return myMapLayers[m.id];
+  const opt = { mapId: m.id, fmt: m.format === 'jpg' ? 'jpeg' : m.format, maxZoom: MAX_ZOOM, opacity: m.op != null ? m.op : 1, zIndex: MY_MAP_Z, updateWhenZooming: false };
+  if (m.maxzoom >= 0) opt.maxNativeZoom = m.maxzoom;                    // крупнее — растягиваем последний уровень
+  if (m.minzoom >= 0) { opt.minNativeZoom = m.minzoom; opt.minZoom = Math.max(0, m.minzoom - MY_MAP_UNDER); }   // сильно мельче — не рисуем: иначе тысячи плиток
+  const b = myMapBounds(m); if (b) opt.bounds = b;                      // вне карты плитки не запрашиваем
+  return (myMapLayers[m.id] = new MyTiles(opt));
+}
+const saveMyMaps = () => setPref('myMaps', myMaps);
+function toggleMyMap(id, show) {
+  const m = myMaps.find(x => x.id === id); if (!m) return;
+  if (!mapsOk) { toast(MAPS ? 'Обновите приложение — в этой версии своих карт нет' : 'Свои карты показываются в Android-приложении «Полевой план»'); return; }
+  const l = myMapLayer(m), on = show != null ? show : !map.hasLayer(l);
+  if (on) l.addTo(map); else map.removeLayer(l);
+  m.on = on; saveMyMaps();
+}
+const mbText = b => b >= 1 << 30 ? mText(b / (1 << 30), 1) + ' ГБ' : Math.max(1, Math.round(b / (1 << 20))) + ' МБ';
+async function loadMyMap() {
+  if (!mapsOk) { toast(MAPS ? 'Обновите приложение — в этой версии своих карт нет' : 'Загрузка своих карт работает в Android-приложении «Полевой план»'); return; }
+  let sub = null;
+  try {
+    sub = await MAPS.addListener('progress', p => toast(p.done < 0 ? 'Файл скопирован, читаю карту… (у большого файла — до минуты)'
+      : `Копирую карту: ${mbText(p.done)}${p.size > 0 ? ' из ' + mbText(p.size) : ''}… Не сворачивайте приложение`));
+    const m = await MAPS.pick();
+    myMaps = [...myMaps.filter(x => x.id !== m.id), { ...m, on: true, op: 1 }]; saveMyMaps();
+    toggleMyMap(m.id, true);
+    const b = myMapBounds(m);
+    if (b) map.fitBounds(b, { maxZoom: Math.min(18, m.maxzoom >= 0 ? m.maxzoom : 18) });
+    toast(`Карта «${m.name}» загружена (${mbText(m.size)}, масштабы ${m.minzoom}–${m.maxzoom}) и включена`);
+  } catch (e) {
+    if (e && (e.code === 'CANCEL' || /не выбран/.test(e.message || ''))) return;
+    toast((e && e.message) || 'Не удалось загрузить карту');
+  } finally { if (sub) sub.remove(); }
+}
+function openMyMaps() {
+  const rows = myMaps.map(m => `<div class="meas-row"><span style="flex:1;min-width:0"><b>${esc(m.name)}</b><br><span style="color:var(--muted)">${esc(m.file || '')} · ${mbText(m.size || 0)} · масштабы ${m.minzoom}–${m.maxzoom} · ${esc(String(m.format || '').toUpperCase())}</span></span>
+    <button class="btn" data-mop="${m.id}">${(MY_MAP_OPS.find(o => o[0] === (m.op != null ? m.op : 1)) || MY_MAP_OPS[0])[1]}</button>
+    <button class="btn" data-mshow="${m.id}">Показать</button><button class="x" data-mdel="${m.id}" aria-label="Удалить">🗑</button></div>`).join('');
+  showSheet(`<div class="sh-head"><b>Мои карты</b><button class="x" data-close>×</button></div>
+    <button class="btn primary" id="mLoad" style="width:100%">＋ Загрузить карту из файла (MBTiles)</button>
+    <div class="hint" style="margin:6px 0 10px">Файл MBTiles с растровыми плитками (PNG, JPG): выгрузка из SAS.Planet, QGIS, MOBAC. Его можно скачать или переслать себе в Телеграм — потом выбрать здесь.
+      Карта копируется в телефон и работает без интернета. Включить и выключить — в «Слоях». Чертежи DXF и GeoTIFF — следующими шагами.</div>
+    ${rows ? `<div style="max-height:42vh;overflow:auto">${rows}</div>` : '<div class="hint">Своих карт пока нет.</div>'}
+    <div class="row2" style="margin-top:10px"><button class="btn" id="mRaster">Наложить скан по углам</button><button class="btn" id="mRasters">Сканы: прозрачность, удаление</button></div>`);
+  $('mLoad').onclick = () => { closeSheet(); loadMyMap(); };
+  $('mRaster').onclick = () => { closeSheet(); MENU.raster(); };
+  $('mRasters').onclick = () => { closeSheet(); MENU.rasters(); };
+  $('sheetPanel').onclick = e => {
+    const op = e.target.closest('[data-mop]'), sh = e.target.closest('[data-mshow]'), del = e.target.closest('[data-mdel]');
+    if (op) { const m = myMaps.find(x => x.id === op.dataset.mop); if (!m) return;
+      const i = MY_MAP_OPS.findIndex(o => o[0] === (m.op != null ? m.op : 1)); m.op = MY_MAP_OPS[(i + 1) % MY_MAP_OPS.length][0]; saveMyMaps();
+      if (myMapLayers[m.id]) myMapLayers[m.id].setOpacity(m.op); openMyMaps(); }   // прозрачность — не включает выключенную карту
+    if (sh) { const m = myMaps.find(x => x.id === sh.dataset.mshow); if (!m) return; closeSheet(); toggleMyMap(m.id, true);
+      const b = myMapBounds(m); if (b) map.fitBounds(b, { maxZoom: Math.min(18, m.maxzoom >= 0 ? m.maxzoom : 18) }); else toast('У карты не записаны границы — найдите её на карте сами'); }
+    if (del) { const m = myMaps.find(x => x.id === del.dataset.mdel); if (!m) return;
+      ask(`Удалить карту «${esc(m.name)}» (${mbText(m.size || 0)}) из телефона? Файл-источник в «Загрузках» останется.`, 'Удалить', true).then(async ok => {
+        if (!ok) return;
+        try { if (MAPS) await MAPS.remove({ id: m.id }); } catch (err) { /* файла уже нет */ }
+        if (myMapLayers[m.id]) { map.removeLayer(myMapLayers[m.id]); delete myMapLayers[m.id]; }
+        myMaps = myMaps.filter(x => x !== m); saveMyMaps(); openMyMaps(); toast('Карта удалена');
+      }); }
+  };
+}
+// при запуске: включить карты, которые были включены; сверить список с телефоном (карту удалили вместе с данными приложения — убрать)
+// в обе стороны: карты из телефона, которых нет в списке (список стёрся), — добавить выключенными
+if (MAPS) MAPS.list().then(r => {
+  const phone = (r && r.maps) || [], have = new Set(phone.map(m => m.id)), known = new Set(myMaps.map(m => m.id));
+  myMaps = [...myMaps.filter(m => have.has(m.id)), ...phone.filter(m => !known.has(m.id)).map(m => ({ ...m, on: false, op: 1 }))]; saveMyMaps();
+  for (const m of myMaps) if (m.on) toggleMyMap(m.id, true);
+}).catch(() => { mapsOk = false; });                                    // старое приложение без MapsPlugin
+
 // Меню: короткий главный список; выгрузки и настройки — в своих подменю (2 касания до любой выгрузки)
 $('btnMenu').onclick = () => openList('Меню', [
   { header: 'Объект' },
