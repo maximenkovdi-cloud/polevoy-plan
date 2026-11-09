@@ -1582,7 +1582,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 72;
+const APP_BUILD = 73;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1827,10 +1827,102 @@ async function rxConnect() {
   try { await RX.connect({ address: rxCfg.address, host: rxCfg.host, port: Number(rxCfg.port) || 2101, mount: rxCfg.mount, user: rxCfg.user, pass: rxCfg.pass, init: rxCfg.init }); return true; }
   catch (e) { toast('Не подключается: ' + (e.message || e)); return false; }
 }
-function rxSheet() {
+/* Сети поправок России: адрес, порты по округам или «70 + номер региона» (справочники\Сети_поправок_NTRIP.md, ноябрь 2026).
+   Регионы — код (как на автомобильных номерах), название, столица (для подсказки «уехали в другой регион»), федеральный округ */
+const RX_REGIONS = `01|Адыгея|44.61|40.10|ЮФО;02|Башкортостан|54.74|55.97|ПФО;03|Бурятия|51.83|107.58|ДФО;04|Республика Алтай|51.96|85.96|СФО;05|Дагестан|42.98|47.50|СКФО;
+06|Ингушетия|43.17|44.81|СКФО;07|Кабардино-Балкария|43.49|43.61|СКФО;08|Калмыкия|46.31|44.27|ЮФО;09|Карачаево-Черкесия|44.22|42.06|СКФО;10|Карелия|61.79|34.36|СЗФО;
+11|Коми|61.67|50.84|СЗФО;12|Марий Эл|56.63|47.89|ПФО;13|Мордовия|54.19|45.18|ПФО;14|Якутия|62.03|129.73|ДФО;15|Северная Осетия|43.02|44.68|СКФО;16|Татарстан|55.79|49.12|ПФО;
+17|Тыва|51.72|94.45|СФО;18|Удмуртия|56.85|53.21|ПФО;19|Хакасия|53.72|91.44|СФО;20|Чечня|43.32|45.69|СКФО;21|Чувашия|56.15|47.25|ПФО;22|Алтайский край|53.35|83.78|СФО;
+23|Краснодарский край|45.04|38.98|ЮФО;24|Красноярский край|56.01|92.89|СФО;25|Приморский край|43.12|131.89|ДФО;26|Ставропольский край|45.04|41.97|СКФО;27|Хабаровский край|48.48|135.08|ДФО;
+28|Амурская обл.|50.29|127.53|ДФО;29|Архангельская обл.|64.54|40.54|СЗФО;30|Астраханская обл.|46.35|48.04|ЮФО;31|Белгородская обл.|50.60|36.59|ЦФО;32|Брянская обл.|53.24|34.36|ЦФО;
+33|Владимирская обл.|56.13|40.41|ЦФО;34|Волгоградская обл.|48.71|44.51|ЮФО;35|Вологодская обл.|59.22|39.89|СЗФО;36|Воронежская обл.|51.66|39.20|ЦФО;37|Ивановская обл.|57.00|40.97|ЦФО;
+38|Иркутская обл.|52.29|104.28|СФО;39|Калининградская обл.|54.71|20.51|СЗФО;40|Калужская обл.|54.51|36.26|ЦФО;41|Камчатский край|53.02|158.65|ДФО;42|Кемеровская обл.|55.35|86.09|СФО;
+43|Кировская обл.|58.60|49.66|ПФО;44|Костромская обл.|57.77|40.93|ЦФО;45|Курганская обл.|55.44|65.34|УрФО;46|Курская обл.|51.73|36.19|ЦФО;47|Ленинградская обл.|59.57|30.12|СЗФО;
+48|Липецкая обл.|52.61|39.59|ЦФО;49|Магаданская обл.|59.56|150.80|ДФО;50|Московская обл.|55.82|37.33|ЦФО;51|Мурманская обл.|68.97|33.07|СЗФО;52|Нижегородская обл.|56.33|44.00|ПФО;
+53|Новгородская обл.|58.52|31.27|СЗФО;54|Новосибирская обл.|55.03|82.92|СФО;55|Омская обл.|54.99|73.37|СФО;56|Оренбургская обл.|51.77|55.10|ПФО;57|Орловская обл.|52.97|36.07|ЦФО;
+58|Пензенская обл.|53.20|45.00|ПФО;59|Пермский край|58.01|56.23|ПФО;60|Псковская обл.|57.82|28.33|СЗФО;61|Ростовская обл.|47.22|39.72|ЮФО;62|Рязанская обл.|54.63|39.74|ЦФО;
+63|Самарская обл.|53.20|50.15|ПФО;64|Саратовская обл.|51.53|46.03|ПФО;65|Сахалинская обл.|46.96|142.74|ДФО;66|Свердловская обл.|56.84|60.61|УрФО;67|Смоленская обл.|54.78|32.05|ЦФО;
+68|Тамбовская обл.|52.72|41.45|ЦФО;69|Тверская обл.|56.86|35.90|ЦФО;70|Томская обл.|56.48|84.95|СФО;71|Тульская обл.|54.19|37.62|ЦФО;72|Тюменская обл.|57.15|65.53|УрФО;
+73|Ульяновская обл.|54.32|48.40|ПФО;74|Челябинская обл.|55.16|61.40|УрФО;75|Забайкальский край|52.03|113.50|ДФО;76|Ярославская обл.|57.63|39.87|ЦФО;77|Москва|55.75|37.62|ЦФО;
+78|Санкт-Петербург|59.94|30.31|СЗФО;79|Еврейская АО|48.79|132.92|ДФО;82|Крым|44.95|34.10|ЮФО;83|Ненецкий АО|67.64|53.01|СЗФО;86|Ханты-Мансийский АО|61.00|69.02|УрФО;
+87|Чукотский АО|64.73|177.51|ДФО;89|Ямало-Ненецкий АО|66.53|66.61|УрФО;92|Севастополь|44.62|33.52|ЮФО`
+  .split(';').map(s => { const [code, name, lat, lng, fd] = s.trim().split('|'); return { code, name, lat: +lat, lng: +lng, fd }; });
+const RX_SAME_REG = { 77: '50', 78: '47' };                             // город внутри области — для подсказки это один регион
+const RX_REG_PORT = r => 7000 + Number(r.code);                         // «70 + номер региона»: Орловская — 7057
+const RX_FD_PORT = { rtknet: { 'ЦФО': 6030, 'СЗФО': 6031, 'ПФО': 6033, 'УрФО': 6034, 'СКФО': 6038, 'ЮФО': 6040 }, prinnet: { 'ЮФО': 2102, 'СКФО': 2102, 'СЗФО': 2103, 'ЦФО': 2103, 'ПФО': 2104, 'УрФО': 2104 } };   // остальные округа — 6041 и 2105
+const RX_NETS = {
+  rtknet: { name: 'RTKNet', host: 'cors.rtknet.ru', modes: {
+    near: { text: 'ближайшая станция (порт по округу)', port: r => RX_FD_PORT.rtknet[r.fd] || 6041, mount: '[RTCM3X-MSM]' },
+    vrs: { text: 'виртуальная станция VRS (порт по округу)', port: r => RX_FD_PORT.rtknet[r.fd] || 6041, mount: 'RTCM32-MSM' } } },
+  prinnet: { name: 'PrinNet (ПРИН)', host: '95.163.249.164', modes: {
+    near: { text: 'ближайшая станция (порт по округу)', port: r => RX_FD_PORT.prinnet[r.fd] || 2105, mount: 'NEAREST_RTCM32' },
+    vrs: { text: 'виртуальная станция VRS (порт по округу)', port: r => RX_FD_PORT.prinnet[r.fd] || 2105, mount: 'VIRTUAL_RTCM32' },
+    region: { text: 'станции области (выбрать станцию)', port: RX_REG_PORT, mount: '' } } },
+  eft: { name: 'EFT-CORS', host: 'ntrip.eftgroup.ru', modes: {
+    near: { text: 'ближайшая станция (вся Россия)', port: () => 2103, mount: '' },
+    region: { text: 'станции области (выбрать станцию)', port: RX_REG_PORT, mount: '' } } },
+  smartnet: { name: 'SmartNet', host: 'rtcm.smartnetrtk.ru', modes: {
+    near: { text: 'ближайшая станция (вся Россия)', port: () => 8002, mount: 'near_msm5' },
+    vrs: { text: 'виртуальная станция VRS', port: () => 8007, mount: 'VRS.MSM5' },
+    region: { text: 'станции области (выбрать станцию)', port: RX_REG_PORT, mount: '' } } },
+  pidata: { name: 'PiDATA', host: 'pidt.net', modes: { near: { text: 'станции сети', port: () => 1234, mount: '' } } }
+};
+const rxRegion = code => RX_REGIONS.find(r => r.code === code) || null;
+// Регион по месту: ближайший из столиц и опорных городов больших областей (у Норильска ближе Салехард, чем Красноярск, —
+// поэтому Норильск — сам опорный город Красноярского края). Опорный город — «код|широта|долгота»
+const RX_REG_TOWNS = `24|69.35|88.20;24|58.45|92.17;29|61.25|46.65;23|43.60|39.73;23|44.72|37.77;50|54.92|37.41;50|55.10|38.77;50|56.31|38.13;50|55.43|37.55;
+14|62.53|113.96;14|56.66|124.71;14|70.62|147.90;66|59.60|60.57;72|58.20|68.25;86|61.25|73.40;86|60.94|76.57;89|66.08|76.63;89|63.20|75.45;38|56.15|101.63;38|57.77|108.11;
+27|50.55|137.00;27|53.14|140.73;47|60.71|28.75;47|59.64|33.51;11|67.50|64.05;11|63.56|53.70;34|50.08|45.41;56|51.23|58.47;74|53.41|58.98;63|53.51|49.42;16|55.74|52.40;
+26|44.04|43.06;41|56.32|160.85;49|62.50|149.60;28|53.70|127.30;75|50.38|116.52;87|69.70|170.31;65|50.40|142.80;02|52.71|58.66;59|59.41|56.80;29|64.56|39.83;
+51|67.56|33.40;10|64.95|34.60;35|59.13|37.90;43|59.40|51.00;18|57.10|52.56;53|57.99|33.25;60|56.34|30.53;69|57.40|34.40;76|58.05|38.83;
+54|54.75|77.97;55|56.88|74.41;22|52.50|82.78;42|53.76|87.14;70|58.31|82.90;04|50.40|86.80;17|51.28|91.58;14|64.56|143.23;65|53.57|142.95;03|56.22|113.49;25|44.80|132.60;61|47.71|40.21`
+  .split(';').map(s => { const [code, lat, lng] = s.trim().split('|'); return { code, lat: +lat, lng: +lng }; });
+const RX_REG_PLACES = [...RX_REGIONS.map(r => ({ code: r.code, lat: r.lat, lng: r.lng })), ...RX_REG_TOWNS];
+// ближайший регион и расстояние до ближайшего опорного места заданного региона
+function rxNearestRegion(ll) {
+  let best = null, bd = Infinity;
+  for (const p of RX_REG_PLACES) { const d = ll.distanceTo([p.lat, p.lng]); if (d < bd) { bd = d; best = p; } }
+  return best ? rxRegion(best.code) : null;
+}
+function rxDistToRegion(ll, code) {
+  let bd = Infinity;
+  for (const p of RX_REG_PLACES) if (p.code === code) bd = Math.min(bd, ll.distanceTo([p.lat, p.lng]));
+  return bd;
+}
+// порт сети для региона; byRegion — порт зависит от региона или округа (тогда и нужна подсказка при переезде)
+function rxPreset(netId, modeId, reg) {
+  const n = RX_NETS[netId], m = n && (n.modes[modeId] || Object.values(n.modes)[0]);
+  if (!m) return null;
+  const r = reg || rxRegion('57'), port = m.port(r), other = RX_REGIONS.find(x => x.fd !== r.fd) || r;
+  return { host: n.host, port, mount: m.mount, byRegion: m.port(other) !== port || m.port === RX_REG_PORT };
+}
+// поля выбора сети; net, mode, reg — то, что выбрано в окне сейчас (сохраняется только кнопками окна)
+function rxNetFields(net, mode, reg) {
+  const n = RX_NETS[net];
+  const near = gps ? rxNearestRegion(L.latLng(gps.lat, gps.lng)) : rxNearestRegion(map.getCenter());
+  reg = reg || (near && near.code) || '57';
+  return `<div><label for="rx_net">Сеть поправок</label><select id="rx_net"><option value="">свой сервер — вписать вручную</option>${Object.entries(RX_NETS).map(([id, x]) => `<option value="${id}"${id === net ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+    ${n ? `<div><label for="rx_mode">Как подключаться</label><select id="rx_mode">${Object.entries(n.modes).map(([id, m]) => `<option value="${id}"${id === (mode || 'near') ? ' selected' : ''}>${esc(m.text)}</option>`).join('')}</select></div>
+    <div><label for="rx_reg">Регион работ</label><select id="rx_reg">${RX_REGIONS.map(r => `<option value="${r.code}"${r.code === reg ? ' selected' : ''}>${r.code} — ${esc(r.name)}</option>`).join('')}</select></div>
+    <div class="hint">Адрес, порт и точка подключения заполнятся сами — по справочнику на ноябрь 2026; если сеть сменила адрес, поправьте вручную.
+      Ближайшая станция и VRS выбираются сетью сами. Если порт зависит от области или округа, а вы уехали туда, где нужен другой, — приложение предложит сменить.</div>` : ''}`;
+}
+// выбрали сеть, способ или регион — заполнить адрес, порт, точку; сменился порт — станция прежней области уже не годится
+function rxApplyPreset() {
+  const net = $('rx_net') ? $('rx_net').value : '';
+  if (!RX_NETS[net]) return;
+  const mode = $('rx_mode') ? $('rx_mode').value : 'near', reg = rxRegion($('rx_reg') ? $('rx_reg').value : '57');
+  const p = rxPreset(net, mode, reg), portChanged = String($('rx_port').value) !== String(p.port);
+  $('rx_host').value = p.host; $('rx_port').value = p.port;
+  const known = Object.values(RX_NETS).some(x => Object.values(x.modes).some(m => m.mount === $('rx_mount').value));
+  if (p.mount || portChanged || known || $('rx_mount').value === '') $('rx_mount').value = p.mount;
+}
+// pre — открыть с другим регионом (подсказка «уехали»): поля заполнены, но сохранится только кнопками окна
+function rxSheet(pre) {
   showSheet(`<div class="sh-head"><b>Приёмник и поправки</b><button class="x" data-close>×</button></div><div class="form">
     <div><label for="rx_dev">Приёмник</label><select id="rx_dev"><option value="${esc(rxCfg.address)}">${esc(rxCfg.name || 'Выберите приёмник')}</option></select></div>
     <div class="hint">Сначала один раз соедините приёмник с устройством в настройках Bluetooth Android. eField и другие программы должны быть отключены от него: приёмник держит одно подключение.</div>
+    <div id="rxNetBox">${rxNetFields(rxCfg.net || '', rxCfg.mode, pre && pre.reg || rxCfg.reg)}</div>
     <div><label for="rx_host">Сервер поправок (адрес)</label><input id="rx_host" autocomplete="off" autocapitalize="off" value="${esc(rxCfg.host)}" placeholder="адрес NTRIP"></div>
     <div><label for="rx_port">Порт</label><input id="rx_port" inputmode="numeric" value="${esc(rxCfg.port)}"></div>
     <div><label for="rx_mount">Точка подключения</label><input id="rx_mount" list="rx_mounts" autocomplete="off" autocapitalize="off" value="${esc(rxCfg.mount)}"><datalist id="rx_mounts"></datalist></div>
@@ -1842,9 +1934,16 @@ function rxSheet() {
     <div class="acts"><button class="btn" id="rxMounts">Найти точки</button><button class="btn" id="rxOff">Отключить</button><button class="btn primary" id="rxOn">Подключить</button></div></div>`);
   const read = () => {
     const sel = $('rx_dev'), opt = sel.options[sel.selectedIndex];
-    rxCfg = { address: sel.value, name: opt && sel.value ? opt.textContent : '', host: $('rx_host').value.trim(), port: Number($('rx_port').value) || 2101, mount: $('rx_mount').value.trim(), user: $('rx_user').value.trim(), pass: $('rx_pass').value, init: $('rx_init').value, auto: rxCfg.auto };
+    const net = $('rx_net') ? $('rx_net').value : '';
+    rxCfg = { address: sel.value, name: opt && sel.value ? opt.textContent : '', host: $('rx_host').value.trim(), port: Number($('rx_port').value) || 2101, mount: $('rx_mount').value.trim(), user: $('rx_user').value.trim(), pass: $('rx_pass').value, init: $('rx_init').value, auto: rxCfg.auto,
+      net, mode: net && $('rx_mode') ? $('rx_mode').value : '', reg: net && $('rx_reg') ? $('rx_reg').value : '' };
     setPref('rx', rxCfg);
   };
+  $('rxNetBox').onchange = e => {                                       // выбор живёт в окне, в настройки — только при «Подключить»/«Отключить»
+    if (e.target.id === 'rx_net') $('rxNetBox').innerHTML = rxNetFields(e.target.value, '', $('rx_reg') ? $('rx_reg').value : rxCfg.reg);
+    rxApplyPreset();
+  };
+  if (pre) rxApplyPreset();
   RX.devices().then(r => {
     const list = (r && r.devices) || [], sel = $('rx_dev'); if (!sel) return;
     sel.innerHTML = '<option value="">Выберите приёмник</option>' + list.map(d => `<option value="${esc(d.address)}"${d.address === rxCfg.address ? ' selected' : ''}>${esc(d.name || d.address)}</option>`).join('');
@@ -1868,6 +1967,9 @@ function rxSheet() {
     if ($('rxMounts')) { b.disabled = false; b.textContent = 'Найти точки'; }
   };
 }
+// Уехали в другой регион, а порт поправок — от прежнего: подсказать сменить (раз на регион, после 3 проверок подряд — не на границе)
+const RX_REG_CHECK_MS = 60000, RX_REG_TIMES = 3, RX_REG_MARGIN = 0.75, RX_REG_MIN_KM = 60;
+let rxRegSeen = { code: null, n: 0 }, rxRegAskedFor = null;
 if (RX) {
   RX.addListener('nmea', e => rxLine(e.line));
   RX.addListener('state', e => {
@@ -1879,6 +1981,39 @@ if (RX) {
     if (rxWasLive && !rxLive()) { rxWasLive = false; cue('bad'); toast('Приёмник молчит, перешёл на GPS телефона'); say('Приёмник потерян'); }
     renderRx();
   }, 2000);
+  setInterval(rxRegionCheck, RX_REG_CHECK_MS);
+}
+function rxRegionWanted() {
+  if (!rxCfg.net || !RX_NETS[rxCfg.net] || !rxCfg.reg || !rxCfg.auto || !gps || spoof) return null;   // при подмене GPS место ложное — не советуем
+  const cur = rxRegion(rxCfg.reg), p = rxPreset(rxCfg.net, rxCfg.mode, cur);
+  if (!p || !p.byRegion || rxCfg.host !== p.host || Number(rxCfg.port) !== p.port) return null;   // адрес или порт вписаны вручную — не трогаем
+  const me = L.latLng(gps.lat, gps.lng), near = rxNearestRegion(me);
+  if (!near || !cur || near.code === cur.code || RX_SAME_REG[near.code] === cur.code || RX_SAME_REG[cur.code] === near.code) return null;
+  const dCur = rxDistToRegion(me, cur.code), dNear = rxDistToRegion(me, near.code);
+  if (dCur < RX_REG_MIN_KM * 1000 || dNear > dCur * RX_REG_MARGIN) return null;   // у границы — не дёргаем
+  const np = rxPreset(rxCfg.net, rxCfg.mode, near);
+  return np.port !== p.port ? { near, cur, port: np.port, old: p.port, mount: np.mount } : null;   // тот же порт (тот же округ) — менять нечего
+}
+// не мешать работе: пока открыто окно (замер, карточка, другой вопрос), идёт рисование или вынос — подсказку откладываем
+const rxBusy = () => $('sheet').style.display === 'block' || !!mode || !!stake;
+function rxRegionCheck() {
+  const w = rxRegionWanted();
+  if (!w) {
+    rxRegSeen = { code: null, n: 0 };
+    // «уже спрашивал» забываем, только когда действительно вернулись в свой регион — не из-за пропажи GPS или границы
+    if (gps && !spoof && rxCfg.reg) { const h = rxNearestRegion(L.latLng(gps.lat, gps.lng)); if (h && h.code === rxCfg.reg) rxRegAskedFor = null; }
+    return;
+  }
+  rxRegSeen = w.near.code === rxRegSeen.code ? { code: w.near.code, n: rxRegSeen.n + 1 } : { code: w.near.code, n: 1 };
+  if (rxRegSeen.n < RX_REG_TIMES || rxRegAskedFor === w.near.code || rxBusy()) return;
+  rxRegAskedFor = w.near.code; cue('ok');
+  ask(`Похоже, вы уже в регионе «${esc(w.near.name)}», а поправки ${esc(RX_NETS[rxCfg.net].name)} настроены на «${esc(w.cur.name)}» (порт ${w.old}). Переключить на порт ${w.port}?<br><span style="color:var(--muted)">После смены станции проверьтесь на твёрдой точке — координаты от разных станций могут отличаться.</span>`, 'Переключить', false).then(ok => {
+    if (!ok) { toast('Оставил прежний регион. Сменить можно в «Приёмник и поправки»'); return; }
+    if (!w.mount) { rxSheet({ reg: w.near.code }); toast(`Порт ${w.port} (${w.near.name}) вписан. Нажмите «Найти точки», выберите станцию и «Подключить»`); return; }   // без станции сервер не пустит
+    rxCfg = { ...rxCfg, reg: w.near.code, port: w.port, mount: w.mount }; setPref('rx', rxCfg);
+    toast(`Поправки: ${w.near.name}, порт ${w.port}. Переподключаюсь`);
+    if (rxStateNow.bt !== 'off') { rxWasLive = false; RX.disconnect().catch(() => {}).then(() => rxConnect()); }   // и при «нет связи» — иначе новый порт не применится
+  });
 }
 
 function spoofPoll() { if (NATIVE && GNSS && GNSS.spoofInfo) GNSS.spoofInfo().then(r => { spoofNative = { ...(r || {}), at: Date.now() }; }).catch(() => {}); }
