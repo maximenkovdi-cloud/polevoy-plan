@@ -1595,7 +1595,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 76;
+const APP_BUILD = 77;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2669,7 +2669,7 @@ const DRAW = {
     const hasPk = line.pk0 != null && line.pk0 !== '';
     let metersBefore = 0, pxBefore = 0, k = 0;
     for (let i = 1; i < lls.length; i++) {
-      const m = lls[i - 1].distanceTo(lls[i]), px = pts[i - 1].distanceTo(pts[i]);
+      const m = groundDist(lls[i - 1], lls[i]), px = pts[i - 1].distanceTo(pts[i]);   // метры — по эллипсоиду (формула «по шару» ошибается до 0,4 %)
       while ((k * PICKET_STEP_M) <= metersBefore + m + 1e-6) {
         const sPx = pxBefore + (m ? (k * PICKET_STEP_M - metersBefore) / m : 0) * px, p = at(path, Math.min(sPx, total));
         const num = hasPk ? Number(line.pk0) + k * (line.pkDir || 1) : k;   // номер пикета: прореживаем по круглым номерам
@@ -2801,13 +2801,7 @@ function buildingLabels(g, poly, spec, line) {
       .some(([dx, dy]) => placeFree(g, poly, corner.x + dx, corner.y + dy, 0, str, 2.3 * MM, { italic: true }));
   }
 }
-function polyArea(line) {                                             // площадь контура, м² (на малом участке — плоско)
-  const ll = line.latlngs, lat0 = ll[0][0] * Math.PI / 180, k = Math.cos(lat0);
-  const p = ll.map(([la, lo]) => [lo * M_PER_DEG * k, la * M_PER_DEG]);
-  let s = 0;
-  for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; s += p[i][0] * q[1] - q[0] * p[i][1]; }
-  return Math.abs(s) / 2;
-}
+function polyArea(line) { return planeArea(line.latlngs); }            // площадь контура, м² — на плане, как у Росреестра
 function drawHits() {
   hitLayer.clearLayers();
   for (const line of data.lines)
@@ -2824,10 +2818,11 @@ function stretchNet(ll0, scale, pos) { if (drawnAt) L.DomUtil.setTransform(netSv
 map.on('zoomanim', e => { if (drawnAt) stretchNet(null, map.getZoomScale(e.zoom, drawnAt.zoom), map._latLngToNewLayerPoint(drawnAt.ll, e.zoom, e.center)); });
 map.on('zoom', () => { if (drawnAt && !map._animatingZoom) stretchNet(null, map.getZoomScale(map.getZoom(), drawnAt.zoom), map.latLngToLayerPoint(drawnAt.ll)); });
 function redrawAll() { drawPoints(); drawHits(); frame(); drawSo(); }
-function lineLength(line) {
-  const ll = (LINES[line.type] || {}).closed && line.latlngs.length > 2 ? line.latlngs.concat([line.latlngs[0]]) : line.latlngs;   // у контура — периметр
-  let m = 0; for (let i = 1; i < ll.length; i++) m += L.latLng(ll[i - 1]).distanceTo(ll[i]); return m;
-}
+// длина объекта — на плане (как в КРЕДО и AutoCAD); у контура — периметр
+function lineLength(line) { return planeLength(line.latlngs, !!(LINES[line.type] || {}).closed); }
+// «на местности …» мелко рядом, если отличается от длины на плане больше чем на 1 см
+const GROUND_NOTE_M = 0.01;
+function groundNote(planeM, latlngs) { const g = planeM / objScale(latlngs); return Math.abs(planeM - g) >= GROUND_NOTE_M ? ` <span style="color:var(--muted)">(на местности ${mText(g, 2)} м)</span>` : ''; }
 
 /* ───────────── Карточка объекта (внизу экрана) ───────────── */
 
@@ -2940,11 +2935,12 @@ function showCard(kind, obj) {
     icon = linePreview(s, 40, 34, obj.color); name = s.name + (obj.count > 1 ? ` · прокладок ${obj.count}` : '');
     sub = [s.tag, obj.caption].filter(Boolean).map(esc).join(' ') || 'без подписи';
     const withH = (obj.hs || []).filter(Boolean).length;
-    kv = [...(obj.no ? [['№', 'L' + obj.no]] : []), ['Длина', lineLength(obj).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' м'], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
+    const lenP = lineLength(obj);
+    kv = [...(obj.no ? [['№', 'L' + obj.no]] : []), ['Длина', mText(lenP, 2) + ' м' + groundNote(lenP, obj.latlngs)], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
     if (s.kind === 'building') {
       const a = obj.attr || {}, lab = buildingLabel(s, obj);
       name = s.name; sub = [lab, a.houseNo ? '№ ' + a.houseNo : ''].filter(Boolean).map(esc).join(' · ') || 'контур';
-      kv = [['Периметр', mText(lineLength(obj), 1) + ' м'], ['Площадь', mText(polyArea(obj), 1) + ' м²'], ['Углов', obj.latlngs.length]];
+      kv = [['Периметр', mText(lenP, 2) + ' м' + groundNote(lenP, obj.latlngs)], ['Площадь', mText(polyArea(obj), 1) + ' м²'], ['Углов', obj.latlngs.length]];
       if (a.hFloor !== undefined && a.hFloor !== '') kv.push(['Пол 1 эт.', mText(Number(a.hFloor), 2) + ' м']);
       if (a.hBlind !== undefined && a.hBlind !== '') kv.push(['Отмостка', mText(Number(a.hBlind), 2) + ' м']);
     }
@@ -3027,6 +3023,35 @@ function planeInverse(a, b) {
   const zone = zoneOf(a.lng), p = planeXY(a, zone), q = planeXY(b, zone), dx = q.x - p.x, dy = q.y - p.y;
   return { d: Math.hypot(dx, dy), dir: (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360 };
 }
+// Длина «на плане» и «на местности». Плоские координаты Гаусса — Крюгера растянуты тем сильнее, чем дальше от осевого
+// меридиана: масштаб m = k0·(1 + y²/2R² + y⁴/24R⁴), y — удаление от осевого. В Орле (7-я зона, ~200 км от осевого) m ≈ 1,0005…1,004.
+// Правило приложения: полевые цифры (сколько идти, промеры, вынос) — на местности (= план / m); цифры плана (длина и площадь
+// объекта, выгрузки) — на плане, как в КРЕДО, AutoCAD и у Росреестра. Высота над морем (~2·10⁻⁵) не учитывается.
+const GK_R = 6371000;
+function gkScale(ll) {
+  const c = crs(), s = sk42(ll.lat, ll.lng);
+  const yc = c.zoned ? s.y - s.zone * 1e6 - 500000 : s.y - ((msk && msk.x0) || 0), k0 = c.zoned ? 1 : (msk && msk.k) || 1;   // у МСК ложное восточное смещение — msk.x0 (это +x_0 в proj)
+  const q = yc * yc / (2 * GK_R * GK_R);
+  return k0 * (1 + q + q * q / 6);
+}
+const midLL = (a, b) => L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2);
+// расстояние на местности между a и b: плоское расстояние, делённое на масштаб в середине отрезка
+function groundDist(a, b) { a = L.latLng(a); b = L.latLng(b); return planeInverse(a, b).d / gkScale(midLL(a, b)); }
+// длина и площадь объекта на плане — в зоне первой вершины (как в выгрузке DXF)
+function planePts(latlngs) { const zone = zoneOf(latlngs[0][1]); return latlngs.map(a => planeXY(L.latLng(a), zone)); }
+function planeLength(latlngs, closed) {
+  if (latlngs.length < 2) return 0;
+  const P = planePts(closed && latlngs.length > 2 ? latlngs.concat([latlngs[0]]) : latlngs);
+  let m = 0; for (let i = 1; i < P.length; i++) m += Math.hypot(P[i].x - P[i - 1].x, P[i].y - P[i - 1].y); return m;
+}
+function planeArea(latlngs) {
+  if (latlngs.length < 3) return 0;
+  const P = planePts(latlngs), o = P[0];
+  let s = 0; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; s += (a.y - o.y) * (b.x - o.x) - (b.y - o.y) * (a.x - o.x); }
+  return Math.abs(s) / 2;
+}
+// средний масштаб объекта (для «на местности» рядом с длиной на плане)
+function objScale(latlngs) { const n = latlngs.length; return gkScale(midLL(L.latLng(latlngs[0]), L.latLng(latlngs[n - 1]))); }
 // прямая задача в плоскости: от точки ll на расстояние d по дирекционному углу dir
 function planeForward(ll, d, dir) {
   const zone = zoneOf(ll.lng), p = planeXY(ll, zone), a = dir * Math.PI / 180;
@@ -3041,7 +3066,7 @@ function updateToObj() {
   toObjLayer.clearLayers();
   const el = $('fromMe');
   if (!selected || !gps) { if (el) el.innerHTML = 'нет GPS <button class="btn" data-act="gpson" style="min-height:30px;padding:2px 10px;margin-left:6px">включить</button>'; return; }
-  const me = L.latLng(gps.lat, gps.lng), t = objTarget(selected.kind, selected.obj), pl = planeInverse(me, t), d = pl.d, az = azimuth(me, t);
+  const me = L.latLng(gps.lat, gps.lng), t = objTarget(selected.kind, selected.obj), pl = planeInverse(me, t), d = pl.d / gkScale(midLL(me, t)), az = azimuth(me, t);   // сколько идти — на местности
   if (el) el.textContent = distText(d) + ` · дир. угол ${degMin(pl.dir)} (${milText(pl.dir)}) · азимут ист. ${degMin(az)}` + (spoof ? ' · GPS под подозрением' : '');
   if (d < 0.05) return;
   // тонкий фиолетовый пунктир и одна стрелка рядом со мной: синий занят GPS и водопроводом, много стрелок — шум (замечание картографа)
@@ -3442,8 +3467,8 @@ function updateStake() {
   if (spoof) body = '<div class="big" style="color:#c62828">Подмена GPS — направление неверно</div>';
   else if (!gps || Date.now() - gps.at > GPS_FRESH_MS) body = '<div class="big">жду GPS…</div>';
   else {
-    const me = sk42(gps.lat, gps.lng), dx = t.x - me.x, dy = t.y - me.y, d = Math.hypot(dx, dy);
-    const az = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;      // дирекционный угол на цель (от оси X — на север, по часовой)
+    const me = sk42(gps.lat, gps.lng), az = (Math.atan2(t.y - me.y, t.x - me.x) * 180 / Math.PI + 360) % 360;   // дирекционный угол на цель (от оси X — на север, по часовой)
+    const m = gkScale(midLL(L.latLng(gps.lat, gps.lng), stake.ll)), dx = (t.x - me.x) / m, dy = (t.y - me.y) / m, d = Math.hypot(dx, dy);   // сколько идти — на местности
     const here = d <= Math.max(STAKE_OK_M, gps.acc);
     body = `<div class="row"><svg width="56" height="56" viewBox="-28 -28 56 56" style="flex:none;transform:rotate(${az}deg)"><path d="M0 -24L10 8L0 2L-10 8Z" fill="${here ? '#2e7d32' : '#e65100'}"/></svg>
       <div><div class="big ${here ? 'ok' : ''}">${here ? 'На месте' : cmText(d)}</div>
@@ -3681,7 +3706,7 @@ function openSearch() {
     // всё строим в плоскости: истинный → дирекционный (α = A − γ), магнитный → истинный (A = M + склонение)
     const gamma = gammaAt(base), decl = kind === 'mag' ? magDecl : null;
     const dirAng = ((kind === 'dir' ? ang : (kind === 'mag' ? ang + magDecl : ang) - gamma) + 360) % 360;
-    const ll = planeForward(base, d, dirAng);
+    const ll = planeForward(base, d * gkScale(base), dirAng);           // расстояние меряли на местности (дальномер, рулетка) — на плане оно длиннее в m раз
     // оценка точности (СКО складываем в квадрате): база — GPS (его точность), знак (его точность или «приближённо»), крестик на подложке — неизвестна;
     // угол компаса ≈ 5° → 0,09·d (у железа и труб — больше); угол с чертежа или теодолита считаем точным. «Точно» — не хуже 0,12 м (≈ половина допуска 1:500)
     const baseAcc = fromMe ? gps.acc : snapped ? (snapped.approx != null ? snapped.approx : snapped.q && snapped.q.acc != null ? snapped.q.acc : 0) : null;
@@ -3726,7 +3751,10 @@ function saveTracks() {
   trackSavedAt = Date.now();
 }
 const saveTracksSoon = () => { if (Date.now() - trackSavedAt > TRACK_SAVE_MS) saveTracks(); };
-function trackLen(t) { let m = 0; for (let i = 1; i < t.pts.length; i++) m += L.latLng(t.pts[i - 1][0], t.pts[i - 1][1]).distanceTo([t.pts[i][0], t.pts[i][1]]); return m; }
+// пройдено — на местности: короткие шаги трека по радиусам кривизны эллипсоида (без пересчёта координат — трек бывает в 10 тыс. точек)
+function stepGround(a, b) { const r = Math.PI / 180, e2 = 0.00669438, s = Math.sin((a[0] + b[0]) / 2 * r), w = Math.sqrt(1 - e2 * s * s), M = 6378137 * (1 - e2) / (w * w * w), N = 6378137 / w;
+  return Math.hypot((b[0] - a[0]) * r * M, (b[1] - a[1]) * r * N * Math.cos((a[0] + b[0]) / 2 * r)); }
+function trackLen(t) { let m = 0; for (let i = 1; i < t.pts.length; i++) m += stepGround(t.pts[i - 1], t.pts[i]); return m; }
 const kmText = m => m < 1000 ? Math.round(m) + ' м' : mText(m / 1000, 2) + ' км';
 // новая точка трека: при подмене и плохой точности не пишем (скачки испортят путь); стоя на месте — тоже
 function trackFeed() {
@@ -3945,15 +3973,16 @@ function soFromLine(line) {
     if (!(step >= 0.5)) { toast('Шаг — от 0,5 м'); return false; }
     setPref('soStep', step);
     const xy = line.latlngs.map(a => sk42(a[0], a[1])), zs = lineZs(line), pts = [];
+    const m = objScale(line.latlngs), stepP = step * m;                 // шаг и пикеты — на местности, как у оси при выносе и пикетов трассы
     let run = 0;
     for (let i = 0; i < xy.length; i++) {
       if (i) { const a = xy[i - 1], b = xy[i], L0 = Math.hypot(b.x - a.x, b.y - a.y);
-        for (let d = Math.ceil((run + 1e-6) / step) * step - run; d < L0 - 1e-6; d += step) { const t = d / L0;
+        for (let d = Math.ceil((run + 1e-6) / stepP) * stepP - run; d < L0 - 1e-6; d += stepP) { const t = d / L0;
           pts.push({ s: run + d, x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, h: zs && zs[i - 1] != null && zs[i] != null ? zs[i - 1] + (zs[i] - zs[i - 1]) * t : null }); }
         run += L0; }
       pts.push({ s: run, x: xy[i].x, y: xy[i].y, h: zs ? zs[i] : null, v: i + 1 });
     }
-    const add = pts.map(p => soPlace({ no: `${v.pre || 'L'}-${pkText(p.s)}`, x: p.x, y: p.y, h: p.h == null ? null : +p.h.toFixed(3), code: p.v ? 'вершина ' + p.v : '' })).filter(Boolean);
+    const add = pts.map(p => soPlace({ no: `${v.pre || 'L'}-${pkText(p.s / m)}`, x: p.x, y: p.y, h: p.h == null ? null : +p.h.toFixed(3), code: p.v ? 'вершина ' + p.v : '' })).filter(Boolean);
     data.so = soList().concat(add); save(); drawSo(); toast(`Добавлено точек разбивки: ${add.length}`); setTimeout(soSheet, 0);
   }, 'Добавить');
 }
@@ -4050,7 +4079,8 @@ function updateAxis() {
   if (spoof) body = '<div class="big" style="color:#c62828">Подмена GPS — положение неверно</div>';
   else if (!gps || Date.now() - gps.at > GPS_FRESH_MS) body = '<div class="big">жду GPS…</div>';
   else {
-    const w = axisWhere(line, sk42(gps.lat, gps.lng)); if (!w) { stopStake(); toast('У линии нет длины'); return; }
+    const w0 = axisWhere(line, sk42(gps.lat, gps.lng)); if (!w0) { stopStake(); toast('У линии нет длины'); return; }
+    const m = gkScale(L.latLng(gps.lat, gps.lng)), w = { ...w0, off: w0.off / m, s: w0.s / m, len: w0.len / m };   // шаги и пикеты — на местности
     const pk0 = line.pk0 != null ? line.pk0 * 100 : 0, here = Math.abs(w.off) <= Math.max(STAKE_OK_M, gps.acc);
     const H = w.h != null ? normalHeight(gps.lat, gps.lng, gps.alt) : null, dH = H != null ? H - w.h : null;
     body = `<div class="big ${here ? 'ok' : ''}">${here ? 'На оси' : (w.off > 0 ? 'влево ' : 'вправо ') + cmText(Math.abs(w.off))}</div>
@@ -4595,8 +4625,8 @@ function offsetPoint() {
   ], v => {
     const d = parseNum(v.d), a = parseNum(v.a);
     if (!(d >= 0) || isNaN(a)) { toast('Расстояние и угол — числа'); return false; }
-    const b = sk42(base.lat, base.lng), r = a * Math.PI / 180;
-    const ll = fromSk42(b.x + d * Math.cos(r), b.y + d * Math.sin(r), b.zone);
+    const b = sk42(base.lat, base.lng), r = a * Math.PI / 180, dp = d * gkScale(base);   // промер на местности → на плане
+    const ll = fromSk42(b.x + dp * Math.cos(r), b.y + dp * Math.sin(r), b.zone);
     addAt(ll, null, 'offset');
     toast(`Точка на ${mText(d, 2)} м под углом ${mText(a, 1)}°`);
   }, 'Поставить');
@@ -4644,6 +4674,7 @@ function pickTap(ll) {
   pickLayer.clearLayers(); pickMark(pickTool.A.ll, 'А');                // Б выбирается заново — старую метку убрать
   pickTool.B = p; pickMark(p.ll, 'Б'); cue('tick');
   const A = sk42(pickTool.A.ll.lat, pickTool.A.ll.lng), B = sk42(p.ll.lat, p.ll.lng), AB = Math.hypot(B.x - A.x, B.y - A.y);
+  pickTool.m = gkScale(midLL(pickTool.A.ll, p.ll));                   // промеры рулеткой — на местности; на плане они длиннее в m раз
   if (A.zone !== B.zone) { toast('А и Б в разных зонах системы координат — выберите точки ближе'); return true; }
   if (AB < 0.01 && pickTool.kind !== 'tape') { toast('А и Б — одна и та же точка, нажмите другую'); pickTool.step = 1; pickLayer.clearLayers(); pickMark(pickTool.A.ll, 'А'); pickPanel(); return true; }
   if (pickTool.kind === 'tape') tapeShow(A, B, AB);
@@ -4659,15 +4690,15 @@ const placeCalc = (ll, how, msg) => {                                   // по�
 function resectForm(A, B, AB) {
   openForm('Засечка по двум промерам', [
     { key: 'a', label: `От ${pickTool.A.name} (А), м`, type: 'number', placeholder: '12.40', half: true },
-    { key: 'b', label: `От ${pickTool.B.name} (Б), м`, type: 'number', placeholder: '8.15', half: true, hint: `Между А и Б по плану ${mText(AB, 2)} м.` }
+    { key: 'b', label: `От ${pickTool.B.name} (Б), м`, type: 'number', placeholder: '8.15', half: true, hint: `Между А и Б на местности ${mText(AB / pickTool.m, 2)} м.` }
   ], v => {
-    const ra = parseNum(v.a), rb = parseNum(v.b);
-    if (!(ra > 0) || !(rb > 0)) { toast('Промеры — числа больше нуля'); return false; }
-    if (ra + rb < AB - 0.005 || Math.abs(ra - rb) > AB + 0.005) { toast(`Промеры не сходятся: между А и Б ${mText(AB, 2)} м, а ${mText(ra, 2)} + ${mText(rb, 2)} ${ra + rb < AB ? 'меньше' : 'не дают треугольника'}`); return false; }
+    const ga = parseNum(v.a), gb = parseNum(v.b), m = pickTool.m, ra = ga * m, rb = gb * m;   // на плане
+    if (!(ga > 0) || !(gb > 0)) { toast('Промеры — числа больше нуля'); return false; }
+    if (ra + rb < AB - 0.005 || Math.abs(ra - rb) > AB + 0.005) { toast(`Промеры не сходятся: между А и Б ${mText(AB / m, 2)} м, а ${mText(ga, 2)} + ${mText(gb, 2)} ${ra + rb < AB ? 'меньше' : 'не дают треугольника'}`); return false; }
     const ux = (B.x - A.x) / AB, uy = (B.y - A.y) / AB, t = (ra * ra - rb * rb + AB * AB) / (2 * AB), h = Math.sqrt(Math.max(0, ra * ra - t * t));
     const sols = [1, -1].map(sg =>   // 1-я — справа от А→Б (стоя в А лицом к Б), 2-я — слева
       ({ x: A.x + ux * t - uy * h * sg, y: A.y + uy * t + ux * h * sg }));
-    setTimeout(() => resectChoose(sols, A.zone, ra, rb, h), 0);
+    setTimeout(() => resectChoose(sols, A.zone, ga, gb, h), 0);         // в подписях — промеры как их ввели (на местности)
   }, 'Посчитать');
 }
 function resectChoose(sols, zone, ra, rb, h) {
@@ -4687,13 +4718,13 @@ function lineForm(A, B, AB) {
   openForm('Створ и перпендикуляр', [
     { key: 's', label: `От ${pickTool.A.name} в сторону ${pickTool.B.name}, м`, type: 'number', placeholder: '12.40', half: true },
     { key: 'o', label: 'Вправо (+) / влево (−), м', type: 'number', value: '0', placeholder: '3.10 или −3.10', half: true,
-      hint: `«Вправо» — если стоять в А лицом к Б. Между А и Б по плану ${mText(AB, 2)} м.` }
+      hint: `«Вправо» — если стоять в А лицом к Б. Между А и Б на местности ${mText(AB / pickTool.m, 2)} м.` }
   ], v => {
     const minus = t => String(t).replace(/[−–—]/g, '-');
     const along = v.s === '' ? NaN : parseNum(minus(v.s)), off = v.o === '' ? 0 : parseNum(minus(v.o));
     if (isNaN(along) || isNaN(off)) { toast('Расстояние вдоль — обязательно; оба — числа'); return false; }
-    const ux = (B.x - A.x) / AB, uy = (B.y - A.y) / AB;                  // X — север, Y — восток; «вправо» от направления — (−uy, ux)
-    const x = A.x + ux * along - uy * off, y = A.y + uy * along + ux * off;
+    const ux = (B.x - A.x) / AB, uy = (B.y - A.y) / AB, m = pickTool.m;  // X — север, Y — восток; «вправо» от направления — (−uy, ux); промеры → на план (× m)
+    const x = A.x + (ux * along - uy * off) * m, y = A.y + (uy * along + ux * off) * m;
     setTimeout(() => placeCalc(fromSk42(x, y, A.zone), 'axisoff', `Створ: ${mText(along, 2)} м от А${off ? `, ${off > 0 ? 'вправо' : 'влево'} ${mText(Math.abs(off), 2)} м` : ''}`), 0);
   }, 'Поставить');
 }
@@ -4702,9 +4733,10 @@ function tapeShow(A, B, AB) {
   L.polyline([pickTool.A.ll, pickTool.B.ll], { color: '#e65100', weight: 3, dashArray: '6 4', interactive: false }).addTo(pickLayer);
   const az = (Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI + 360) % 360;
   pickTool.step = 2;
-  pickPanel(`Рулетка: ${mText(AB, 2)} м`);
-  $('pickBody').innerHTML = `<div style="color:var(--muted);margin-top:4px">${esc(pickTool.A.name)} → ${esc(pickTool.B.name)} · угол ${dms(az)}</div><button class="btn" id="tapeAgain" style="width:100%;margin-top:8px">Измерить ещё</button>`;
-  say(`${String(AB.toFixed(2)).replace('.', ',')} метра`);
+  const g = AB / pickTool.m;                                            // рулетка — на местности; на плане — мелко ниже
+  pickPanel(`Рулетка: ${mText(g, 2)} м`);
+  $('pickBody').innerHTML = `<div style="color:var(--muted);margin-top:4px">${esc(pickTool.A.name)} → ${esc(pickTool.B.name)} · угол ${dms(az)}${Math.abs(AB - g) >= GROUND_NOTE_M ? ` · на плане ${mText(AB, 2)} м` : ''}</div><button class="btn" id="tapeAgain" style="width:100%;margin-top:8px">Измерить ещё</button>`;
+  say(`${String(g.toFixed(2)).replace('.', ',')} метра`);
   $('tapeAgain').onclick = () => pickStart('tape');
 }
 
@@ -5003,7 +5035,7 @@ function drawRubber() {
     L.circleMarker(snap.ll, { radius: 14, color: '#00c853', weight: 3, fill: false, interactive: false }).addTo(rubber);
   }
   if (!mode || mode.kind !== 'line' || !mode.latlngs.length) return;
-  const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = snap ? snap.ll : map.getCenter(), d = a.distanceTo(b);
+  const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = snap ? snap.ll : map.getCenter(), d = groundDist(a, b);   // отрезок — на местности, как в строке вверху
   if (d < 0.01) return;
   L.polyline([a, b], { color: '#1e88e5', weight: 1.5, opacity: 0.55, dashArray: '3 5', interactive: false }).addTo(rubber);
   const pa = map.latLngToContainerPoint(a), pb = map.latLngToContainerPoint(b);
@@ -5022,7 +5054,7 @@ function drawStats(end) {
   const zone = zoneOf(V[0].lng), P = [...V, end].map(ll => planeXY(ll, zone)), closed = !!(LINES[mode.type] || {}).closed;
   let len = 0;
   for (let i = 1; i < P.length; i++) len += Math.hypot(P[i].x - P[i - 1].x, P[i].y - P[i - 1].y);
-  const segLen = Math.hypot(P[P.length - 1].x - P[P.length - 2].x, P[P.length - 1].y - P[P.length - 2].y);
+  const segLen = Math.hypot(P[P.length - 1].x - P[P.length - 2].x, P[P.length - 1].y - P[P.length - 2].y) / gkScale(midLL(V[V.length - 1], end));   // отрезок — на местности
   if (closed && P.length > 2) len += Math.hypot(P[0].x - P[P.length - 1].x, P[0].y - P[P.length - 1].y);   // у контура — периметр
   let area = 0;                                                         // площадь — только у замкнутых (контур строения, участок); у трубы или забора она бессмысленна
   if (closed && P.length >= 3) { const o = P[0]; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; area += (a.y - o.y) * (b.x - o.x) - (b.y - o.y) * (a.x - o.x); } area = Math.abs(area) / 2; }
@@ -5042,6 +5074,7 @@ function updateAim(snap) {
     html = `<span class="nw">Длина <b>${distText(s.len)}</b></span> · <span class="nw">отр. ${distText(s.segLen)}${s.dir != null ? ` <b>${degMin(s.dir)}</b>` : ''}</span>${s.area > 0.01 ? ` · <span class="nw">S <b>${areaText(s.area)}</b></span>` : ''}`;
   } else if (gps) {
     const me = L.latLng(gps.lat, gps.lng), c = map.getCenter(), r = planeInverse(me, c), old = Date.now() - gps.at > AIM_STALE_MS;
+    r.d /= gkScale(midLL(me, c));                                       // сколько идти — на местности
     html = (spoof ? '⚠ GPS ложный? · ' : '') + `<span class="nw">От меня <b>${distText(r.d)}</b></span>` + (r.d > 0.05 ? ` · <span class="nw">дир. <b>${degMin(r.dir)}</b> (${milText(r.dir)})</span>` : '') +
       (old ? ' · GPS устарел' : gps.acc > 3 ? ` · ±${Math.round(gps.acc)} м` : '');
   }
