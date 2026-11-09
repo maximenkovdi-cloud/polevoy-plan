@@ -147,6 +147,10 @@
   .found-lbl { position:absolute; left:32px; top:7px; white-space:nowrap; font:700 13px/1 var(--draft); color:#e65100; paint-order:stroke;
     text-shadow:0 0 2px var(--panel), 0 0 2px var(--panel), 0 0 3px var(--panel), 0 0 3px var(--panel); }
   body.night .found-lbl { color:#ffab40; }
+  /* подписи чертежа DXF: точка привязки — левый нижний угол, сдвиг и поворот — от неё */
+  .dxf-ti { pointer-events:none; }
+  .dxf-t { position:absolute; left:0; bottom:0; white-space:pre; line-height:1.1; transform-origin:0 100%; font-family:Arial, sans-serif;
+    text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo); pointer-events:none; }
 
   /* ── масштаб ── */
   #scale { position:absolute; left:10px; z-index:1000; background:var(--panel); color:var(--ink); border-radius:10px; padding:7px 11px 7px; font-size:13px; font-weight:700; box-shadow:var(--shadow); cursor:pointer; }
@@ -741,11 +745,12 @@ const CRS = {
     def: zone => `+proj=tmerc +lat_0=0 +lon_0=${zone * 6 - 3} +k=1 +x_0=${zone * 1e6 + 500000} +y_0=0 +ellps=krass ${TOWGS84_SK42} +units=m +no_defs` }
 };
 let crsId = pref('crs', 'gsk'), msk = pref('msk', null);   // msk: { name, lon0, lat0, k, x0, y0, towgs84 } — вводит сам пользователь
-function crs() {
-  if (crsId === 'msk' && msk) return { name: msk.name || 'МСК', zoned: false,
+function crsById(id) {          // система по её коду — для чертежа DXF можно выбрать не ту, что в настройках
+  if (id === 'msk' && msk) return { name: msk.name || 'МСК', zoned: false,
     def: () => `+proj=tmerc +lat_0=${msk.lat0 || 0} +lon_0=${msk.lon0} +k=${msk.k || 1} +x_0=${msk.x0 || 0} +y_0=${msk.y0 || 0} +ellps=krass +towgs84=${msk.towgs84 || TOWGS84_SK42.slice(9)} +units=m +no_defs` };
-  return CRS[crsId] || CRS.gsk;
+  return CRS[id] || CRS.gsk;
 }
+function crs() { return crsById(crsId); }
 const planeName = () => crs().name;
 const zoneOf = lng => crs().zoned ? Math.floor(lng / 6) + 1 : 0;
 const gkDef = zone => crs().def(zone);
@@ -857,7 +862,7 @@ function applyTheme() {
 applyTheme();
 $('fabTheme').onclick = () => {
   theme = { day: 'sun', sun: 'night', night: 'day' }[theme] || 'day';
-  setPref('theme', theme); applyTheme(); drawTracks(); toast(THEMES[theme]);   // трек ночью — светлее
+  setPref('theme', theme); applyTheme(); drawTracks(); dxfRedraw(); toast(THEMES[theme]);   // трек и чертежи ночью — светлее
 };
 // раскладка: кнопки, масштаб, панели — относительно реальной высоты верхней плашки и нижней панели
 function layout() {
@@ -1577,7 +1582,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 71;
+const APP_BUILD = 72;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -4742,16 +4747,21 @@ function snapTarget(ll) {
   for (const p of data.points) take([p.lat, p.lng], p.h, 'к точке' + hText(p.h));
   for (const line of data.lines) line.latlngs.forEach((a, i) => { const z = line.hs && line.hs[i]; take(a, z ? z.h : null, 'к вершине' + hText(z && z.h)); });
   (mode.latlngs || []).forEach((a, i) => { const z = mode.hs && mode.hs[i]; take(a, z ? z.h : null, 'к вершине этой линии' + hText(z && z.h)); });
+  // чертежи DXF — только если рядом нет своих точек и вершин: свежая съёмка важнее архивного чертежа
+  const win = best ? null : dxfSnapWindow(ll, c);
+  dxfSnapVerts(win, (a, h, name) => { const was = best; take(a, h, `к чертежу «${name}»` + hText(h)); if (best !== was) best.dxf = name; });
   if (best) return best;
   let ed = SNAP_EDGE_PX;                                              // на отрезок линии или сторону здания
+  const seg = (a, b, what) => {
+    const dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+    const px = a.x + t * dx, py = a.y + t * dy, d = Math.hypot(px - c.x, py - c.y);
+    if (d < ed) { ed = d; best = { ll: map.containerPointToLatLng([px, py]), h: null, what }; }
+  };
   for (const line of data.lines) {
     const pts = screenPts(line);
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1], b = pts[i], dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
-      const px = a.x + t * dx, py = a.y + t * dy, d = Math.hypot(px - c.x, py - c.y);
-      if (d < ed) { ed = d; best = { ll: map.containerPointToLatLng([px, py]), h: null, what: 'на линию' }; }
-    }
+    for (let i = 1; i < pts.length; i++) seg(pts[i - 1], pts[i], 'на линию');
   }
+  if (!best) dxfSnapSegs(dxfSnapWindow(ll, c), (a, b) => seg(map.latLngToContainerPoint(a), map.latLngToContainerPoint(b), 'на линию чертежа'));
   return best;
 }
 // Отметка для новой точки или вершины: по ГНСС («Измерить», «По GPS») или с точки привязки; иначе — нет
@@ -4763,6 +4773,7 @@ function heightFor(ll, meas, src, snap) {
     // высота над эллипсоидом хранится всегда: если модель геоида ещё не загрузилась — отметка посчитается позже
     return { h: H == null ? null : +H.toFixed(2), src: 'gnss', acc: src === 'measure' ? meas.hm : gps && gps.altAcc, ref, from: src, hEll: +Number(hEll).toFixed(3) };
   }
+  if (snap && snap.h != null && snap.h !== '' && snap.dxf) return { h: Number(snap.h), src: 'dxf', from: 'dxf', ref: snap.dxf };   // архивная отметка с чертежа — помечаем отдельно
   if (snap && snap.h != null && snap.h !== '') return { h: Number(snap.h), src: 'snap', from: 'snap' };
   return null;
 }
@@ -4778,6 +4789,7 @@ function heightNote(h, srcKind, info) {
   if (srcKind === 'gnss') return 'по ГНСС' + (info.acc != null ? ' ±' + cmText(info.acc) : '') + (info.from === 'gps' ? ', один отсчёт' : info.from === 'measure' ? ', усреднено' : '') +
     (info.ref ? ', привязка: ' + info.ref : ', без привязки к реперу (EGM2008, ошибка до дм)');
   if (srcKind === 'snap') return 'взята с точки, к которой привязано';
+  if (srcKind === 'dxf') return 'взята с чертежа' + (info.ref ? ` «${info.ref}»` : '') + ' — архивная, не измерена; проверьте систему высот';
   return 'вписана вручную';
 }
 function refreshTemp() {
@@ -4960,7 +4972,8 @@ $('fabLayers').onclick = () => {
     { header: 'Подложка' }, ...Object.keys(bases).map(n => ({ id: 'base:' + n, icon: '🗺', text: n, on: n === baseName, radio: true })),
     { id: 'fade', icon: '◑', text: 'Яркость подложки: ' + (BASE_FADES.find(f => f[0] === baseOp) || BASE_FADES[1])[1] + ' (нажмите — сменить)' },
     { header: 'Мои карты' }, ...myMaps.map(m => ({ id: 'my:' + m.id, icon: '🗂', text: m.name, on: !!(myMapLayers[m.id] && map.hasLayer(myMapLayers[m.id])), check: true })),
-    { id: 'mymaps', icon: '＋', text: myMaps.length ? 'Мои карты: загрузить ещё, прозрачность, удалить →' : 'Загрузить свою карту (MBTiles из SAS.Planet, QGIS) →' },
+    ...myDxf.map(m => ({ id: 'dxf:' + m.id, icon: '📐', text: 'Чертёж: ' + m.name, on: !!m.on, check: true })),
+    { id: 'mymaps', icon: '＋', text: myMaps.length || myDxf.length ? 'Мои карты и чертежи: загрузить ещё, прозрачность, удалить →' : 'Загрузить свою карту или чертёж (MBTiles, DXF) →' },
     { header: 'Поверх карты' }, { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
     { id: 'netcolors', icon: '🎨', text: 'Цвета сетей (традиционные)', on: netColors, check: true },
     ...Object.keys(rasterLayers).map(id => ({ id: 'r:' + id, icon: '🖼', text: rasterLayers[id].r.name, on: map.hasLayer(rasterLayers[id]), check: true }))];
@@ -4968,6 +4981,7 @@ $('fabLayers').onclick = () => {
     if (pick === 'theme') $('fabTheme').onclick();
     if (pick === 'mymaps') { openMyMaps(); return; }
     if (pick.startsWith('my:')) toggleMyMap(pick.slice(3));
+    if (pick.startsWith('dxf:')) toggleDxf(pick.slice(4));
     if (pick.startsWith('base:')) setBase(pick.slice(5));
     if (pick === 'fade') { const i = BASE_FADES.findIndex(f => f[0] === baseOp); baseOp = BASE_FADES[(i + 1) % BASE_FADES.length][0]; setPref('baseOp', baseOp); document.documentElement.style.setProperty('--baseOp', baseOp); }
     if (pick === 'grid') MENU.grid();
@@ -5054,16 +5068,21 @@ function openMyMaps() {
   const rows = myMaps.map(m => `<div class="meas-row"><span style="flex:1;min-width:0"><b>${esc(m.name)}</b><br><span style="color:var(--muted)">${esc(m.file || '')} · ${mbText(m.size || 0)} · масштабы ${m.minzoom}–${m.maxzoom} · ${esc(String(m.format || '').toUpperCase())}</span></span>
     <button class="btn" data-mop="${m.id}">${(MY_MAP_OPS.find(o => o[0] === (m.op != null ? m.op : 1)) || MY_MAP_OPS[0])[1]}</button>
     <button class="btn" data-mshow="${m.id}">Показать</button><button class="x" data-mdel="${m.id}" aria-label="Удалить">🗑</button></div>`).join('');
+  const drows = myDxf.map(m => `<div class="meas-row"><span style="flex:1;min-width:0"><b>📐 ${esc(m.name)}</b><br><span style="color:var(--muted)">${esc(m.file || '')} · ${mbText(m.size || 0)} · ${esc(m.crsName || '')} · ${m.n ? m.n.lines + ' ' + plural(m.n.lines, 'линия', 'линии', 'линий') + ', ' + m.n.texts + ' ' + plural(m.n.texts, 'подпись', 'подписи', 'подписей') : ''}</span></span>
+    <button class="btn" data-dop="${m.id}">${(DXF_OPS.find(o => o[0] === (m.op != null ? m.op : 1)) || DXF_OPS[0])[1]}</button>
+    <button class="btn" data-dshow="${m.id}">Показать</button><button class="x" data-ddel="${m.id}" aria-label="Удалить">🗑</button></div>`).join('');
   showSheet(`<div class="sh-head"><b>Мои карты</b><button class="x" data-close>×</button></div>
-    <button class="btn primary" id="mLoad" style="width:100%">＋ Загрузить карту из файла (MBTiles)</button>
-    <div class="hint" style="margin:6px 0 10px">Файл MBTiles с растровыми плитками (PNG, JPG): выгрузка из SAS.Planet, QGIS, MOBAC. Его можно скачать или переслать себе в Телеграм — потом выбрать здесь.
-      Карта копируется в телефон и работает без интернета. Включить и выключить — в «Слоях». Чертежи DXF и GeoTIFF — следующими шагами.</div>
-    ${rows ? `<div style="max-height:42vh;overflow:auto">${rows}</div>` : '<div class="hint">Своих карт пока нет.</div>'}
+    <div class="row2"><button class="btn primary" id="mLoad">＋ Карта (MBTiles)</button><button class="btn primary" id="mDxf">＋ Чертёж (DXF)</button></div>
+    <div class="hint" style="margin:6px 0 10px"><b>Карта MBTiles</b> — растровые плитки из SAS.Planet, QGIS, MOBAC. <b>Чертёж DXF</b> — топоплан или проект из AutoCAD, nanoCAD, GeoniCS, КРЕДО
+      (DWG сначала сохраните как DXF). Файл можно скачать или переслать себе в Телеграм — потом выбрать здесь. Всё копируется в телефон и работает без интернета; к чертежу липнет крестик. Включить и выключить — в «Слоях».</div>
+    ${rows || drows ? `<div style="max-height:42vh;overflow:auto">${rows}${drows}</div>` : '<div class="hint">Своих карт и чертежей пока нет.</div>'}
     <div class="row2" style="margin-top:10px"><button class="btn" id="mRaster">Наложить скан по углам</button><button class="btn" id="mRasters">Сканы: прозрачность, удаление</button></div>`);
   $('mLoad').onclick = () => { closeSheet(); loadMyMap(); };
+  $('mDxf').onclick = () => { closeSheet(); dxfInput.click(); };
   $('mRaster').onclick = () => { closeSheet(); MENU.raster(); };
   $('mRasters').onclick = () => { closeSheet(); MENU.rasters(); };
   $('sheetPanel').onclick = e => {
+    if (dxfSheetClick(e)) return;
     const op = e.target.closest('[data-mop]'), sh = e.target.closest('[data-mshow]'), del = e.target.closest('[data-mdel]');
     if (op) { const m = myMaps.find(x => x.id === op.dataset.mop); if (!m) return;
       const i = MY_MAP_OPS.findIndex(o => o[0] === (m.op != null ? m.op : 1)); m.op = MY_MAP_OPS[(i + 1) % MY_MAP_OPS.length][0]; saveMyMaps();
@@ -5086,6 +5105,524 @@ if (MAPS) MAPS.list().then(r => {
   myMaps = [...myMaps.filter(m => have.has(m.id)), ...phone.filter(m => !known.has(m.id)).map(m => ({ ...m, on: false, op: 1 }))]; saveMyMaps();
   for (const m of myMaps) if (m.on) toggleMyMap(m.id, true);
 }).catch(() => { mapsOk = false; });                                    // старое приложение без MapsPlugin
+
+/* ───────────── «Мои карты»: чертежи DXF (топоплан, проект из AutoCAD, nanoCAD, GeoniCS, КРЕДО) поверх карты ───────────── */
+
+// Чертёж читается в телефоне: отрезки, полилинии (с дугами), окружности, дуги, эллипсы, сплайны, точки, тексты и блоки (знаки
+// топоплана). Координаты — плоская система: X чертежа — на восток, Y — на север (как в нашей выгрузке DXF). В широту и долготу
+// пересчитываются один раз при загрузке и хранятся в базе телефона (IndexedDB «tk-dxf»); список и настройки — в pref myDxf.
+const DXF_MAX_TEXTS = 300000;
+const DXF_MAX_MB = 60, DXF_MAX_VERTS = 1500000,DXF_BLOCK_DEPTH = 4, DXF_ARC_STEP = 6;   // дуга — отрезками не длиннее 6°
+const DXF_OPS = [[1, 'ярко'], [0.6, 'приглушённо'], [0.35, 'бледно']];
+const DXF_TEXT_MIN_PX = 6, DXF_TEXT_MAX_PX = 80, DXF_TEXT_MAX = 400;  // подписи мельче 6 px не рисуем; на экране — не больше 400
+const DXF_H_TAG = /^(ОТМ|ОТМЕТКА|ВЫСОТА|H|Z|ELEV|ELEVATION|HEIGHT)$/i;  // атрибут знака с отметкой
+const DXF_FAR_KM = 300, DXF_LOCAL_M = 20000;                         // дальше 300 км от карты — спросить; все координаты меньше 20 км — условные
+map.createPane('dxfPane').style.zIndex = 360;                           // над подложкой и своими картами, под треком и знаками
+map.createPane('dxfTextPane').style.zIndex = 365;
+for (const p of ['dxfPane', 'dxfTextPane']) map.getPane(p).style.pointerEvents = 'none';
+const dxfRenderer = L.canvas({ pane: 'dxfPane', padding: 0.3 });
+let myDxf = pref('myDxf', []);                                          // [{ id, name, file, crs, crsName, size, n: { lines, verts, pts, texts }, box: [s, w, n, e], on, op }]
+const dxfShown = {};                                                    // id → { d: запись из базы, rings, group, texts }
+const saveMyDxf = () => setPref('myDxf', myDxf);
+const dxfDb = new Promise(resolve => {
+  try {
+    const req = indexedDB.open('tk-dxf', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('dxf', { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  } catch (e) { resolve(null); }
+});
+async function dxfStore(mode, fn) {
+  const db = await dxfDb;
+  if (!db) throw new Error('база чертежей в телефоне недоступна');
+  return new Promise((ok, bad) => { const tx = db.transaction('dxf', mode), r = fn(tx.objectStore('dxf')); tx.oncomplete = () => ok(r && r.result); tx.onerror = tx.onabort = () => bad(tx.error || new Error('запись прервана')); });
+}
+
+// Кодировка: AutoCAD 2007 и новее пишет UTF-8, старые версии — кодовую страницу из $DWGCODEPAGE (у нас обычно ANSI_1251)
+function dxfDecode(buf) {
+  const head = new TextDecoder('windows-1252').decode(new Uint8Array(buf, 0, Math.min(buf.byteLength, 1 << 16)));
+  if (/^AutoCAD Binary DXF/.test(head)) throw new Error('Это двоичный DXF — сохраните чертёж как обычный (текстовый) DXF');
+  if (/^AC10\d\d/.test(head)) throw new Error('Это файл DWG — откройте его в AutoCAD или nanoCAD и сохраните как DXF («Сохранить как» → DXF)');
+  if (!/^(ï»¿)?\s*0\s*\r?\n\s*SECTION/.test(head) && !/\n\s*0\s*\r?\n\s*SECTION/.test(head)) throw new Error('Это не чертёж DXF');   // в начале может быть метка UTF-8 (BOM)
+  const ver = (head.match(/\$ACADVER\s*\r?\n\s*1\s*\r?\n\s*(AC\d{4})/) || [])[1] || '';
+  const cp = ((head.match(/\$DWGCODEPAGE\s*\r?\n\s*3\s*\r?\n\s*(\S+)/) || [])[1] || '').toUpperCase();
+  const b = new Uint8Array(buf, 0, Math.min(3, buf.byteLength));
+  let enc = 'windows-1251';
+  if (ver >= 'AC1021' || /UTF|65001/.test(cp) || (b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF)) enc = 'utf-8';   // метка BOM — точно UTF-8 (её декодер убирает)
+  else if (/^ANSI_(125\d)$/.test(cp)) enc = 'windows-' + cp.slice(5);
+  else if (/^(ANSI|DOS)_?866$/.test(cp)) enc = 'ibm866';
+  try { return new TextDecoder(enc).decode(buf); } catch (e) { return new TextDecoder('windows-1251').decode(buf); }
+}
+// пары «код — значение» по одной, без разбиения всего файла на строки (файл бывает в десятки МБ)
+function dxfReader(text) {
+  let i = 0;
+  const n = text.length, line = () => { if (i >= n) return null; let j = text.indexOf('\n', i); if (j < 0) j = n; const s = text.slice(i, j); i = j + 1; return s.endsWith('\r') ? s.slice(0, -1) : s; };
+  const r = { code: 0, val: '', end: false, pos: () => i / n,
+    next() { const c = line(), v = c == null ? null : line(); if (v == null) { r.end = true; r.code = 0; r.val = 'EOF'; return false; }
+      r.code = parseInt(c, 10); r.val = r.code === 0 ? v.trim() : v; return true; } };
+  return r;
+}
+// одна сущность: все пары до следующего кода 0; у POLYLINE — её вершины, у INSERT — атрибуты (до SEQEND)
+function dxfReadEnt(r) { const type = r.val, g = []; while (r.next() && r.code !== 0) g.push(r.code, r.val); return { type, g }; }
+function dxfReadFull(r) {
+  const e = dxfReadEnt(r), sub = e.type === 'POLYLINE' ? 'VERTEX' : e.type === 'INSERT' ? 'ATTRIB' : null;
+  if (!sub) return e;
+  e.kids = [];
+  while (!r.end && r.val === sub) e.kids.push(dxfReadEnt(r));
+  if (!r.end && r.val === 'SEQEND') dxfReadEnt(r);
+  return e;
+}
+function gv(g, code) { for (let k = 0; k < g.length; k += 2) if (g[k] === code) return g[k + 1]; return undefined; }
+function gn(g, code, def) { const v = gv(g, code), x = v == null ? NaN : parseFloat(v); return isFinite(x) ? x : def; }
+const dxfName = g => String(gv(g, 8) || '0').trim();
+function dxfText(s) {
+  return String(s || '').replace(/\\U\+([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/%%[cC]/g, 'Ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/%%[uUoOkK]/g, '').replace(/%%%/g, '%');
+}
+// MTEXT: убрать коды оформления (\fArial|b0; \H2.5x; \C1; {…}), \P — новая строка, дроби \S1^2; — «1/2»
+function dxfMtext(s) {
+  return dxfText(s).replace(/\\\\/g, '\u0001').replace(/\\P/g, '\n').replace(/\\~/g, ' ').replace(/\\S([^;^#/]*)[\^#/]([^;]*);/g, '$1/$2')
+    .replace(/\\[ACcFfHQTWp][^;]*;/g, '').replace(/\\[LlOoKkNX]/g, '').replace(/[{}]/g, '').replace(/\u0001/g, '\\').trim();
+}
+// аффинное преобразование [a, b, c, d, e, f]: X = a·x + c·y + e, Y = b·x + d·y + f; mul(A, B) — сначала B, потом A
+const DXF_ID = [1, 0, 0, 1, 0, 0];
+function dxfMul(A, B) {
+  return [A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1], A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3],
+    A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5]];
+}
+// дуга от угла a0 на угол sweep (градусы, против часовой) — точками
+function dxfArc(cx, cy, r, a0, sweep) {
+  const n = Math.max(2, Math.ceil(Math.abs(sweep) / DXF_ARC_STEP)), out = [];
+  for (let k = 0; k <= n; k++) { const a = (a0 + sweep * k / n) * Math.PI / 180; out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+  return out;
+}
+// вершины полилинии с «выпуклостью» (bulge — тангенс четверти угла дуги) → точки, дуги — отрезками
+function dxfBulged(vs, closed) {
+  const out = [];
+  const m = closed ? vs.length : vs.length - 1;
+  for (let k = 0; k < vs.length; k++) {
+    const [x1, y1, b] = vs[k];
+    out.push([x1, y1]);
+    if (k >= m || !b) continue;
+    const [x2, y2] = vs[(k + 1) % vs.length], dx = x2 - x1, dy = y2 - y1, c = Math.hypot(dx, dy);
+    if (!c) continue;
+    const r = c * (1 + b * b) / (4 * b), h = r - b * c / 2, cx = (x1 + x2) / 2 - dy / c * h, cy = (y1 + y2) / 2 + dx / c * h;
+    const arc = dxfArc(cx, cy, Math.abs(r), Math.atan2(y1 - cy, x1 - cx) * 180 / Math.PI, 4 * Math.atan(b) * 180 / Math.PI);
+    out.push(...arc.slice(1, -1));
+  }
+  if (closed && out.length > 2) out.push(out[0]);
+  return out;
+}
+// выравнивание подписи: доля ширины влево (ax) и высоты вниз (ay) от точки привязки
+const DXF_MT_AX = [0, 0, 0.5, 1, 0, 0.5, 1, 0, 0.5, 1], DXF_MT_AY = [0, 1, 1, 1, 0.5, 0.5, 0.5, 0, 0, 0];
+
+// Разбор файла: слои (выключенные и замороженные — пропускаем), блоки, потом пространство модели с раскрытием блоков
+async function dxfParse(text, onProgress) {
+  const r = dxfReader(text), layers = {}, blocks = {};
+  const out = { lines: [], pts: [], texts: [], snap: [], verts: 0, skip: {}, ext: [Infinity, Infinity, -Infinity, -Infinity] };
+  let section = null, steps = 0;
+  r.next();
+  while (!r.end) {
+    if (r.code !== 0) { r.next(); continue; }
+    if (r.val === 'EOF') break;
+    if (r.val === 'SECTION') { r.next(); section = String(r.val).trim(); r.next(); continue; }
+    if (r.val === 'ENDSEC') { section = null; r.next(); continue; }
+    if (section === 'TABLES' && r.val === 'LAYER') { const e = dxfReadEnt(r), name = String(gv(e.g, 2) || '').trim().toUpperCase();
+      if (name) layers[name] = { color: gn(e.g, 62, 7), flags: gn(e.g, 70, 0), tc: gv(e.g, 420) }; continue; }
+    if (section === 'BLOCKS' && r.val === 'BLOCK') { const b = dxfReadEnt(r), blk = { bx: gn(b.g, 10, 0), by: gn(b.g, 20, 0), ents: [] };
+      while (!r.end && !(r.code === 0 && r.val === 'ENDBLK')) { if (r.code === 0) blk.ents.push(dxfReadFull(r)); else r.next(); }
+      if (!r.end) dxfReadEnt(r);
+      blocks[String(gv(b.g, 2) || '').trim().toUpperCase()] = blk; continue; }
+    if (section === 'ENTITIES') {
+      dxfEmit(dxfReadFull(r), DXF_ID, null, 0, { layers, blocks, out });
+      if (++steps % 3000 === 0) { onProgress(r.pos()); await new Promise(res => setTimeout(res, 0)); }   // экран не замирает
+      continue;
+    }
+    dxfReadEnt(r);
+  }
+  return out;
+}
+function dxfColorOf(e, layer, inh, layers) {
+  const css = tc => '#' + (parseInt(tc, 10) & 0xffffff).toString(16).padStart(6, '0');
+  const tc = gv(e.g, 420); if (tc != null) return css(tc);
+  const c = gn(e.g, 62, 256);
+  if (c === 0) return inh ? inh.color : '7';                          // «по блоку»
+  if (c !== 256) return String(Math.abs(c));
+  const l = layers[layer.toUpperCase()];                              // «по слою»
+  return !l ? '7' : l.tc != null ? css(l.tc) : String(Math.abs(l.color) || 7);
+}
+// одна сущность в координатах чертежа; T — преобразование блока, inh — слой, цвет и отметка вставки блока
+// у этих сущностей координаты — в своей системе объекта (OCS): при выдавливании (0, 0, −1) они зеркальны по X
+const DXF_OCS = new Set(['TEXT', 'ATTRIB', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'INSERT', 'SOLID', 'TRACE']);
+const DXF_QUIET = new Set(['VIEWPORT', 'ATTDEF', 'SEQEND', 'VERTEX', 'ENDBLK', '3DFACE', 'XLINE', 'RAY']);   // не показываем и не жалуемся
+function dxfEmit(e, T, inh, depth, ctx) {
+  const { layers, blocks, out } = ctx, g = e.g, t = e.type;
+  if (out.verts > DXF_MAX_VERTS) throw new Error(`Чертёж слишком большой (больше ${DXF_MAX_VERTS / 1e6} млн вершин) — выгрузите только нужный участок или слои`);
+  if (gn(g, 67, 0) === 1 || gn(g, 60, 0) === 1) return;              // лист (не модель) и невидимые
+  let layer = dxfName(g); if (layer === '0' && inh) layer = inh.layer; // слой «0» в блоке — слой вставки
+  const L_ = layers[layer.toUpperCase()]; if (L_ && (L_.color < 0 || (L_.flags & 1))) return;   // слой выключен или заморожен
+  const color = dxfColorOf(e, layer, inh, layers);
+  const flip = gn(g, 230, 1) < 0 && (DXF_OCS.has(t) || (t === 'POLYLINE' && !(gn(g, 70, 0) & 8)));
+  const P = (x, y) => { if (flip) x = -x; return [T[0] * x + T[2] * y + T[4], T[1] * x + T[3] * y + T[5]]; };
+  const zOf = z => depth ? 0 : z;                                       // отметка — только у самой вставки знака, не у его рисунка
+  // real — вершины настоящие (к ним липнет крестик); у дуг, окружностей и рисунка знаков — нет: только к их отрезкам
+  const add = (pts, z, real) => {
+    if (pts.length < 2) return;
+    const p = [];
+    for (const q of pts) { const [X, Y] = P(q[0], q[1]); p.push(X, Y, zOf(q[2] != null ? q[2] : z)); dxfExt(out, X, Y); }
+    out.lines.push({ c: color, p, v: !!real && !depth }); out.verts += pts.length;
+  };
+  const snapPt = (x, y, z) => { if (depth) return; const [X, Y] = P(x, y); out.snap.push(X, Y, z); };
+  if (t === 'LINE') return add([[gn(g, 10, 0), gn(g, 20, 0), gn(g, 30, 0)], [gn(g, 11, 0), gn(g, 21, 0), gn(g, 31, 0)]], 0, true);
+  if (t === 'LWPOLYLINE' || t === 'POLYLINE') return dxfEmitPoly(e, add, snapPt);
+  if (t === 'LEADER') { const vs = []; for (let k = 0; k < g.length; k += 2) { if (g[k] === 10) vs.push([+g[k + 1], 0]); else if (g[k] === 20 && vs.length) vs[vs.length - 1][1] = +g[k + 1]; } return add(vs, 0, true); }
+  if (t === 'CIRCLE') { snapPt(gn(g, 10, 0), gn(g, 20, 0), gn(g, 30, 0)); return add(dxfArc(gn(g, 10, 0), gn(g, 20, 0), gn(g, 40, 0), 0, 360), gn(g, 30, 0)); }   // центр колодца — привязка
+  if (t === 'ARC') { const a0 = gn(g, 50, 0); let a1 = gn(g, 51, 360); if (a1 <= a0) a1 += 360; return add(dxfArc(gn(g, 10, 0), gn(g, 20, 0), gn(g, 40, 0), a0, a1 - a0), gn(g, 30, 0)); }
+  if (t === 'ELLIPSE') return add(dxfEllipse(g), gn(g, 30, 0));
+  if (t === 'SPLINE') return add(dxfSpline(g), 0);
+  if (t === 'POINT') { const [X, Y] = P(gn(g, 10, 0), gn(g, 20, 0)); dxfExt(out, X, Y); out.pts.push({ x: X, y: Y, z: zOf(gn(g, 30, 0)), c: color }); return; }
+  if (t === 'TEXT' || t === 'ATTRIB' || t === 'MTEXT') return dxfEmitText(e, P, T, flip, color, out);
+  if (t === 'INSERT') return dxfEmitInsert(e, T, P, { layer, color, z: zOf(gn(g, 30, 0)) }, depth, ctx);
+  if (t === 'DIMENSION') {                                              // размер рисуется своим блоком «*D…» — он уже в координатах чертежа
+    const blk = blocks[String(gv(g, 2) || '').trim().toUpperCase()];
+    if (blk && depth < DXF_BLOCK_DEPTH) for (const be of blk.ents) dxfEmit(be, T, { layer, color, z: 0 }, depth + 1, ctx);
+    return;
+  }
+  if (!DXF_QUIET.has(t) && !depth) out.skip[t] = (out.skip[t] || 0) + 1;   // не умеем — посчитаем и скажем
+}
+function dxfEmitPoly(e, add, snapPt) {
+  const g = e.g;
+  if (e.type === 'LWPOLYLINE') {
+    const vs = [], z = gn(g, 38, 0);
+    for (let k = 0; k < g.length; k += 2) { if (g[k] === 10) vs.push([+g[k + 1], 0, 0]); else if (g[k] === 20 && vs.length) vs[vs.length - 1][1] = +g[k + 1]; else if (g[k] === 42 && vs.length) vs[vs.length - 1][2] = +g[k + 1] || 0; }
+    return dxfPolyOut(vs.map(v => [v[0], v[1], v[2], z]), gn(g, 70, 0) & 1, z, add, snapPt);
+  }
+  const fl = gn(g, 70, 0); if (fl & 80) return;                       // сети и многогранники — не линии плана
+  // 128 — грань многогранника, 16 — управляющая точка сглаживания (рисуем только саму кривую)
+  const vs = (e.kids || []).filter(v => !(gn(v.g, 70, 0) & 144)).map(v => [gn(v.g, 10, 0), gn(v.g, 20, 0), gn(v.g, 42, 0), fl & 8 ? gn(v.g, 30, 0) : gn(g, 30, 0)]);
+  return dxfPolyOut(vs, fl & 1, gn(g, 30, 0), add, snapPt);
+}
+// полилиния без дуг — вершины настоящие; с дугами — вершины отдельно в привязки, а линия — отрезками дуг
+function dxfPolyOut(vs, closed, z, add, snapPt) {
+  if (!vs.some(v => v[2])) return add(vs.map(v => [v[0], v[1], v[3]]).concat(closed && vs.length > 2 ? [[vs[0][0], vs[0][1], vs[0][3]]] : []), z, true);
+  vs.forEach(v => snapPt(v[0], v[1], v[3]));
+  return add(dxfBulged(vs, closed), z, false);
+}
+function dxfExt(out, X, Y) { const b = out.ext; if (X < b[0]) b[0] = X; if (Y < b[1]) b[1] = Y; if (X > b[2]) b[2] = X; if (Y > b[3]) b[3] = Y; }
+function dxfEllipse(g) {
+  const cx = gn(g, 10, 0), cy = gn(g, 20, 0), mx = gn(g, 11, 0), my = gn(g, 21, 0), k = gn(g, 40, 1) * (gn(g, 230, 1) < 0 ? -1 : 1);   // выдавлен вниз — обход в другую сторону
+  let t0 = gn(g, 41, 0), t1 = gn(g, 42, 2 * Math.PI); if (t1 <= t0) t1 += 2 * Math.PI;
+  const n = Math.max(8, Math.ceil((t1 - t0) * 180 / Math.PI / DXF_ARC_STEP)), out = [];
+  for (let i = 0; i <= n; i++) { const a = t0 + (t1 - t0) * i / n, c = Math.cos(a), s = Math.sin(a); out.push([cx + mx * c - k * my * s, cy + my * c + k * mx * s]); }
+  return out;
+}
+// сплайн — ломаной через определяющие точки (если их нет — через управляющие): для подложки этого достаточно
+function dxfSpline(g) {
+  const pick = (cx, cy) => { const vs = []; for (let k = 0; k < g.length; k += 2) { if (g[k] === cx) vs.push([+g[k + 1], 0]); else if (g[k] === cy && vs.length) vs[vs.length - 1][1] = +g[k + 1]; } return vs; };
+  const fit = pick(11, 21), vs = fit.length >= 2 ? fit : pick(10, 20);
+  if (gn(g, 70, 0) & 1 && vs.length > 2) vs.push(vs[0]);
+  return vs;
+}
+function dxfEmitText(e, P, T, flip, color, out) {
+  const g = e.g, t = e.type;
+  if (t === 'ATTRIB' && (gn(g, 70, 0) & 1)) return;                   // невидимый атрибут
+  const scale = Math.sqrt(Math.abs(T[0] * T[3] - T[1] * T[2])) || 1;
+  // направление строки — через то же преобразование, что и точки (учитывает зеркальные блоки и выдавливание вниз)
+  const dirOf = r => { const a = r * Math.PI / 180, dx = Math.cos(a) * (flip ? -1 : 1), dy = Math.sin(a); return Math.atan2(T[1] * dx + T[3] * dy, T[0] * dx + T[2] * dy) * 180 / Math.PI; };
+  let s, x = gn(g, 10, 0), y = gn(g, 20, 0), rot = gn(g, 50, 0), ax = 0, ay = 0;
+  if (t === 'MTEXT') {
+    s = dxfMtext([...g.keys()].filter(k => k % 2 === 0 && (g[k] === 3 || g[k] === 1)).map(k => g[k + 1]).join(''));
+    const at = gn(g, 71, 1); ax = DXF_MT_AX[at] || 0; ay = DXF_MT_AY[at] || 0;
+    if (gv(g, 11) != null && gv(g, 50) == null) rot = Math.atan2(gn(g, 21, 0), gn(g, 11, 1)) * 180 / Math.PI;
+  } else {
+    s = dxfText(gv(g, 1));
+    const h72 = gn(g, 72, 0), v = gn(g, t === 'ATTRIB' ? 74 : 73, 0);
+    if ((h72 || v) && h72 !== 3 && h72 !== 5) { x = gn(g, 11, x); y = gn(g, 21, y); }   // «вписать» и «по ширине» — от начальной точки
+    ax = h72 === 1 || h72 === 4 ? 0.5 : h72 === 2 ? 1 : 0; ay = h72 === 4 || v === 2 ? 0.5 : v === 3 ? 1 : 0;
+  }
+  if (!s || !s.trim()) return;
+  const [X, Y] = P(x, y);
+  dxfExt(out, X, Y);
+  out.texts.push({ x: X, y: Y, t: s.slice(0, 200), h: gn(g, 40, 2.5) * scale, r: dirOf(rot), ax, ay, c: color });
+  if (out.texts.length > DXF_MAX_TEXTS) throw new Error('В чертеже слишком много подписей — выгрузите только нужный участок или слои');
+}
+function dxfEmitInsert(e, T, P, inh, depth, ctx) {
+  const g = e.g, blk = ctx.blocks[String(gv(g, 2) || '').trim().toUpperCase()];
+  const [X, Y] = P(gn(g, 10, 0), gn(g, 20, 0));
+  dxfExt(ctx.out, X, Y);
+  // точка вставки знака — привязка; отметка — из Z, а если там 0 — из атрибута «ОТМ»/«H»/«Z» (так пишут GeoniCS и КРЕДО)
+  const hNum = k => { const v = String(gv(k.g, 1) || '').trim().replace(',', '.'); return /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : null; };
+  if (!inh.z && !depth) { const a = (e.kids || []).find(k => DXF_H_TAG.test(String(gv(k.g, 2) || '').trim()) && hNum(k) != null);
+    if (a) inh = { ...inh, z: hNum(a) }; }
+  if (!depth) ctx.out.snap.push(X, Y, inh.z);
+  (e.kids || []).forEach(a => dxfEmit(a, T, inh, depth, ctx));        // атрибуты — уже в координатах чертежа
+  if (!blk || depth >= DXF_BLOCK_DEPTH) return;
+  const sx = gn(g, 41, 1), sy = gn(g, 42, 1), a = gn(g, 50, 0) * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a);
+  const ix = gn(g, 10, 0), iy = gn(g, 20, 0), m = [cs * sx, sn * sx, -sn * sy, cs * sy, 0, 0];
+  m[4] = ix - (m[0] * blk.bx + m[2] * blk.by); m[5] = iy - (m[1] * blk.bx + m[3] * blk.by);
+  const F = gn(g, 230, 1) < 0 ? dxfMul([-1, 0, 0, 1, 0, 0], m) : m, T2 = dxfMul(T, F);
+  for (const be of blk.ents) dxfEmit(be, T2, inh, depth + 1, ctx);
+}
+
+// Пересчёт в широту и долготу. Зона ГСК/СК-42 — по первой цифре X (7 400 000 → 7-я); X без номера зоны — зона карты (можно сменить).
+// Зона и проверки — по середине (медиане) чертежа: одиночный объект у нуля (блок, текст) не сбивает зону, а сам отбрасывается
+const DXF_OUTLIER_M = 100000;                                           // дальше 100 км от середины чертежа — случайный объект
+function dxfMedians(P) {
+  const xs = [], ys = [], take = (x, y) => { xs.push(x); ys.push(y); };
+  const st = Math.max(1, Math.floor(P.lines.length / 3000));
+  for (let i = 0; i < P.lines.length; i += st) take(P.lines[i].p[0], P.lines[i].p[1]);
+  P.pts.slice(0, 2000).forEach(o => take(o.x, o.y));
+  for (let k = 0; k < Math.min(P.snap.length, 6000); k += 3) take(P.snap[k], P.snap[k + 1]);
+  P.texts.slice(0, 2000).forEach(o => take(o.x, o.y));
+  const med = a => { const s = a.slice().sort((p, q) => p - q); return s.length ? s[s.length >> 1] : 0; };
+  return [med(xs), med(ys)];
+}
+// система отсчёта для пересчёта: перестановка X↔Y, миллиметры, зона; ok — середина чертежа похожа на эту систему
+function dxfRefFrame(P, id, swap, zoneSel) {
+  const cr = crsById(id), m = dxfMedians(P);
+  let E0 = swap ? m[1] : m[0], N0 = swap ? m[0] : m[1];
+  const k = Math.max(Math.abs(E0), Math.abs(N0)) > 1e8 ? 0.001 : 1;   // чертёж в миллиметрах
+  E0 *= k; N0 *= k;
+  let zone = 0, off = 0, prefixed = false;
+  if (cr.zoned) {
+    if (Math.max(Math.abs(E0), Math.abs(N0)) < DXF_LOCAL_M) throw new Error('Чертёж в условных координатах (около нуля) — без привязки его не положить на карту. Нужен чертёж в ГСК-2011, СК-42 или МСК');
+    if (E0 >= 1e6) { zone = Math.floor(E0 / 1e6); prefixed = true; } else { zone = zoneSel || Math.min(60, Math.max(1, Math.floor(map.getCenter().lng / 6) + 1)); off = zone * 1e6; }
+    if (zone < 1 || zone > 60) throw new Error('Координаты чертежа не похожи на ' + cr.name + ' — выберите другую систему или поменяйте X↔Y');
+  }
+  const conv = proj4(cr.def(zone), 'WGS84'), q = conv.forward([E0 + off, N0]);
+  // в зональной системе северная координата России — 4,5…8,5 млн м, а долгота должна попасть в свою зону
+  const ok = isFinite(q[0]) && isFinite(q[1]) && Math.abs(q[1]) < 85 && (!cr.zoned || (N0 > 3.5e6 && N0 < 8.6e6 && q[0] > zone * 6 - 7 && q[0] < zone * 6 + 1));
+  return { cr, conv, zone, off, k, swap, E0, N0, prefixed, ok };
+}
+// угадать перестановку X↔Y: если как есть не похоже, а переставленные похожи — переставить
+function dxfGuess(P, id) {
+  let f;
+  try { f = dxfRefFrame(P, id, false); if (f.ok) return { swap: false }; } catch (e) { /* попробуем переставить */ }
+  try { if (dxfRefFrame(P, id, true).ok) return { swap: true, auto: true }; } catch (e) { /* ни так, ни так */ }
+  return { swap: false };
+}
+async function dxfPlace(P, id, opt) {
+  const F = dxfRefFrame(P, id, !!opt.swap, opt.zone), { conv, off, k } = F;
+  const xy = (x, y) => opt.swap ? [y * k, x * k] : [x * k, y * k];
+  const far = (x, y) => { const [E, N] = xy(x, y); return Math.abs(E - F.E0) > DXF_OUTLIER_M || Math.abs(N - F.N0) > DXF_OUTLIER_M; };
+  // check — отбросить, если точка далеко от середины (случайный объект); у линии достаточно одной близкой вершины
+  const ll = (x, y, check) => {
+    if (check && far(x, y)) return null;
+    const [E, N] = xy(x, y), q = conv.forward([E + off, N]);
+    return isFinite(q[0]) && isFinite(q[1]) && Math.abs(q[1]) < 85 ? q : null;
+  };
+  const box = [Infinity, Infinity, -Infinity, -Infinity], grow = (lat, lng) => { if (lat < box[0]) box[0] = lat; if (lng < box[1]) box[1] = lng; if (lat > box[2]) box[2] = lat; if (lng > box[3]) box[3] = lng; };
+  let dropped = 0, done = 0;
+  const lines = [];
+  for (const l of P.lines) {
+    const a = new Float64Array(l.p.length);
+    let good = false;
+    for (let j = 0; j < l.p.length && !good; j += 3) good = !far(l.p[j], l.p[j + 1]);
+    for (let j = 0; j < l.p.length && good; j += 3) { const q = ll(l.p[j], l.p[j + 1]); if (!q) { good = false; break; } a[j] = q[1]; a[j + 1] = q[0]; a[j + 2] = l.p[j + 2] * k; }
+    if (!good) { dropped++; continue; }
+    for (let j = 0; j < a.length; j += 3) grow(a[j], a[j + 1]);
+    lines.push({ c: l.c, p: a, v: l.v });
+    if ((done += a.length) > 60000) { done = 0; await new Promise(res => setTimeout(res, 0)); }   // экран не замирает
+  }
+  const one = o => { const q = ll(o.x, o.y, true); if (!q) { dropped++; return null; } grow(q[1], q[0]); return [q[1], q[0]]; };
+  const pts = P.pts.map(o => { const c = one(o); return c && { lat: c[0], lng: c[1], z: o.z * k, c: o.c }; }).filter(Boolean);
+  const texts = P.texts.map(o => { const c = one(o); return c && { lat: c[0], lng: c[1], t: o.t, h: o.h * k, r: o.r, ax: o.ax, ay: o.ay, c: o.c }; }).filter(Boolean);
+  const sn = [];
+  for (let j = 0; j < P.snap.length; j += 3) { const q = ll(P.snap[j], P.snap[j + 1], true); if (q) sn.push(q[1], q[0], P.snap[j + 2] * k); }   // привязки — без счёта «не показано»
+  pts.forEach(p => sn.push(p.lat, p.lng, p.z));
+  if (!lines.length && !pts.length && !texts.length) throw new Error('Чертёж не попадает на карту в системе ' + F.cr.name + ' — выберите другую систему координат или поменяйте X↔Y');
+  return { lines, pts, texts, snap: new Float64Array(sn), box, dropped, crsName: F.cr.name + (F.zone ? ', зона ' + F.zone : '') + (k !== 1 ? ', в мм' : '') + (opt.swap ? ', X↔Y' : '') };
+}
+
+// Цвета AutoCAD (ACI): 7 — чёрный днём и светлый ночью, жёлтый днём темнее — иначе не виден на светлой карте
+const DXF_ACI = { 1: '#e53935', 2: '#c9a800', 3: '#2e9e3a', 4: '#00a5b5', 5: '#1e5bd8', 6: '#c2185b', 8: '#757575', 9: '#9e9e9e', 250: '#424242', 251: '#616161', 252: '#757575', 253: '#9e9e9e', 254: '#bdbdbd', 255: '#e0e0e0' };
+function dxfCss(c) {
+  const th = document.body.classList.contains('night') ? 'night' : document.body.classList.contains('sun') ? 'sun' : 'day';
+  if (c[0] === '#') return c;
+  const n = Number(c);
+  if (n === 7 || !n) return th === 'night' ? '#eceff1' : th === 'sun' ? '#000' : '#263238';
+  if (th === 'night' && n === 5) return '#64b5f6';
+  if (DXF_ACI[n]) return DXF_ACI[n];
+  if (n >= 10 && n <= 249) { const hue = Math.floor((n - 10) / 10) * 15, k = n % 10, li = [45, 60, 30, 40, 22, 30, 16, 22, 10, 14][k]; return `hsl(${hue},${k % 2 ? 50 : 100}%,${th === 'night' ? Math.min(75, li + 25) : li}%)`; }
+  return '#263238';
+}
+function dxfDraw(m, s) {
+  s.group.clearLayers();
+  const byColor = new Map();
+  for (const l of s.rings) { const col = dxfCss(l.c); if (!byColor.has(col)) byColor.set(col, []); byColor.get(col).push(l.ll); }
+  const op = m.op != null ? m.op : 1;
+  byColor.forEach((rings, col) => L.polyline(rings, { renderer: dxfRenderer, color: col, weight: 1.3, opacity: op, interactive: false, smoothFactor: 0.5 }).addTo(s.group));
+  for (const p of s.d.pts) L.circleMarker([p.lat, p.lng], { renderer: dxfRenderer, radius: 1.6, weight: 0, fillColor: dxfCss(p.c), fillOpacity: op, interactive: false }).addTo(s.group);
+}
+// чтение из базы — одно на чертёж, даже если «Показать» нажали, пока он ещё грузится при запуске
+const dxfLoading = {};
+function dxfLoad(m) {
+  if (dxfShown[m.id]) return Promise.resolve(dxfShown[m.id]);
+  return dxfLoading[m.id] || (dxfLoading[m.id] = dxfStore('readonly', st => st.get(m.id)).then(d => {
+    if (!d) throw new Error(`Чертёж «${m.name}» не найден в памяти телефона — загрузите его снова`);
+    if (!myDxf.includes(m) || m.deleted) throw new Error('Чертёж удалён');
+    return (dxfShown[m.id] = { d, group: L.layerGroup(), texts: L.layerGroup(), rings: d.lines.map(l => { const a = []; for (let k = 0; k < l.p.length; k += 3) a.push([l.p[k], l.p[k + 1]]); return { c: l.c, ll: a }; }) });
+  }).finally(() => { delete dxfLoading[m.id]; }));
+}
+async function dxfShow(m) {
+  const s = await dxfLoad(m);
+  if (!m.on || !myDxf.includes(m)) return;                            // пока читали из базы — выключили или удалили
+  dxfDraw(m, s); s.group.addTo(map); s.texts.addTo(map); dxfTexts();
+}
+function dxfHide(id) { const s = dxfShown[id]; if (s) { map.removeLayer(s.group); map.removeLayer(s.texts); } }
+const dxfVisible = () => myDxf.filter(m => m.on && dxfShown[m.id] && map.hasLayer(dxfShown[m.id].group));
+function dxfRedraw() { for (const m of dxfVisible()) dxfDraw(m, dxfShown[m.id]); dxfTexts(); }
+// подписи — только на экране и только когда их можно прочесть (высота на местности / метров в пикселе ≥ 6 px)
+function dxfTexts() {
+  const vis = dxfVisible(); if (!vis.length) return;
+  const c = map.getCenter(), mpp = 40075016.686 * Math.cos(c.lat * Math.PI / 180) / (256 * Math.pow(2, map.getZoom())), b = map.getBounds().pad(0.1);
+  for (const m of vis) {
+    const s = dxfShown[m.id], op = m.op != null ? m.op : 1;
+    s.texts.clearLayers();
+    let n = 0;
+    for (const t of s.d.texts) {
+      const px = t.h / mpp;
+      if (px < DXF_TEXT_MIN_PX || !b.contains([t.lat, t.lng])) continue;
+      if (++n > DXF_TEXT_MAX) break;
+      const html = `<span class="dxf-t" style="font-size:${Math.min(DXF_TEXT_MAX_PX, px).toFixed(1)}px;color:${dxfCss(t.c)};opacity:${op};transform:rotate(${(-t.r).toFixed(1)}deg) translate(${-t.ax * 100}%,${t.ay * 100}%)">${esc(t.t)}</span>`;
+      L.marker([t.lat, t.lng], { icon: L.divIcon({ className: 'dxf-ti', html, iconSize: [0, 0] }), pane: 'dxfTextPane', interactive: false, keyboard: false }).addTo(s.texts);
+    }
+  }
+}
+map.on('zoomend moveend', dxfTexts);
+function toggleDxf(id, show) {
+  const m = myDxf.find(x => x.id === id); if (!m) return;
+  m.on = show != null ? show : !m.on; saveMyDxf();
+  if (!m.on) { dxfHide(id); return; }
+  dxfShow(m).catch(e => { m.on = false; saveMyDxf(); toast((e && e.message) || 'Не удалось показать чертёж'); });
+}
+const dxfFit = m => map.fitBounds([[m.box[0], m.box[1]], [m.box[2], m.box[3]]], { maxZoom: 19 });
+
+// Привязки к чертежу: сначала грубо отбираем по широте/долготе вокруг крестика, на экран пересчитываем только близкие
+function dxfSnapWindow(ll, c) {
+  if (!dxfVisible().length) return null;
+  const r = ll.distanceTo(map.containerPointToLatLng([c.x + SNAP_PX, c.y])) * 1.5, dLat = r / 111320;
+  return { lat: ll.lat, lng: ll.lng, dLat, dLng: dLat / Math.max(0.1, Math.cos(ll.lat * Math.PI / 180)) };
+}
+function dxfSnapVerts(w, take) {
+  if (!w) return;
+  const near = (lat, lng) => Math.abs(lat - w.lat) < w.dLat && Math.abs(lng - w.lng) < w.dLng;
+  for (const m of dxfVisible()) {
+    const d = dxfShown[m.id].d;
+    for (let k = 0; k < d.snap.length; k += 3) if (near(d.snap[k], d.snap[k + 1])) take([d.snap[k], d.snap[k + 1]], d.snap[k + 2] || null, m.name);
+    for (const l of d.lines) if (l.v !== false) for (let k = 0; k < l.p.length; k += 3) if (near(l.p[k], l.p[k + 1])) take([l.p[k], l.p[k + 1]], l.p[k + 2] || null, m.name);
+  }
+}
+function dxfSnapSegs(w, seg) {
+  if (!w) return;
+  for (const m of dxfVisible()) for (const l of dxfShown[m.id].d.lines) {
+    const p = l.p;
+    for (let k = 3; k < p.length; k += 3) {
+      const la = p[k - 3], lo = p[k - 2], lb = p[k], lob = p[k + 1];
+      if (Math.min(la, lb) > w.lat + w.dLat || Math.max(la, lb) < w.lat - w.dLat || Math.min(lo, lob) > w.lng + w.dLng || Math.max(lo, lob) < w.lng - w.dLng) continue;
+      seg([la, lo], [lb, lob]);
+    }
+  }
+}
+
+// Загрузка: файл → разбор → выбор системы координат (по умолчанию — из настроек) → на карту и в базу телефона
+const dxfInput = document.createElement('input');
+dxfInput.type = 'file'; dxfInput.style.display = 'none'; document.body.appendChild(dxfInput);   // без accept: у .dxf в Android нет своего типа
+dxfInput.onchange = () => { const f = dxfInput.files[0]; dxfInput.value = ''; if (f) dxfImport(f); };
+async function dxfImport(file) {
+  if (/\.dwg$/i.test(file.name)) { toast('Это DWG — откройте его в AutoCAD или nanoCAD и сохраните как DXF («Сохранить как» → DXF)'); return; }
+  if (file.size > DXF_MAX_MB * (1 << 20)) { toast(`Файл больше ${DXF_MAX_MB} МБ — телефону не хватит памяти; выгрузите только нужный участок или слои`); return; }
+  let P;
+  try {
+    toast('Читаю чертёж…');
+    await new Promise(res => setTimeout(res, 50));
+    P = await dxfParse(dxfDecode(await file.arrayBuffer()), p => toast(`Читаю чертёж: ${Math.round(p * 100)} %`));
+  } catch (e) { toast((e && e.message) || 'Не удалось прочитать чертёж'); return; }
+  if (!P.lines.length && !P.pts.length && !P.texts.length) {
+    const sk = Object.keys(P.skip);
+    toast(sk.length ? `В чертеже только объекты, которые я не умею показывать (${sk.slice(0, 4).join(', ')}) — выполните «Экспорт в AutoCAD» или РАСЧЛЕНИТЬ и сохраните DXF снова`
+      : 'В чертеже нет линий, точек и подписей (смотрел пространство модели)');
+    return;
+  }
+  dxfAskCrs(file, P);
+}
+// окно перед загрузкой: что в чертеже, чего не покажем, система координат, X↔Y и зона (если у X нет номера зоны)
+const DXF_CUSTOM = /PROXY|AEC|AECC|GEONICS|CREDO|ACAD_|^MPOLYGON$/i;      // свои объекты программ — их надо «расчленить»
+function dxfSkipText(skip) {
+  const list = Object.entries(skip).sort((a, b) => b[1] - a[1]);
+  if (!list.length) return '';
+  const custom = list.some(([t]) => DXF_CUSTOM.test(t));
+  return `<div class="hint" style="margin-top:6px">Не показаны: ${list.slice(0, 6).map(([t, n]) => esc(t) + ' — ' + n).join(', ')}${list.length > 6 ? '…' : ''}.` +
+    (custom ? ' Это объекты GeoniCS, Civil 3D или КРЕДО — перед выгрузкой выполните «Экспорт в AutoCAD» или команду РАСЧЛЕНИТЬ.' : '') + '</div>';
+}
+function dxfAskCrs(file, P, sel, opt) {
+  const ids = ['gsk', 'sk42', ...(msk ? ['msk'] : [])];
+  sel = sel || (ids.includes(crsId) ? crsId : 'gsk');
+  opt = opt || dxfGuess(P, sel);
+  let F = null, err = '';
+  try { F = dxfRefFrame(P, sel, opt.swap, opt.zone); } catch (e) { err = e.message; }
+  const fx = v => String(Math.round(v)), nPts = P.pts.length + P.snap.length / 3;
+  const where = F ? `Середина чертежа: X (на восток) ${fx(F.E0)}, Y (на север) ${fx(F.N0)}${F.k !== 1 ? ' (чертёж в миллиметрах — пересчитаю в метры)' : ''}.` : '';
+  const warn = err || (F && !F.ok ? `Координаты не похожи на ${F.cr.name}${F.cr.zoned ? ' (северная координата России — 4,5…8,5 млн м)' : ''} — проверьте систему или поменяйте X↔Y.` : '');
+  showSheet(`<div class="sh-head"><b>Чертёж «${esc(file.name)}»</b><button class="x" data-close>×</button></div>
+    <div class="hint">${P.lines.length} ${plural(P.lines.length, 'линия', 'линии', 'линий')}, ${nPts} ${plural(nPts, 'точка привязки', 'точки привязки', 'точек привязки')},${P.texts.length} ${plural(P.texts.length, 'подпись', 'подписи', 'подписей')}.<br>${where}</div>
+    ${dxfSkipText(P.skip)}
+    <div class="hint" style="margin-top:8px"><b>В какой системе координат чертёж?</b> ГСК-2011 и СК-42 на глаз не отличить — расхождение до нескольких метров; уточните у того, кто дал чертёж.${msk ? '' : ' МСК — сначала задайте её в настройках системы координат.'}</div>
+    <div class="row2">${ids.map(id => `<button class="btn${id === sel ? ' primary' : ''}" data-dcrs="${id}">${esc(crsById(id).name)}</button>`).join('')}</div>
+    <div class="row2" style="margin-top:6px"><button class="btn${opt.swap ? ' primary' : ''}" data-dswap="1">Поменять X↔Y${opt.swap ? ' ✓' : ''}</button>
+      ${F && F.cr.zoned && !F.prefixed ? `<button class="btn" data-dzone="-1">Зона −</button><button class="btn" data-dzone="1">Зона ${F.zone} +</button>` : ''}</div>
+    ${opt.auto ? '<div class="hint">X и Y в файле переставлены — я поменял их местами сам.</div>' : ''}
+    ${F && F.cr.zoned && !F.prefixed ? `<div class="hint">У X нет номера зоны — взял зону ${F.zone} (по карте). Если чертёж из другой зоны — смените.</div>` : ''}
+    ${warn ? `<div class="hint" style="color:var(--red)">${esc(warn)}</div>` : ''}
+    <button class="btn primary" id="dxfGo" style="width:100%;margin-top:10px"${err ? ' disabled' : ''}>Положить на карту</button>`);
+  $('sheetPanel').onclick = e => {
+    const c = e.target.closest('[data-dcrs]'), s = e.target.closest('[data-dswap]'), z = e.target.closest('[data-dzone]');
+    if (c) dxfAskCrs(file, P, c.dataset.dcrs, { swap: opt.swap, zone: opt.zone });
+    if (s) dxfAskCrs(file, P, sel, { swap: !opt.swap, zone: opt.zone });
+    if (z && F) dxfAskCrs(file, P, sel, { swap: opt.swap, zone: Math.min(60, Math.max(1, F.zone + Number(z.dataset.dzone))) });
+  };
+  $('dxfGo').onclick = () => { $('sheetPanel').onclick = null; closeSheet(); dxfSave(file, P, sel, opt); };
+  const x = $('sheetPanel').querySelector('[data-close]');               // закрыли окно — разобранный чертёж больше не держим в памяти
+  if (x) x.addEventListener('click', () => { $('sheetPanel').onclick = null; });
+}
+async function dxfSave(file, P, id, opt) {
+  let D;
+  try { toast('Кладу чертёж на карту…'); D = await dxfPlace(P, id, opt); } catch (e) { toast(e.message); dxfAskCrs(file, P, id, opt); return; }
+  const mid = L.latLng((D.box[0] + D.box[2]) / 2, (D.box[1] + D.box[3]) / 2), km = map.getCenter().distanceTo(mid) / 1000;
+  if (km > DXF_FAR_KM && !await ask(`Чертёж оказался в ${Math.round(km)} км от карты. Если это не то место — выберите другую систему координат, зону или поменяйте X↔Y. Положить так?`, 'Положить', false)) { dxfAskCrs(file, P, id, opt); return; }
+  const did = 'd' + Date.now(), name = file.name.replace(/\.dxf$/i, '');
+  try { await dxfStore('readwrite', s => s.put({ id: did, lines: D.lines, pts: D.pts, texts: D.texts, snap: D.snap })); }
+  catch (e) { toast('Не удалось сохранить чертёж в телефоне: ' + ((e && e.message) || 'нет места?')); return; }
+  const m = { id: did, name, file: file.name, crs: id, crsName: D.crsName, size: file.size, n: { lines: D.lines.length, pts: D.pts.length, texts: D.texts.length }, box: D.box, on: true, op: 1 };
+  myDxf = [...myDxf, m]; saveMyDxf();
+  try { await dxfShow(m); } catch (e) { toast(e.message); return; }
+  dxfFit(m);
+  toast(`Чертёж «${name}» на карте (${D.crsName}).${D.dropped ? ` ${D.dropped} ${plural(D.dropped, 'объект', 'объекта', 'объектов')} далеко от чертежа — ${D.dropped === 1 ? 'не показан' : 'не показаны'}.` : ''} К нему липнет крестик`);
+}
+// кнопки чертежей в окне «Мои карты»; true — нажатие обработано
+function dxfSheetClick(e) {
+  const op = e.target.closest('[data-dop]'), sh = e.target.closest('[data-dshow]'), del = e.target.closest('[data-ddel]');
+  const m = (op || sh || del) && myDxf.find(x => x.id === (op || sh || del).dataset[op ? 'dop' : sh ? 'dshow' : 'ddel']);
+  if (!m) return !!(op || sh || del);
+  if (op) { const i = DXF_OPS.findIndex(o => o[0] === (m.op != null ? m.op : 1)); m.op = DXF_OPS[(i + 1) % DXF_OPS.length][0]; saveMyDxf();
+    if (m.on && dxfShown[m.id]) { dxfDraw(m, dxfShown[m.id]); dxfTexts(); } openMyMaps(); }
+  if (sh) { closeSheet(); toggleDxf(m.id, true); dxfFit(m); }
+  if (del) ask(`Удалить чертёж «${esc(m.name)}» из телефона? Файл-источник в «Загрузках» останется.`, 'Удалить', true).then(async ok => {
+    if (!ok) return;
+    m.on = false; m.deleted = true; dxfHide(m.id); delete dxfShown[m.id];              // on = false — чтение из базы, если оно ещё идёт, не покажет удалённый
+    try { await dxfStore('readwrite', s => s.delete(m.id)); } catch (err) { /* записи уже нет */ }
+    myDxf = myDxf.filter(x => x !== m); saveMyDxf(); openMyMaps(); toast('Чертёж удалён');
+  });
+  return true;
+}
+// при запуске: убрать из списка чертежи, которых нет в базе (данные стёрли, список пришёл из копии), включить включённые
+dxfStore('readonly', s => s.getAllKeys()).then(keys => {
+  const have = new Set(keys || []), listed = new Set(myDxf.map(m => m.id));
+  myDxf = myDxf.filter(m => have.has(m.id)); saveMyDxf();
+  const orphans = (keys || []).filter(k => !listed.has(k));            // данные без строки в списке (список стёрся) — место зря
+  if (orphans.length) dxfStore('readwrite', s => { orphans.forEach(k => s.delete(k)); }).catch(() => {});
+  for (const m of myDxf) if (m.on) dxfShow(m).catch(() => {});
+}).catch(() => {});
 
 // Меню: короткий главный список; выгрузки и настройки — в своих подменю (2 касания до любой выгрузки)
 $('btnMenu').onclick = () => openList('Меню', [
@@ -6153,7 +6690,7 @@ function pointNote(p) {
   const lots = /^w_/.test(p.type) && a.lot && a.lot.length ? 'лотки ' + a.lot.map(l => (hasH(l.h) ? planNum(l.h, 2) : '?') + (l.dir ? ' (' + l.dir + ')' : '')).join(', ') : '';
   return [p.note, s.frac && hasH(a.bot) ? 'рядом с камнем ' + planNum(a.bot, 2) : '', lots, bot != null && hasH(p.h) ? 'глуб. ' + (Number(p.h) - bot).toFixed(2) : ''].filter(Boolean).join('; ');
 }
-const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки' };
+const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки', dxf: 'с чертежа (архив)' };
 // метаданные отметки для отчёта: СКО, высота над эллипсоидом, высота антенны (с какой снимали), репер привязки
 const hInfoCols = hi => { const h = hi || {}, ref = h.ref;
   return [h.acc != null ? f3(h.acc) : '', hasH(h.hEll) ? f3(h.hEll) : '', h.ant != null ? f3(h.ant) : '', ref ? (typeof ref === 'object' ? ref.name || 'репер' : ref) : '']; };
