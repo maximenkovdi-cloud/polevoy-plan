@@ -1550,7 +1550,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 68;
+const APP_BUILD = 69;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1570,6 +1570,7 @@ async function checkUpdate(manual) {
     btn.onclick = async () => {
       if (busy) return;
       if (!U || !U.install) { if (U) U.open({ url: v.apk }); else window.open(v.apk, '_blank'); return; }   // старая сборка — через браузер
+      if (trackRec && !(await ask('Идёт запись трека. Установка обновления закроет приложение и остановит запись (записанный путь сохранится). Обновить сейчас?', 'Обновить'))) return;
       busy = true; btn.disabled = true; btn.textContent = 'Скачиваю…';
       const sub = await U.addListener('progress', p => { btn.textContent = p.percent >= 0 ? `Скачиваю ${p.percent}%` : 'Скачиваю…'; });
       try {
@@ -1882,6 +1883,7 @@ function followGps(ll) {
 $('fabMe').onclick = () => {
   startGnss();
   if (spoof) { cue('bad'); say('GPS может быть ложным'); }
+  if (!gps && gpsView !== 'off') { setGpsView('off', true); toast('Слежение выключено (спутников пока нет)'); return; }   // без координат — тоже можно выключить
   if (!gps) { startGps(); setGpsView('follow', true); toast('Ищу спутники — карта пойдёт за вами, как только будут координаты'); return; }
   if (gpsView !== 'off' && followPaused) {                             // после протяжки — сначала просто вернуть карту к себе
     followPaused = false; delete $('fabMe').dataset.paused;
@@ -1894,7 +1896,33 @@ $('fabMe').onclick = () => {
 function pauseFollow() { if (gpsView !== 'off' && !followPaused) { followPaused = true; $('fabMe').dataset.paused = '1'; } }
 map.on('dragstart', pauseFollow);
 // карту увели к объекту (журнал, поиск, «показать все»…) — слежение не тянет её обратно; масштаб пальцами — вокруг центра, слежению не мешает
-const FOLLOW_TOL_PX = 12;
+const FOLLOW_TOL_PX = 12, FOLLOW_TOL_M = 3;
+// любой переход карты не к своему месту (журнал, поиск, «показать все», карточка) — слежение сразу на паузу,
+// ещё до конца плавного перелёта: иначе ближайший отсчёт GPS (у RTK — 10 раз в секунду) вернёт карту назад
+const setViewRaw = map.setView.bind(map);
+map.setView = (center, zoom, options) => {
+  if (gpsView !== 'off' && !followPaused && gps && L.latLng(center).distanceTo([gps.lat, gps.lng]) > FOLLOW_TOL_M) pauseFollow();
+  return setViewRaw(center, zoom, options);
+};
+// повёрнутая карта: контейнер — квадрат больше экрана, поэтому «вписать» и «показать рядом» считаем по видимой части
+function rotVisibleSide() { const a = (mapBearing || 0) * Math.PI / 180; return Math.min(innerWidth, innerHeight) / (Math.abs(Math.cos(a)) + Math.abs(Math.sin(a))); }
+const fitBoundsRaw = map.fitBounds.bind(map);
+map.fitBounds = (bounds, options) => {
+  if (!mapBearing) return fitBoundsRaw(bounds, options);
+  const o = { ...(options || {}) }, el = map.getContainer(), pad = L.point(o.padding || [0, 0]);
+  const ex = L.point((el.clientWidth - rotVisibleSide()) / 2, (el.clientHeight - rotVisibleSide()) / 2);
+  delete o.padding; o.paddingTopLeft = L.point(o.paddingTopLeft || pad).add(ex); o.paddingBottomRight = L.point(o.paddingBottomRight || pad).add(ex);
+  return fitBoundsRaw(bounds, o);
+};
+const panInsideRaw = map.panInside.bind(map);
+map.panInside = (latlng, options) => {
+  if (!mapBearing) return panInsideRaw(latlng, options);
+  const o = options || {}, tl = L.point(o.paddingTopLeft || o.padding || [0, 0]), br = L.point(o.paddingBottomRight || o.padding || [0, 0]);
+  const sy = (tl.y - br.y) / 2, a = mapBearing * Math.PI / 180;           // на экране точка должна встать на sy ниже центра (между верхом и карточкой)
+  map.setView(latlng, map.getZoom(), { animate: false });
+  map.panBy([sy * Math.sin(a), -sy * Math.cos(a)], { animate: false });   // экранный сдвиг (0, −sy) → в повёрнутую систему карты
+  return map;
+};
 map.on('moveend', () => {
   if (gpsView === 'off' || followPaused || !gps) return;
   if (map.latLngToContainerPoint(map.getCenter()).distanceTo(map.latLngToContainerPoint([gps.lat, gps.lng])) > FOLLOW_TOL_PX) pauseFollow();
@@ -1940,7 +1968,7 @@ map.mouseEventToContainerPoint = e => {
 };
 // Направление задней стороны телефона по полной ориентации (alpha, beta, gamma) — верно и когда телефон держат стоя, не только плашмя.
 // Датчик даёт магнитный север; азимуты на плане — истинные, поэтому прибавляем магнитное склонение (в Орле ≈ +11°)
-let magDecl = 0, magDeclAt = null;
+let magDecl = 0, magDeclAt = null, magDeclOk = false;                   // magDeclOk — склонение получено от телефона (иначе «по компасу» не строим)
 function headingOf(alpha, beta, gamma) {
   const r = Math.PI / 180, x = (beta || 0) * r, y = (gamma || 0) * r, z = alpha * r;
   const vx = -Math.cos(z) * Math.sin(y) - Math.sin(z) * Math.sin(x) * Math.cos(y), vy = -Math.sin(z) * Math.sin(y) + Math.cos(z) * Math.sin(x) * Math.cos(y);
@@ -1953,7 +1981,7 @@ function updateDecl() {
   if (!gps || !TRACK_N || !TRACK_N.declination) return;
   if (magDeclAt && magDeclAt.distanceTo([gps.lat, gps.lng]) < DECL_KM * 1000) return;
   magDeclAt = L.latLng(gps.lat, gps.lng);
-  TRACK_N.declination({ lat: gps.lat, lng: gps.lng, alt: gps.alt || 0 }).then(r => { if (r && isFinite(r.deg)) magDecl = r.deg; }).catch(() => { magDeclAt = null; });
+  TRACK_N.declination({ lat: gps.lat, lng: gps.lng, alt: gps.alt || 0 }).then(r => { if (r && isFinite(r.deg)) { magDecl = r.deg; magDeclOk = true; } }).catch(() => { magDeclAt = null; });
 }
 addEventListener('deviceorientationabsolute', e => {
   if (e.alpha == null) return;
@@ -1976,7 +2004,8 @@ function drawCompass() {
   for (let d = 0; d < 360; d += 30) { const [x, y] = pt(d, 70), t = { 0: 'С', 90: 'В', 180: 'Ю', 270: 'З' }[d];
     s += `<text x="${x}" y="${y}" class="rg-l${t ? ' cd' : ''}${d === 0 ? ' n' : ''}">${t || d}</text>`; }
   if (compassDeg != null) { const [x, y] = pt(compassDeg, 92), [x0, y0] = pt(compassDeg, 8);
-    s += `<line x1="${x0}" y1="${y0}" x2="${x}" y2="${y}" class="rg-h"/><text x="0" y="40" class="rg-a">${Math.round(compassDeg) % 360}° · ${milText(compassDeg)}</text>`; }
+    const dir = (compassDeg - gammaAt(map.getCenter()) + 360) % 360;    // компас даёт истинный азимут; геодезисту нужен дирекционный угол
+    s += `<line x1="${x0}" y1="${y0}" x2="${x}" y2="${y}" class="rg-h"/><text x="0" y="36" class="rg-a">дир. ${degMin(dir)} (${milText(dir)})</text><text x="0" y="50" class="rg-a" style="font-size:9px">ист. ${degMin(compassDeg)}</text>`; }
   ring.innerHTML = s;
 }
 $('fabCompass').onclick = () => { ringOn = !ringOn; setPref('ring', ringOn); drawCompass(); toast(ringOn ? 'Круг-компас включён' + (compassDeg == null ? ' (компас телефона не отвечает — только стороны света)' : '') : 'Круг-компас выключен'); };
@@ -2710,7 +2739,12 @@ function showCard(kind, obj) {
       if (a.wd || a.wm) kv.push(['Колодец', [a.wm, a.wd ? 'Ø ' + a.wd + ' мм' : ''].filter(Boolean).join(', ')]);
     }
     if (obj.q) kv.push(['Точность', `±${cmText(obj.q.acc)} в плане · ${fixText(obj.q.fix)}${obj.q.src === 'measure' ? ' · усреднено' : ''}<br><span style="color:var(--muted)">${new Date(obj.q.at).toLocaleString('ru-RU')}</span>`]);
-    else kv.push(['Точность', '<span style="color:var(--muted)">— (касанием)</span>']);
+    else if (obj.approx != null) kv.push(['Точность', `<b style="color:#ef6c00">приближённо ±${mText(obj.approx, 2)} м</b>`]);
+    else if (obj.rough) kv.push(['Точность', '<b style="color:#ef6c00">приближённо — построена от крестика, не от снятой точки</b>']);
+    else kv.push(['Точность', `<span style="color:var(--muted)">— (${obj.polar ? 'построена' : obj.how === 'coords' ? 'по координатам' : 'касанием'})</span>`]);
+    if (obj.polar) { const pp = obj.polar, src = pp.base === 'gps' ? 'от GPS' : pp.base === 'point' ? 'от точки' : 'от крестика';
+      kv.push(['Построена', `${distText(pp.d)} · ${(ANGLE_KINDS[pp.kind] || ANGLE_KINDS.dir).short} ${dmsText(pp.ang)} · ${src}` +
+        (pp.dirAng != null && pp.kind !== 'dir' ? `<br><span style="color:var(--muted)">дир. угол ${dmsText(pp.dirAng)}, γ ${mText(pp.gamma, 3)}°${pp.decl != null ? `, склонение ${mText(pp.decl, 1)}°` : ''}</span>` : '')]); }
     if (obj.wait) kv.push(['Ждёт GPS', '<b style="color:#ef6c00">поставлена на глаз при подмене — доснять</b>']);
     if (pointSpoofNote(obj)) kv.push(['Внимание', `<b style="color:#c62828">снята ${esc(pointSpoofNote(obj))}</b> — проконтролируйте`]);
     const hInfo = obj.hInfo || (obj.meas ? { acc: obj.meas.hm, from: 'measure' } : {});
@@ -2800,17 +2834,34 @@ function objTarget(kind, obj) {
   const me = L.latLng(gps.lat, gps.lng);
   return vs.reduce((b, a) => me.distanceTo(a) < me.distanceTo(b) ? a : b);
 }
-// истинный азимут с a на b, градусы 0…360
+// истинный азимут с a на b, градусы 0…360 (по шару — для круга-компаса и истинного азимута в подписи)
 function azimuth(a, b) {
   const r = Math.PI / 180, f1 = a.lat * r, f2_ = b.lat * r, dl = (b.lng - a.lng) * r;
   return (Math.atan2(Math.sin(dl) * Math.cos(f2_), Math.cos(f1) * Math.sin(f2_) - Math.sin(f1) * Math.cos(f2_) * Math.cos(dl)) / r + 360) % 360;
 }
+// Геодезия в плоскости (ГСК-2011 / СК-42 / МСК), как в КРЕДО: обе точки — в зоне первой, расстояние = √(ΔX²+ΔY²),
+// дирекционный угол α = atan2(ΔY, ΔX) от северного направления осевого меридиана (сетки), по часовой стрелке
+function planeXY(ll, zone) { const [y, x] = proj4('WGS84', gkDef(zone), [ll.lng, ll.lat]); return { x, y }; }
+function planeInverse(a, b) {
+  const zone = zoneOf(a.lng), p = planeXY(a, zone), q = planeXY(b, zone), dx = q.x - p.x, dy = q.y - p.y;
+  return { d: Math.hypot(dx, dy), dir: (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360 };
+}
+// прямая задача в плоскости: от точки ll на расстояние d по дирекционному углу dir
+function planeForward(ll, d, dir) {
+  const zone = zoneOf(ll.lng), p = planeXY(ll, zone), a = dir * Math.PI / 180;
+  return fromSk42(p.x + d * Math.cos(a), p.y + d * Math.sin(a), zone);
+}
+// сближение меридианов γ в точке: истинный азимут = дирекционный угол + γ (в Орле, зона 7, ≈ −2,3°)
+function gammaAt(ll) { return -angDiff(planeInverse(ll, polarPoint(ll, 100, 0)).dir, 0); }
+// угол в градусах и минутах: 43°18′
+function degMin(deg) { let m = Math.round(((deg % 360) + 360) % 360 * 60); if (m >= 21600) m -= 21600; return Math.floor(m / 60) + '°' + String(m % 60).padStart(2, '0') + '′'; }
+const distText = d => d < 1000 ? mText(d, 2) + ' м' : mText(d / 1000, 3) + ' км';
 function updateToObj() {
   toObjLayer.clearLayers();
   const el = $('fromMe');
   if (!selected || !gps) { if (el) el.textContent = 'нет GPS'; return; }
-  const me = L.latLng(gps.lat, gps.lng), t = objTarget(selected.kind, selected.obj), d = me.distanceTo(t), az = azimuth(me, t);
-  if (el) el.textContent = (d < 1000 ? mText(d, d < 100 ? 2 : 1) + ' м' : mText(d / 1000, 2) + ' км') + ` · азимут ${Math.round(az) % 360}° (${milText(az)})` + (spoof ? ' · GPS под подозрением' : '');
+  const me = L.latLng(gps.lat, gps.lng), t = objTarget(selected.kind, selected.obj), pl = planeInverse(me, t), d = pl.d, az = azimuth(me, t);
+  if (el) el.textContent = distText(d) + ` · дир. угол ${degMin(pl.dir)} (${milText(pl.dir)}) · азимут ист. ${degMin(az)}` + (spoof ? ' · GPS под подозрением' : '');
   if (d < 0.05) return;
   L.polyline([me, t], { color: '#1e88e5', weight: 3, opacity: 0.4, dashArray: '8 8', interactive: false }).addTo(toObjLayer);
   const pa = map.latLngToContainerPoint(me), pb = map.latLngToContainerPoint(t), ang = Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180 / Math.PI;
@@ -3295,33 +3346,86 @@ function soPlace(r) {                                                   // пл�
 function planeZone(y) {
   if (!crs().zoned) return { zone: 0, y };
   if (!(y > 0)) return null;
-  const zone = Math.floor(y / 1e6) || zoneOf(gps ? gps.lng : map.getCenter().lng);
+  const zone = Math.floor(y / 1e6) || zoneOf(gps && !spoof ? gps.lng : map.getCenter().lng);   // при подмене зону по GPS не берём
   return { zone, y: y < 1e6 ? y + zone * 1e6 : y };
 }
 
 /* ───────────── Поиск (лупа справа): перейти к координатам; точка по расстоянию и азимуту ───────────── */
 
 const foundLayer = L.layerGroup().addTo(map);
-// «X Y» в плоской системе, «52.9701, 36.0701» (градусы) или 52°58'12" 36°04'12" → L.LatLng; не понять — null
+// Координаты из сообщения или каталога → место. Понимает: «X 5875342,97 Y 7303230,66», «5875342.97 7303230.66», «6 102 345,67» (пробелы в тысячах),
+// «52.9701, 36.0701», «52°58'12" 36°04'12"» (и «кривые» кавычки ’ ” из мессенджеров), «52 58 12 36 04 12», целое сообщение «Куда ехать».
+// Возвращает { ll, km, swapped, kind } — лучший вариант; перепутанные X/Y или широту/долготу узнаём по тому, какой вариант ближе к карте
+const SEARCH_FAR_KM = 50;
+const placeRef = () => gps && !spoof ? L.latLng(gps.lat, gps.lng) : map.getCenter();
+function normPlaceText(txt) {
+  return String(txt || '').trim()
+    .replace(/[’‘′`´]/g, "'").replace(/[”“″]|''/g, '"')
+    .replace(/(?<![\d.,])(\d{1,3})((?:[   ]\d{3})+)(?![\d])/g, (m, a, b) => a + b.replace(/[   ]/g, ''));   // 6 102 345,67 → 6102345,67
+}
+function degCands(a, b) {
+  const r = [], p = okLL(a, b), q = okLL(b, a);
+  if (p) r.push({ ll: p, swapped: false, kind: 'deg' });
+  if (q && a !== b) r.push({ ll: q, swapped: true, kind: 'deg' });
+  return r;
+}
+function planeCands(a, b) {
+  const r = [];
+  for (const [x, y, swapped] of [[a, b, false], [b, a, true]]) {
+    const z = planeZone(y); if (!z) continue;
+    try { const ll = fromSk42(x, z.y, z.zone); if (okLL(ll.lat, ll.lng)) r.push({ ll, swapped, kind: 'plane' }); } catch (e) { /* не пересчитывается — не вариант */ }
+  }
+  return r;
+}
+function placeCandidates(txt) {
+  const t = normPlaceText(txt), out = [];
+  const xy = /\bX\s*[=:]?\s*(-?\d+(?:[.,]\d+)?)[^\dXY]*?\bY\s*[=:]?\s*(-?\d+(?:[.,]\d+)?)/i.exec(t);   // \b — не цеплять «x» внутри слов
+  if (xy) out.push(...planeCands(parseNum(xy[1]), parseNum(xy[2])));
+  // полушарие — только латинская заглавная буква сразу после числа (русские предлоги «с», «в», «з» не путаем со сторонами света)
+  const dms = [...t.matchAll(/(\d+(?:[.,]\d+)?)\s*°\s*(?:(\d+(?:[.,]\d+)?)\s*'\s*)?(?:(\d+(?:[.,]\d+)?)\s*")?\s*([NSEW](?![A-Za-zА-Яа-я]))?/g)];
+  if (!out.length && dms.length >= 2) {
+    const v = dms.slice(0, 2).map(m => { const d = parseNum(m[1]) + (m[2] ? parseNum(m[2]) / 60 : 0) + (m[3] ? parseNum(m[3]) / 3600 : 0); return /[SW]/.test(m[4] || '') ? -d : d; });
+    out.push(...degCands(v[0], v[1]));
+  }
+  const raw = t.match(/-?\d+(?:[.,]\d+)?/g) || [], n = raw.map(parseNum), dec = s => (/[.,](\d+)$/.exec(s) || ['', ''])[1].length;
+  if (!out.length && n.length === 6 && [1, 2, 4, 5].every(i => n[i] < 60)) out.push(...degCands(n[0] + n[1] / 60 + n[2] / 3600, n[3] + n[4] / 60 + n[5] / 3600));   // градусы минуты секунды через пробел
+  if (!out.length && n.length === 4 && n[1] < 60 && n[3] < 60 && Number.isInteger(n[0]) && Number.isInteger(n[2])) out.push(...degCands(n[0] + n[1] / 60, n[2] + n[3] / 60));
+  if (!out.length) {
+    // все соседние пары — потом выберем ближайшую к карте (дата «08.11», год «2026», номер точки впереди не собьют):
+    // плоские — оба числа больше 100 000; градусы — у обоих есть дробная часть, сначала пары с более длинной дробью
+    const pairs = [], big = crs().zoned ? 1e5 : 1000, year = s => /^(19|20)\d\d$/.test(s);   // в МСК координаты бывают небольшими; «2026» — год, не координата
+    for (let i = 0; i + 1 < n.length; i++) {
+      if (n[i] > big && n[i + 1] > big && !year(raw[i]) && !year(raw[i + 1])) pairs.push({ s: 99, c: planeCands(n[i], n[i + 1]) });
+      else if (dec(raw[i]) && dec(raw[i + 1])) pairs.push({ s: Math.min(dec(raw[i]), dec(raw[i + 1])), c: degCands(n[i], n[i + 1]) });
+    }
+    pairs.sort((a, b) => b.s - a.s).forEach(p => out.push(...p.c));
+  }
+  if (!out.length && n.length >= 2) out.push(...degCands(n[0], n[1]));
+  return out;
+}
 function parsePlace(txt) {
-  const t = String(txt || '').trim();
-  const dms = [...t.matchAll(/(\d+(?:[.,]\d+)?)\s*°\s*(?:(\d+(?:[.,]\d+)?)\s*['′]\s*)?(?:(\d+(?:[.,]\d+)?)\s*["″])?/g)];   // секунды — только со значком ″, иначе «52°58' 36°04'» склеится
-  if (dms.length >= 2) { const v = dms.slice(0, 2).map(m => parseNum(m[1]) + (m[2] ? parseNum(m[2]) / 60 : 0) + (m[3] ? parseNum(m[3]) / 3600 : 0)); return okLL(v[0], v[1]); }
-  const n = (t.match(/-?\d+(?:[.,]\d+)?/g) || []).map(parseNum);
-  if (n.length < 2) return null;
-  const [a, b] = n;
-  if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return okLL(a, b);
-  if (a > 1000 && b > 1000) { const z = planeZone(b); if (!z) return null; try { return fromSk42(a, z.y, z.zone); } catch (e) { return null; } }
-  return null;
+  const c = placeCandidates(txt);
+  if (!c.length) return null;
+  const ref = placeRef();
+  for (const x of c) x.km = ref.distanceTo(x.ll) / 1000;
+  const near = c.filter(x => x.km <= SEARCH_FAR_KM).sort((p, q) => (p.swapped - q.swapped) || p.km - q.km);
+  return near[0] || c[0];                                               // рядом нет — как написано, и спросим «точно туда?»
 }
 function okLL(lat, lng) { return isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? L.latLng(lat, lng) : null; }
-// азимут: «45», «45,5» — градусы; «7-50» — тысячные (полный круг 60-00)
+// угол: «45», «45,5» — десятичные градусы; «43°18′», «43°18′30″», «43 18», «43 18 30» — градусы, минуты, секунды; «7-50» — тысячные (круг 60-00).
+// «43.18» — это 43,18°, а не 43°18′ (как в КРЕДО): под полем показываем расшифровку, чтобы не ошибиться
 function parseAz(txt) {
-  const t = String(txt || '').trim(), m = /^(\d{1,2})\s*[-–—]\s*(\d{1,2})$/.exec(t);
+  const t = String(txt || '').trim().replace(/[’‘′`´']/g, "'").replace(/[”“″"]|''/g, '"');
   if (!t) return null;                                                  // пусто — не «север»
-  const deg = m ? (Number(m[1]) * 100 + Number(m[2])) * 0.06 : parseNum(t);
+  const mil = /^(\d{1,2})\s*[-–—]\s*(\d{1,2})$/.exec(t);
+  const dms = /^(\d{1,3})\s*(?:°\s*|\s+)(\d{1,2}(?:[.,]\d+)?)\s*'?\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*"?)?$/.exec(t);
+  let deg;
+  if (mil) deg = (Number(mil[1]) * 100 + Number(mil[2])) * 0.06;
+  else if (dms) { const mm = parseNum(dms[2]), ss = dms[3] ? parseNum(dms[3]) : 0; if (mm >= 60 || ss >= 60) return null; deg = Number(dms[1]) + mm / 60 + ss / 3600; }
+  else deg = parseNum(t.replace(/°$/, ''));
   return isFinite(deg) && deg >= 0 && deg <= 360 ? deg % 360 : null;
 }
+function dmsText(deg) { let s = Math.round(((deg % 360) + 360) % 360 * 3600); if (s >= 1296000) s -= 1296000; return Math.floor(s / 3600) + '°' + String(Math.floor(s / 60) % 60).padStart(2, '0') + '′' + String(s % 60).padStart(2, '0') + '″'; }
 // точка на расстоянии d (м) по азимуту az (°) от ll
 function polarPoint(ll, d, az) {
   const R = 6371008.8, r = Math.PI / 180, dl = d / R, f1 = ll.lat * r, th = az * r;
@@ -3337,8 +3441,17 @@ function showFound(ll, label) {
   if (gpsView !== 'off') { followPaused = true; $('fabMe').dataset.paused = '1'; }   // слежение не утащит карту обратно
   map.setView(ll, Math.max(map.getZoom(), 18), { animate: false });
 }
-function placeFound(ll, how, label) {
-  const pt = { id: uid(), no: nextNo(data.points), type: GENERIC.point, lat: ll.lat, lng: ll.lng, name: '', how, made: new Date().toISOString(), color: pref('color', VIS_COLOR) };
+// вид угла для точки по расстоянию и углу
+const ANGLE_KINDS = { dir: { btn: 'Дирекционный', short: 'дир. угол' }, true: { btn: 'Истинный', short: 'азимут ист.' }, mag: { btn: 'По компасу', short: 'азимут магн.' } };
+// знак под крестиком (в пределах привязки) — тогда строим от него, а не от «примерно центра»
+function pointAtCross() {
+  const c = map.latLngToContainerPoint(map.getCenter());
+  let best = null, bd = SNAP_PX;
+  for (const p of data.points) { const d = map.latLngToContainerPoint([p.lat, p.lng]).distanceTo(c); if (d < bd) { bd = d; best = p; } }
+  return best;
+}
+function placeFound(ll, how, label, extra) {
+  const pt = { id: uid(), no: nextNo(data.points), type: GENERIC.point, lat: ll.lat, lng: ll.lng, name: '', how, made: new Date().toISOString(), color: pref('color', VIS_COLOR), ...(extra || {}) };
   data.points.push(pt); save(); drawPoints(); foundLayer.clearLayers();
   map.setView(ll, Math.max(map.getZoom(), 18), { animate: false }); showCard('point', pt); toast('Точка поставлена: ' + label);
 }
@@ -3353,28 +3466,64 @@ function openSearch() {
       <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
       <b>Точка по расстоянию и азимуту</b>
       <div class="seg" id="sFrom" style="margin:8px 0"><button data-f="gps" class="${fromGps ? 'on' : ''}">От меня (GPS)</button><button data-f="cross" class="${fromGps ? '' : 'on'}">От крестика</button></div>
+      <div class="seg" id="sKind" style="margin:0 0 8px">${Object.entries(ANGLE_KINDS).map(([k, v]) => `<button data-k="${k}" class="${k === (last.kind || 'dir') ? 'on' : ''}">${v.btn}</button>`).join('')}</div>
       <div class="row2"><div><label for="sDist">Расстояние, м</label><input id="sDist" inputmode="decimal" autocomplete="off" value="${esc(last.dist || '')}" placeholder="50"></div>
-        <div><label for="sAz">Азимут</label><input id="sAz" autocomplete="off" value="${esc(last.az || '')}" placeholder="45 или 7-50"></div></div>
-      <div class="hint" style="margin:4px 0 8px">Азимут — от севера по часовой стрелке: 0 — север, 90 — восток, 180 — юг, 270 — запад. Тысячные пишите через дефис: 15-00 — восток.</div>
+        <div><label for="sAz">Угол</label><input id="sAz" autocomplete="off" value="${esc(last.az || '')}" placeholder="43°18′ · 43 18 · 7-50"><div class="hint" id="sAzOut" style="margin-top:2px"></div></div></div>
+      <div class="hint" style="margin:4px 0 8px">Угол — от севера по часовой стрелке: 0 — север, 90 — восток, 180 — юг, 270 — запад. Тысячные — через дефис: 15-00 — восток.
+        <b>Дирекционный</b> — с чертежа, каталога, от теодолита (север сетки ${esc(planeName())}); <b>истинный</b> — от географического севера; <b>по компасу</b> — магнитный, с телефона или буссоли: точка будет приближённой.</div>
       <div class="row2"><button class="btn" id="pGo">Перейти</button><button class="btn primary" id="pPut">Поставить точку</button></div>
       ${foundLayer.getLayers().length ? '<button class="btn" id="sClear" style="width:100%;margin-top:12px">Убрать отметку поиска</button>' : ''}
     </div>`);
-  $('sFrom').onclick = e => { const b = e.target.closest('[data-f]'); if (!b) return; for (const x of $('sFrom').children) x.classList.toggle('on', x === b); };
-  const place = () => { const v = $('sPlace').value, ll = parsePlace(v); setPref('search', { ...pref('search', {}), place: v });
-    if (!ll) toast('Не понял координаты: X и Y в метрах или широта и долгота в градусах'); return ll; };
-  const polar = () => {
-    const d = parseNum($('sDist').value), az = parseAz($('sAz').value), fromMe = $('sFrom').querySelector('.on').dataset.f === 'gps';
-    setPref('search', { ...pref('search', {}), dist: $('sDist').value, az: $('sAz').value });
-    if (!(d > 0)) { toast('Расстояние — число метров больше нуля'); return null; }
-    if (az == null) { toast('Азимут — градусы от 0 до 360 или тысячные через дефис (7-50)'); return null; }
-    if (fromMe && !gps) { toast('Нет GPS — выберите «От крестика»'); return null; }
-    const from = fromMe ? L.latLng(gps.lat, gps.lng) : map.getCenter();
-    return { ll: polarPoint(from, d, az), label: `${mText(d, d < 100 ? 2 : 1)} м, ${mText(az, 1)}° ${fromMe ? 'от меня' : 'от крестика'}` };
+  const seg = id => e => { const b = e.target.closest('button'); if (!b) return; for (const x of $(id).children) x.classList.toggle('on', x === b); };
+  $('sFrom').onclick = seg('sFrom'); $('sKind').onclick = seg('sKind');
+  const azOut = () => { const a = parseAz($('sAz').value); $('sAzOut').textContent = !$('sAz').value.trim() ? '' : a == null ? 'не понял угол' : `= ${dmsText(a)} = ${mText(a, 4)}° = ${milText(a)}`; };
+  $('sAz').oninput = azOut; azOut();                                    // расшифровка: «43.18» — это 43°10′48″, а не 43°18′
+  // координаты: разобрать; далеко от карты — переспросить; переставленные X/Y или широту/долготу — сказать
+  const place = async () => {
+    const v = $('sPlace').value, r = parsePlace(v); setPref('search', { ...pref('search', {}), place: v });
+    if (!r) { toast('Не понял координаты: X и Y в метрах или широта и долгота в градусах'); return null; }
+    closeSheet();
+    if (r.km > SEARCH_FAR_KM && !(await ask(`Это место в ${Math.round(r.km)} км от ${gps && !spoof ? 'вас' : 'карты'}. Проверьте координаты и систему (${esc(planeName())}). Всё равно туда?`, 'Туда'))) return null;
+    if (r.swapped) toast(r.kind === 'deg' ? 'Широта и долгота были переставлены — поменял местами' : 'X и Y были переставлены — поменял местами');
+    return r.ll;
   };
-  $('sGo').onclick = () => { const ll = place(); if (ll) { closeSheet(); showFound(ll, 'Найдено'); } };
-  $('sPut').onclick = () => { const ll = place(); if (ll) { closeSheet(); placeFound(ll, 'coords', 'по координатам'); } };
-  $('pGo').onclick = () => { const r = polar(); if (r) { closeSheet(); showFound(r.ll, r.label); } };
-  $('pPut').onclick = () => { const r = polar(); if (r) { closeSheet(); placeFound(r.ll, 'polar', r.label); } };
+  const polar = async () => {
+    const d = parseNum($('sDist').value), ang = parseAz($('sAz').value), fromMe = $('sFrom').querySelector('.on').dataset.f === 'gps', kind = $('sKind').querySelector('.on').dataset.k;
+    setPref('search', { ...pref('search', {}), dist: $('sDist').value, az: $('sAz').value, kind });
+    if (!(d > 0)) { toast('Расстояние — число метров больше нуля'); return null; }
+    if (ang == null) { toast('Угол — градусы от 0 до 360 или тысячные через дефис (7-50)'); return null; }
+    if (fromMe && !gps) { toast('Нет GPS — выберите «От крестика»'); return null; }
+    if (fromMe && spoof) { toast('GPS под подозрением в подмене — от него не строю. Выберите «От крестика» и наведите его на известную точку'); return null; }
+    if (fromMe && Date.now() - gps.at > GPS_FRESH_MS) { toast('Координаты GPS устарели — подождите сигнал или выберите «От крестика»'); return null; }
+    if (kind === 'mag' && !magDeclOk) { toast('Магнитное склонение ещё неизвестно (нужен GPS в Android-приложении) — выберите дирекционный или истинный угол'); return null; }
+    const snapped = fromMe ? null : pointAtCross(), base = fromMe ? L.latLng(gps.lat, gps.lng) : snapped ? L.latLng(snapped.lat, snapped.lng) : map.getCenter();
+    // всё строим в плоскости: истинный → дирекционный (α = A − γ), магнитный → истинный (A = M + склонение)
+    const gamma = gammaAt(base), decl = kind === 'mag' ? magDecl : null;
+    const dirAng = ((kind === 'dir' ? ang : (kind === 'mag' ? ang + magDecl : ang) - gamma) + 360) % 360;
+    const ll = planeForward(base, d, dirAng);
+    // оценка точности (СКО складываем в квадрате): база — GPS (его точность), знак (его точность или «приближённо»), крестик на подложке — неизвестна;
+    // угол компаса ≈ 5° → 0,09·d (у железа и труб — больше); угол с чертежа или теодолита считаем точным. «Точно» — не хуже 0,12 м (≈ половина допуска 1:500)
+    const baseAcc = fromMe ? gps.acc : snapped ? (snapped.approx != null ? snapped.approx : snapped.q && snapped.q.acc != null ? snapped.q.acc : 0) : null;
+    // база без оценки точности — «крестик примерно здесь», знак поставлен касанием/на глаз или сам «приближённо» без числа: пометка «приближённо» переходит дальше
+    const snappedKnown = snapped && (snapped.q || snapped.approx != null || snapped.how === 'coords' || (snapped.how === 'polar' && !snapped.rough));
+    const rough = !fromMe && !snappedKnown;
+    const approx = kind === 'mag' ? Math.hypot(baseAcc || 0, 0.09 * d) : baseAcc != null && baseAcc > 0.12 ? baseAcc : null;
+    const from = fromMe ? 'от меня' : snapped ? 'от ' + (pointLabel(snapped) || 'точки №' + (snapped.no || '')) : 'от крестика';
+    closeSheet();
+    return { ll, approx, rough, label: `${distText(d)}, ${ANGLE_KINDS[kind].short} ${degMin(ang)} ${from}`,
+      extra: { polar: { d, ang, kind, dirAng: +dirAng.toFixed(5), gamma: +gamma.toFixed(5), ...(decl != null ? { decl: +decl.toFixed(2) } : {}),
+        base: fromMe ? 'gps' : snapped ? 'point' : 'cross', baseLat: base.lat, baseLng: base.lng, ...(snapped ? { from: snapped.id } : {}) },
+        ...(approx != null ? { approx: +approx.toFixed(2) } : {}), ...(rough ? { rough: true } : {}) } };
+  };
+  $('sGo').onclick = async () => { const ll = await place(); if (ll) showFound(ll, 'Найдено'); };
+  $('sPut').onclick = async () => { const ll = await place(); if (ll) placeFound(ll, 'coords', 'по координатам'); };
+  $('pGo').onclick = async () => { const r = await polar(); if (r) showFound(r.ll, r.label); };
+  $('pPut').onclick = async () => {
+    const r = await polar(); if (!r) return;
+    if (r.approx != null && r.approx > 0.12 && !(await ask(`Точность такой точки — примерно <b>±${mText(r.approx, 2)} м</b>: для 1:500 (допуск 0,25 м) это приближённо. Точка будет помечена «приближённо». Поставить?`, 'Поставить'))) return;
+    if (r.approx == null && r.rough && !(await ask('Строю от крестика, а не от снятой точки: где он стоит на подложке — известно лишь примерно. Точка будет помечена «приближённо». Поставить?', 'Поставить'))) return;
+    placeFound(r.ll, 'polar', r.label, r.extra);
+  };
   if ($('sClear')) $('sClear').onclick = () => { foundLayer.clearLayers(); closeSheet(); };
 }
 $('fabSearch').onclick = openSearch;
@@ -3435,12 +3584,27 @@ function screenOn(on) { if (GNSS && GNSS.keepScreen) GNSS.keepScreen({ on }).cat
 const TRACK_N = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Track) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Track')));
 const TRACK_POLL_MS = 5000;
 let trackPoll = 0, trackPulling = null;                                // trackPulling — идущий запрос: второй не шлём, а ждём его
+// Точки от службы: t.srvN — сколько строк файла службы уже забрали (не путать с числом точек в треке — часть отбрасывается).
+// Отбрасываем: пока страница видит подмену GPS, и «прыжки» быстрее 250 км/ч — их даёт подмена, пока экран выключен
+const TRACK_MAX_SPEED = 70;                                             // м/с
+const TRACK_REJECT_MAX = 3;                                             // три «прыжка» подряд — значит ложной была прошлая точка, принимаем новую
+function addSrvPoints(t, pts) {
+  let n = 0;
+  for (const p of pts) {
+    if (spoof) continue;
+    const last = t.pts[t.pts.length - 1];
+    if (last && L.latLng(last[0], last[1]).distanceTo([p[0], p[1]]) > TRACK_MAX_SPEED * Math.max(1, p[2] - last[2]) && (t.rej = (t.rej || 0) + 1) < TRACK_REJECT_MAX) continue;
+    t.rej = 0; t.pts.push(p); n++;
+  }
+  return n;
+}
+const srvFrom = t => t.srvN != null ? t.srvN : t.pts.length;            // трек из сборки 68 (до srvN) — по старому: забрано столько, сколько точек
 function trackPull() {
   const t = trackRec;
   if (!t || !t.native) return Promise.resolve();
   if (trackPulling) return trackPulling;
   trackPulling = (async () => {
-    try { const r = await TRACK_N.points({ from: t.pts.length }); if (r && r.pts && r.pts.length) { t.pts.push(...r.pts); saveTracksSoon(); drawLive(); } }
+    try { const r = await TRACK_N.points({ from: srvFrom(t) }); if (r && r.pts && r.pts.length) { addSrvPoints(t, r.pts); t.srvN = r.total; saveTracksSoon(); drawLive(); } }
     catch (e) { /* служба ответит в следующий раз */ }
     finally { trackPulling = null; }
   })();
@@ -3451,7 +3615,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) trac
 const TRACK_CHECK_MS = 2500;
 async function trackCheckNative(t) {
   if (trackRec !== t || !t.native) return;
-  let r = null; try { r = await TRACK_N.points({ from: t.pts.length }); } catch (e) { /* ниже — как будто не работает */ }
+  let r = null; try { r = await TRACK_N.points({ from: srvFrom(t) }); } catch (e) { /* ниже — как будто не работает */ }
   if (r && r.running) return;
   if (trackRec !== t) return;
   t.native = false; clearInterval(trackPoll); setPref('trackLive', null); screenOn(true); trackFeed();
@@ -3468,7 +3632,7 @@ async function trackStartInner() {
   tracks = [t, ...tracks].slice(0, TRACK_KEEP);
   setTrackBtn();
   if (TRACK_N) {
-    try { await TRACK_N.start(); t.native = true; setPref('trackLive', t.id); trackPoll = setInterval(trackPull, TRACK_POLL_MS); }
+    try { await TRACK_N.start(); t.native = true; t.srvN = 0; setPref('trackLive', t.id); trackPoll = setInterval(trackPull, TRACK_POLL_MS); }
     catch (e) { toast((e && e.message || 'Служба записи не запустилась') + ' — пишу, пока приложение открыто'); }
     if (t.native) setTimeout(() => trackCheckNative(t), TRACK_CHECK_MS);
   }
@@ -3516,18 +3680,37 @@ function openTracks() {
     if (sh) { const t = tracks.find(x => x.id === sh.dataset.tshow); if (t && t.pts.length) { closeSheet(); if (!tracksShown) { tracksShown = true; setPref('tracksShown', true); drawTracks(); }
       if (gpsView !== 'off') { followPaused = true; $('fabMe').dataset.paused = '1'; }
       map.fitBounds(L.latLngBounds(t.pts.map(p => [p[0], p[1]])), { padding: [40, 40], maxZoom: 18 }); } }
-    if (del) { tracks = tracks.filter(x => x.id !== del.dataset.tdel); saveTracks(); drawTracks(); openTracks(); toast('Трек удалён'); }
+    if (del) { const t = tracks.find(x => x.id === del.dataset.tdel); if (!t) return;
+      ask(`Удалить «${esc(t.name)}» (${kmText(trackLen(t))})? Вернуть будет нельзя.`, 'Удалить', true).then(ok => { if (!ok) return; tracks = tracks.filter(x => x !== t); saveTracks(); drawTracks(); openTracks(); toast('Трек удалён'); }); }
   };
 }
-$('fabTrack').onclick = () => { if (trackBusy) return; if (trackRec) trackStop(); else openTracks(); };
+// остановка — с вопросом: в перчатках кнопку легко задеть
+$('fabTrack').onclick = () => {
+  if (trackBusy) return;
+  if (!trackRec) { openTracks(); return; }
+  const t = trackRec, min = Math.max(1, Math.round((Date.now() - Date.parse(t.start)) / 60000));
+  ask(`Остановить запись трека? Сейчас: ${kmText(trackLen(t))}, ${min} мин.`, 'Остановить').then(ok => { if (ok && trackRec === t && !trackBusy) trackStop(); });
+};
 drawTracks();
-// страницу перезапустили (обновление, система выгрузила), а служба всё ещё пишет — продолжаем тот же трек
+// Запуск страницы: служба ещё пишет (страницу перезапустили) — продолжаем тот же трек; служба уже не пишет, а в её файле
+// остались точки, которых нет в треке (приложение закрыли во время записи — «Обновить» или система) — дописываем их
 if (TRACK_N) TRACK_N.points({ from: 0 }).then(r => {
   const liveId = pref('trackLive', null);
-  if (!r || !r.running) { if (liveId) setPref('trackLive', null); return; }
+  if (!r || !r.running) {
+    if (!liveId) return;
+    setPref('trackLive', null);
+    const t = tracks.find(x => x.id === liveId);
+    if (t && r && r.total > srvFrom(t)) {
+      const added = addSrvPoints(t, (r.pts || []).slice(srvFrom(t))); t.srvN = r.total;
+      if (t.pts.length) t.end = new Date(t.pts[t.pts.length - 1][2] * 1000).toISOString();
+      saveTracks(); drawTracks();
+      if (added) toast(`Запись трека прервалась (приложение закрывалось) — путь сохранён до ${new Date(Date.parse(t.end)).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`);
+    }
+    return;
+  }
   let t = tracks.find(x => x.id === liveId);
   if (!t) { t = { id: uid(), name: 'Трек (продолжение)', start: new Date().toISOString(), pts: [] }; tracks = [t, ...tracks].slice(0, TRACK_KEEP); }
-  delete t.end; t.native = true; t.pts = r.pts || []; trackRec = t;
+  delete t.end; t.native = true; t.pts = []; addSrvPoints(t, r.pts || []); t.srvN = r.total; trackRec = t;
   setPref('trackLive', t.id); trackPoll = setInterval(trackPull, TRACK_POLL_MS);
   saveTracks(); setTrackBtn(); drawTracks(); toast('Идёт запись трека — продолжаю');
 }).catch(() => { /* старое приложение без службы трека */ });
@@ -4156,8 +4339,8 @@ function redoRecord(id) {
 /* ───────────── Журнал съёмки: все точки таблицей — как снята, точность, отметка; фильтры — ошибки видны до отъезда ───────────── */
 
 let lastPlacedId = null;                                               // для «отменить последнюю» кнопкой громкости
-const HOW_NAME = { gps: 'по GPS', measure: 'Измерить', offset: 'смещение', center: 'перекрестье', tap: 'касанием', resect: 'засечка', axisoff: 'створ', coords: 'по координатам', polar: 'расстояние и азимут' };
-const pointHow = p => p.q && p.q.redone ? 'доснята' : p.q ? HOW_NAME[p.q.src] || 'по GPS' : HOW_NAME[p.how] || 'касанием';
+const HOW_NAME = { gps: 'по GPS', measure: 'Измерить', offset: 'смещение', center: 'перекрестье', tap: 'касанием', resect: 'засечка', axisoff: 'створ', coords: 'по координатам', polar: 'расстояние и угол' };
+const pointHow = p => p.q && p.q.redone ? 'доснята' : p.q ? HOW_NAME[p.q.src] || 'по GPS' : (HOW_NAME[p.how] || 'касанием') + (p.approx != null ? `, приближённо ±${mText(p.approx, 2)} м` : p.rough ? ', приближённо' : '');
 const JOURNAL_FILTERS = [
   ['all', 'Все', () => true],
   ['tap', 'Без GPS', p => !p.q],
@@ -5666,7 +5849,7 @@ function guardExport(go) {
 /* ───────────── Копии плана: автокопия в «Загрузки», полная копия с фото, восстановление ───────────── */
 
 // настройки в копию (кроме ключа Яндекса и самого плана) — чтобы на новом телефоне вернулись коды, МСК, допуски
-const PREF_SKIP = /^tk\.(plan\.|ai$|projects?$)/;
+const PREF_SKIP = /^tk\.(plan\.|ai$|projects?$|tracks$|trackLive$)/;   // треки — не в копии плана: они большие и к объекту не относятся
 function backupJson() {
   const prefs = {};
   try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('tk.') && !PREF_SKIP.test(k)) prefs[k] = localStorage.getItem(k); } } catch (e) { /* без настроек */ }
@@ -5807,7 +5990,7 @@ function toCsv() {
   for (const p of data.points) {
     const c = sk42(p.lat, p.lng), m = p.meas, H = pointH(p), q = p.q || {};
     rows.push([p.no || '', p.type, (POINTS[p.type] || POINTS.mark).name, p.name || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(2),
-      H == null ? '' : H_SRC[p.hSrc] || 'вручную', q.acc != null ? f3(q.acc) : '', fixText(q.fix), q.at ? new Date(q.at).toLocaleString('ru-RU') : '',
+      H == null ? '' : H_SRC[p.hSrc] || 'вручную', q.acc != null ? f3(q.acc) : p.approx != null ? f3(p.approx) : '', (p.approx != null || p.rough) && q.acc == null ? 'приближённо' : fixText(q.fix), q.at ? new Date(q.at).toLocaleString('ru-RU') : '',
       f8(p.lat), f8(p.lng), c.zone, pointNote(p), (p.photos || []).map(photoFile).join(' '),
       ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', '']),
       ...hInfoCols(p.hInfo), ...ctrlCols(p.ctrl && p.ctrl[p.ctrl.length - 1])]);
