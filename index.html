@@ -37,6 +37,11 @@
   #top { position:absolute; left:8px; right:8px; top:8px; z-index:1000; background:var(--panel); color:var(--ink); border-radius:14px; padding:6px 8px; box-shadow:var(--shadow); font-variant-numeric:tabular-nums;
     display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
   #top .r1 { display:none; }                                         /* система координат — касанием по координатам */
+  /* вторая строка: от меня до крестика (как в «Тактической карте»), при рисовании линии — длина, площадь и направление отрезка */
+  #aimLine { flex:1 0 100%; order:5; font-size:13px; line-height:1.3; color:var(--muted); }   /* узкий экран — переносится, но не обрезается */
+  #aimLine .nw { white-space:nowrap; }
+  #aimLine b { color:var(--ink); font-weight:700; }
+  #aimLine.draw b { color:#1565c0; } body.night #aimLine.draw b { color:#90caf9; }
   #coords { flex:1 1 130px; min-width:0; cursor:pointer; }
   #coords .xy .nw { white-space:nowrap; }
   #coords .xy { margin:0; font-size:14px; line-height:1.25; white-space:normal; }
@@ -335,6 +340,7 @@
     <span id="zone"></span>
   </div>
   <div id="coords"></div>
+  <div id="aimLine" style="display:none" aria-live="off"></div>
   <div id="gpsRow"><div id="gpsLine" data-st="off" role="button"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS выкл.</span></div><button id="antChip" aria-label="Высота вехи"></button></div>
   <div id="spoofLine" style="display:none"><span id="spoofText"></span><button class="btn" id="spoofMore">Что делать</button></div>
   <div id="recLine" style="display:none" role="button"><span class="dot"></span><span id="recText"></span></div>
@@ -968,6 +974,7 @@ function updateInfo() {
   $('coords').innerHTML = coordMode === 'wgs' ? wgs : coordMode === 'both' ? wgs + sk : sk;
   for (const b of $('coordSeg').children) b.classList.toggle('on', b.dataset.c === coordMode);
   updateScale();
+  if (typeof updateAim === 'function') updateAim();
 }
 $('coordSeg').onclick = e => {
   const c = e.target.dataset.c;
@@ -1144,7 +1151,7 @@ function gpsFeed(p) {
   if (first && !mode && !spoof) map.setView(ll, Math.max(map.getZoom(), 18));
   else followGps(ll);
   if (selected) updateToObj();
-  trackFeed(); updateDecl();
+  trackFeed(); updateDecl(); updateAim();
   const acc = gps.acc;
   // RTK-приёмник даёт сантиметры — показываем их, а не округлённые метры
   const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
@@ -1588,7 +1595,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 75;
+const APP_BUILD = 76;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -4772,7 +4779,7 @@ addEventListener('volumeKey', e => {
     if (!mode || sheetOpen) return;
     cue('tick');
     if (key === 'upLong') { const done = mode.kind === 'line' ? mode.latlngs.length : 0; finishMode(); say(mode ? 'Мало точек' : done ? 'Линия готова' : 'Готово'); }
-    else if (mode.kind === 'line') { if (!mode.latlngs.length) { say('Точек нет'); return; } mode.latlngs.pop(); if (mode.hs) mode.hs.pop(); refreshTemp(); setMode(mode); say('Последняя точка отменена'); }
+    else if (mode.kind === 'line') { if (!mode.latlngs.length) { say('Точек нет'); return; } undoVertex(); say('Последняя точка отменена'); }
     else { const last = data.points[data.points.length - 1];          // только что поставленная в этом режиме точка — а не чужая правка
       if (!last || last.id !== lastPlacedId) { say('Нечего отменять'); return; }
       data.points.pop(); lastPlacedId = null; save(); drawPoints(); hideCard(); say('Последняя точка убрана'); toast('Последняя точка убрана — кнопка ↶ вернёт'); }
@@ -4829,7 +4836,7 @@ $('modeBtns').addEventListener('click', e => {
   if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode !== m) return; const pt = addAt(ll, meas);
     if (pt && pt.type === GENERIC.point) openPicker('point', id => changeType('point', pt, id), 'Закройте — останется простой точкой'); }); }
-  if (act === 'undo') { mode.latlngs.pop(); if (mode.hs) mode.hs.pop(); refreshTemp(); setMode(mode); }
+  if (act === 'undo') undoVertex();
   if (act === 'cancel') { const m = mode; if (m.latlngs.length < 2) setMode(null); else ask(`Бросить линию из ${m.latlngs.length} точек?`, 'Бросить', true).then(ok => { if (ok && mode === m) setMode(null); }); }
   if (act === 'done') finishMode();
 });
@@ -4869,7 +4876,7 @@ function addAt(ll, meas, src) {
     if (ps.frac || ps.svgFor || ps.arm || ps.defect || /^w_/.test(pt.type)) editPoint(pt);   // у надписи покрытия, отметок и колодца (лотки) — сразу спросить значения
     return pt;
   } else {
-    mode.latlngs.push([ll.lat, ll.lng]);
+    mode.latlngs.push([ll.lat, ll.lng]); mode.lastIns = null;           // «↶ Убрать» снимет её (последнюю)
     if (spoof && (src === 'tap' || src === 'center')) mode.wait = true;   // вершина на глаз при подмене
     (mode.hs = mode.hs || []).push(hz);                               // отметка вершины полилинии — или null
     refreshTemp(); setMode(mode);
@@ -4938,9 +4945,48 @@ function refreshTemp() {
   mode.temp = L.layerGroup([
     L.polyline((LINES[mode.type] || {}).closed && mode.latlngs.length > 2 ? mode.latlngs.concat([mode.latlngs[0]]) : mode.latlngs,
       { color: '#1e88e5', weight: 3, dashArray: '6 6', interactive: false }),
-    ...mode.latlngs.map(a => L.circleMarker(a, { radius: 6, color: '#1e88e5', fillColor: '#fff', fillOpacity: 1, weight: 2, interactive: false }))
+    ...mode.latlngs.map(a => L.circleMarker(a, { radius: 6, color: '#1e88e5', fillColor: '#fff', fillOpacity: 1, weight: 2, interactive: false })),
+    ...midHandles()
   ]).addTo(map);
   updateRubber();
+}
+// Кружки посередине отрезков (как в Hawk Map): пропустили угол — наведите крестик на него и коснитесь кружка того отрезка,
+// между вершинами которого он должен встать; вершина встанет под крестик (с привязкой, как «+»)
+const MID_R = TOUCH ? 9 : 6;
+function midHandles() {
+  const V = mode.latlngs, out = [];
+  if (pickTool) return out;
+  for (let i = 1; i < V.length; i++) {
+    const a = L.latLng(V[i - 1]), b = L.latLng(V[i]), m = L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2);
+    out.push(L.circleMarker(m, { radius: MID_R, color: '#1e88e5', weight: 1.5, dashArray: '2 2', fillColor: '#fff', fillOpacity: 0.55, bubblingMouseEvents: false })
+      .on('click', e => { L.DomEvent.stop(e); insertVertexAt(i); }));
+  }
+  return out;
+}
+// «↶ Убрать»: если последним действием была вставка кружком — убрать вставленную вершину, иначе — последнюю
+function undoVertex() {
+  if (!mode || mode.kind !== 'line' || !mode.latlngs.length) return;
+  const k = mode.lastIns != null && mode.lastIns < mode.latlngs.length ? mode.lastIns : mode.latlngs.length - 1;
+  mode.latlngs.splice(k, 1); if (mode.hs) mode.hs.splice(k, 1);
+  mode.lastIns = null;
+  refreshTemp(); setMode(mode);
+}
+function insertVertexAt(i) {
+  if (!mode || mode.kind !== 'line' || pickTool) return;               // идёт засечка / створ / рулетка — касание для них
+  let ll = map.getCenter();
+  let snap = snapOn ? snapTarget(ll) : null;
+  const nb = [mode.latlngs[i - 1], mode.latlngs[i]].map(a => L.latLng(a));
+  if (snap && nb.some(a => a.equals(snap.ll))) snap = null;             // к соседним вершинам не липнем — получился бы отрезок нулевой длины
+  if (snap) ll = snap.ll;
+  const hz = heightFor(ll, null, 'center', snap);
+  mode.latlngs.splice(i, 0, [ll.lat, ll.lng]);
+  mode.hs = mode.hs || []; while (mode.hs.length < mode.latlngs.length - 1) mode.hs.push(null);
+  mode.hs.splice(i, 0, hz);
+  if (spoof) mode.wait = true;
+  mode.lastIns = i;
+  cue('tick'); refreshTemp(); setMode(mode);
+  toast(`Вершина вставлена между ${i} и ${i + 1}${snap ? ', привязано ' + snap.what : ''}. Не туда — «↶ Убрать»`);
+  if (!pref('midHint', false)) { setPref('midHint', true); setTimeout(() => toast('Кружок посередине отрезка вставляет вершину под крестик — для пропущенного угла'), 2500); }
 }
 // «Резинка»: еле видный пунктир от последней вершины до перекрестья и расстояние по нему — видно, сколько метров до следующей точки
 const rubber = L.layerGroup().addTo(map);
@@ -4950,6 +4996,7 @@ function updateRubber() { if (!rubberFrame) rubberFrame = setTimeout(() => { rub
 function drawRubber() {
   rubber.clearLayers();
   const snap = mode && snapOn && !pickTool ? snapTarget(map.getCenter()) : null;
+  updateAim(snap);
   $('cross').classList.toggle('snap', !!snap);
   if (snap) {                                                         // ярко-зелёное кольцо с белым ободком — не сливается с зелёной сеткой и растительностью
     L.circleMarker(snap.ll, { radius: 14, color: '#fff', weight: 6, fill: false, interactive: false }).addTo(rubber);
@@ -4965,6 +5012,44 @@ function drawRubber() {
   L.marker(mid, { interactive: false, keyboard: false, icon: L.divIcon({ className: 'rubber-lbl', iconSize: null, html: d > 1000 ? `<span style="color:#c62828">⚠ ${mText(d / 1000, 1)} км — последняя вершина далеко</span>` : `<span>${mText(d, d < 100 ? 2 : 1)} м</span>` }) }).addTo(rubber);
 }
 map.on('move', updateRubber);
+/* ───────────── Вторая строка вверху, как в «Тактической карте»: от меня до крестика; при рисовании линии — длина, площадь, направление ───────────── */
+const AIM_STALE_MS = 30000;                                             // GPS старше 30 с — строка помечается «устарел»
+const areaText = s => s < 10000 ? Math.round(s).toLocaleString('ru-RU') + ' м²' : mText(s / 10000, 2) + ' га';
+// длина, площадь и направление последнего отрезка рисуемой линии — с учётом отрезка до крестика (или до точки привязки)
+function drawStats(end) {
+  const V = mode.latlngs.map(a => L.latLng(a));
+  if (!V.length) return null;
+  const zone = zoneOf(V[0].lng), P = [...V, end].map(ll => planeXY(ll, zone)), closed = !!(LINES[mode.type] || {}).closed;
+  let len = 0;
+  for (let i = 1; i < P.length; i++) len += Math.hypot(P[i].x - P[i - 1].x, P[i].y - P[i - 1].y);
+  const segLen = Math.hypot(P[P.length - 1].x - P[P.length - 2].x, P[P.length - 1].y - P[P.length - 2].y);
+  if (closed && P.length > 2) len += Math.hypot(P[0].x - P[P.length - 1].x, P[0].y - P[P.length - 1].y);   // у контура — периметр
+  let area = 0;                                                         // площадь — только у замкнутых (контур строения, участок); у трубы или забора она бессмысленна
+  if (closed && P.length >= 3) { const o = P[0]; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; area += (a.y - o.y) * (b.x - o.x) - (b.y - o.y) * (a.x - o.x); } area = Math.abs(area) / 2; }
+  const p = P[P.length - 2], q = P[P.length - 1];                       // направление — в той же зоне, что длина и площадь
+  const dir = segLen > 0.005 ? (Math.atan2(q.y - p.y, q.x - p.x) * 180 / Math.PI + 360) % 360 : null;
+  return { len, segLen, area, dir, n: V.length };
+}
+// snap — привязка, уже найденная «резинкой» (undefined — вызов не из неё: при рисовании строку обновит «резинка», без второго поиска привязки)
+function updateAim(snap) {
+  if (!ready) return;
+  const el = $('aimLine'), topH = $('top').offsetHeight, drawing =mode && mode.kind === 'line' && !pickTool && mode.latlngs.length;
+  if (drawing && snap === undefined) return;
+  let html = '', draw = false;
+  if (drawing) {
+    const s = drawStats(snap ? snap.ll : map.getCenter());
+    draw = true;
+    html = `<span class="nw">Длина <b>${distText(s.len)}</b></span> · <span class="nw">отр. ${distText(s.segLen)}${s.dir != null ? ` <b>${degMin(s.dir)}</b>` : ''}</span>${s.area > 0.01 ? ` · <span class="nw">S <b>${areaText(s.area)}</b></span>` : ''}`;
+  } else if (gps) {
+    const me = L.latLng(gps.lat, gps.lng), c = map.getCenter(), r = planeInverse(me, c), old = Date.now() - gps.at > AIM_STALE_MS;
+    html = (spoof ? '⚠ GPS ложный? · ' : '') + `<span class="nw">От меня <b>${distText(r.d)}</b></span>` + (r.d > 0.05 ? ` · <span class="nw">дир. <b>${degMin(r.dir)}</b> (${milText(r.dir)})</span>` : '') +
+      (old ? ' · GPS устарел' : gps.acc > 3 ? ` · ±${Math.round(gps.acc)} м` : '');
+  }
+  el.classList.toggle('draw', draw);
+  if (html) { if (el.innerHTML !== html) el.innerHTML = html; el.style.display = ''; } else el.style.display = 'none';
+  if ($('top').offsetHeight !== topH) layout();                         // строка появилась, пропала или перенеслась — высота верхней панели другая
+}
+setInterval(() => { if (!mode) updateAim(); }, AIM_STALE_MS / 3);      // «GPS устарел» появится и без движения карты
 function finishMode() {
   if (mode.kind === 'line') {
     const closed = (LINES[mode.type] || {}).closed;
@@ -7889,7 +7974,7 @@ function rasterMenu() {
 
 /* ───────────── Старт ───────────── */
 
-ready = true;
+ready = true; updateAim();                                            // вторая строка вверху — сразу, не дожидаясь движения карты
 loadGeoid().catch(() => { /* без сети и кэша — попробуем при съёмке */ });
 if (NATIVE) { startGnss(); startGps(); checkUpdate(); if (RX && rxCfg.auto) rxConnect(); }   // в Android-приложении спутники и GPS включаются сразу, проверяется обновление
 // вернулись в приложение (из другого окна, после сна телефона) — ещё раз проверить обновление, перезапускать не нужно
