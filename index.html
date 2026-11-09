@@ -782,6 +782,19 @@ function coordText(ll) {
   const s = sk42(ll.lat, ll.lng);
   return { wgs: `${f6(ll.lat)}°  ${f6(ll.lng)}°`, sk: `X ${f2(s.x)}  Y ${f2(s.y)}`, s };
 }
+// WGS-84 на экране — в выбранном виде (как в «Тактической карте»): 52,965098° · 52°57,9059′ · 52°57′54,35″ (с. ш./в. д.)
+const WGS_FMTS = { dd: 'градусы: 52,965098°', dm: 'градусы и минуты: 52°57,9059′', dms: 'градусы, минуты, секунды: 52°57′54,35″' };
+let wgsFmt = WGS_FMTS[pref('wgsFmt', 'dd')] ? pref('wgsFmt', 'dd') : 'dd';
+function degFmt(v, fmt, pos, neg) {
+  const h = v < 0 ? neg : pos, a = Math.abs(v), loc = (x, d) => x.toLocaleString('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d, useGrouping: false });
+  if (fmt === 'dd') return `${loc(a, 6)}° ${h}`;
+  let d = Math.floor(a), m = (a - d) * 60;
+  if (fmt === 'dm') { if (+m.toFixed(4) >= 60) { d++; m = 0; } return `${d}°${loc(m, 4).padStart(7, '0')}′ ${h}`; }
+  let mi = Math.floor(m), s = (m - mi) * 60;
+  if (+s.toFixed(2) >= 60) { s = 0; mi++; } if (mi >= 60) { mi = 0; d++; }
+  return `${d}°${String(mi).padStart(2, '0')}′${loc(s, 2).padStart(5, '0')}″ ${h}`;
+}
+const wgsText = ll => `<span class="nw">${degFmt(ll.lat, wgsFmt, 'с. ш.', 'ю. ш.')}</span> <span class="nw">${degFmt(ll.lng, wgsFmt, 'в. д.', 'з. д.')}</span>`;   // широта и долгота не рвутся при переносе
 
 /* ───────────── Данные и хранение ───────────── */
 
@@ -970,7 +983,7 @@ function updateInfo() {
   $('zone').textContent = crs().zoned ? planeName() + ', зона ' + c.s.zone : planeName();
   $('segPlane').textContent = planeName();
   const sk = `<div class="xy"><span class="nw">X ${f2(c.s.x)} <small>м</small></span> <span class="nw">Y ${f2(c.s.y)} <small>м</small></span></div>`;
-  const wgs = `<div class="xy">${c.wgs}</div>`;
+  const wgs = `<div class="xy">${wgsText(map.getCenter())}</div>`;
   $('coords').innerHTML = coordMode === 'wgs' ? wgs : coordMode === 'both' ? wgs + sk : sk;
   for (const b of $('coordSeg').children) b.classList.toggle('on', b.dataset.c === coordMode);
   updateScale();
@@ -1595,7 +1608,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 77;
+const APP_BUILD = 78;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3062,12 +3075,28 @@ function gammaAt(ll) { return -angDiff(planeInverse(ll, polarPoint(ll, 100, 0)).
 // угол в градусах и минутах: 43°18′
 function degMin(deg) { let m = Math.round(((deg % 360) + 360) % 360 * 60); if (m >= 21600) m -= 21600; return Math.floor(m / 60) + '°' + String(m % 60).padStart(2, '0') + '′'; }
 const distText = d => d < 1000 ? mText(d, 2) + ' м' : mText(d / 1000, 3) + ' км';
+// Какой угол показывать (как в «Тактической карте»): дирекционный (от сетки), истинный (от географического севера) или магнитный
+// (по компасу); в градусах, тысячных или и так и так. Одна настройка — для строки «От меня», карточки, рулетки, выноса, рисования
+const ANG_KINDS = { dir: { name: 'дирекционный', short: 'дир.' }, true: { name: 'истинный азимут', short: 'ист.' }, mag: { name: 'магнитный азимут', short: 'магн.' } };
+const ANG_UNITS = { both: 'градусы и тысячные', deg: 'градусы', mil: 'тысячные' };
+let angCfg = { kind: 'dir', unit: 'both', ...pref('ang', {}) };
+if (!ANG_KINDS[angCfg.kind]) angCfg.kind = 'dir'; if (!ANG_UNITS[angCfg.unit]) angCfg.unit = 'both';   // испорченная настройка — по умолчанию
+// dirDeg — дирекционный угол; ll — точка, где считать сближение меридианов γ и склонение
+function angText(dirDeg, ll) {
+  let a = dirDeg, k = angCfg.kind, note = '';
+  if (k === 'true' || k === 'mag') a = dirDeg + gammaAt(L.latLng(ll));
+  if (k === 'mag') { if (magDeclOk) a -= magDecl; else { k = 'true'; note = ' (склонение неизвестно)'; } }
+  a = ((a % 360) + 360) % 360;
+  const u = angCfg.unit, val = u === 'mil' ? milText(a) : u === 'deg' ? degMin(a) : `${degMin(a)} (${milText(a)})`;
+  return `${ANG_KINDS[k].short} <b>${val}</b>${note}`;
+}
+const angPlain = (dirDeg, ll) => angText(dirDeg, ll).replace(/<[^>]+>/g, '');
 function updateToObj() {
   toObjLayer.clearLayers();
   const el = $('fromMe');
   if (!selected || !gps) { if (el) el.innerHTML = 'нет GPS <button class="btn" data-act="gpson" style="min-height:30px;padding:2px 10px;margin-left:6px">включить</button>'; return; }
   const me = L.latLng(gps.lat, gps.lng), t = objTarget(selected.kind, selected.obj), pl = planeInverse(me, t), d = pl.d / gkScale(midLL(me, t)), az = azimuth(me, t);   // сколько идти — на местности
-  if (el) el.textContent = distText(d) + ` · дир. угол ${degMin(pl.dir)} (${milText(pl.dir)}) · азимут ист. ${degMin(az)}` + (spoof ? ' · GPS под подозрением' : '');
+  if (el) el.textContent = distText(d) + ` · ${angPlain(pl.dir, me)}` + (angCfg.kind === 'dir' ? ` · азимут ист. ${degMin(az)}` : '') + (spoof ? ' · GPS под подозрением' : '');
   if (d < 0.05) return;
   // тонкий фиолетовый пунктир и одна стрелка рядом со мной: синий занят GPS и водопроводом, много стрелок — шум (замечание картографа)
   const col = getComputedStyle(document.body).getPropertyValue('--svcPath').trim() || '#5e35b1';
@@ -3473,7 +3502,7 @@ function updateStake() {
     body = `<div class="row"><svg width="56" height="56" viewBox="-28 -28 56 56" style="flex:none;transform:rotate(${az}deg)"><path d="M0 -24L10 8L0 2L-10 8Z" fill="${here ? '#2e7d32' : '#e65100'}"/></svg>
       <div><div class="big ${here ? 'ok' : ''}">${here ? 'На месте' : cmText(d)}</div>
       <div>${dx >= 0 ? 'на север' : 'на юг'} ${cmText(Math.abs(dx))} · ${dy >= 0 ? 'на восток' : 'на запад'} ${cmText(Math.abs(dy))}</div>
-      <div style="color:var(--muted);font-size:.85em">угол ${az.toFixed(1)}° · GPS ±${cmText(gps.acc)}</div></div></div>`;
+      <div style="color:var(--muted);font-size:.85em">${angText(az, L.latLng(gps.lat, gps.lng))} · GPS ±${cmText(gps.acc)}</div></div></div>`;
   }
   const sp = stake.so && soById(stake.so.id), rp = stake.redo && data.points.find(p => p.id === stake.redo.id && p.wait);
   if (stake.redo && !rp) { stopStake(); return; }                          // точку уже досняли или удалили
@@ -4735,7 +4764,7 @@ function tapeShow(A, B, AB) {
   pickTool.step = 2;
   const g = AB / pickTool.m;                                            // рулетка — на местности; на плане — мелко ниже
   pickPanel(`Рулетка: ${mText(g, 2)} м`);
-  $('pickBody').innerHTML = `<div style="color:var(--muted);margin-top:4px">${esc(pickTool.A.name)} → ${esc(pickTool.B.name)} · угол ${dms(az)}${Math.abs(AB - g) >= GROUND_NOTE_M ? ` · на плане ${mText(AB, 2)} м` : ''}</div><button class="btn" id="tapeAgain" style="width:100%;margin-top:8px">Измерить ещё</button>`;
+  $('pickBody').innerHTML = `<div style="color:var(--muted);margin-top:4px">${esc(pickTool.A.name)} → ${esc(pickTool.B.name)} · ${angText(az, pickTool.A.ll)}${Math.abs(AB - g) >= GROUND_NOTE_M ? ` · на плане ${mText(AB, 2)} м` : ''}</div><button class="btn" id="tapeAgain" style="width:100%;margin-top:8px">Измерить ещё</button>`;
   say(`${String(g.toFixed(2)).replace('.', ',')} метра`);
   $('tapeAgain').onclick = () => pickStart('tape');
 }
@@ -5071,11 +5100,11 @@ function updateAim(snap) {
   if (drawing) {
     const s = drawStats(snap ? snap.ll : map.getCenter());
     draw = true;
-    html = `<span class="nw">Длина <b>${distText(s.len)}</b></span> · <span class="nw">отр. ${distText(s.segLen)}${s.dir != null ? ` <b>${degMin(s.dir)}</b>` : ''}</span>${s.area > 0.01 ? ` · <span class="nw">S <b>${areaText(s.area)}</b></span>` : ''}`;
+    html = `<span class="nw">Длина <b>${distText(s.len)}</b></span> · <span class="nw">отр. ${distText(s.segLen)}${s.dir != null ? ` ${angText(s.dir, map.getCenter())}` : ''}</span>${s.area > 0.01 ? ` · <span class="nw">S <b>${areaText(s.area)}</b></span>` : ''}`;
   } else if (gps) {
     const me = L.latLng(gps.lat, gps.lng), c = map.getCenter(), r = planeInverse(me, c), old = Date.now() - gps.at > AIM_STALE_MS;
     r.d /= gkScale(midLL(me, c));                                       // сколько идти — на местности
-    html = (spoof ? '⚠ GPS ложный? · ' : '') + `<span class="nw">От меня <b>${distText(r.d)}</b></span>` + (r.d > 0.05 ? ` · <span class="nw">дир. <b>${degMin(r.dir)}</b> (${milText(r.dir)})</span>` : '') +
+    html = (spoof ? '⚠ GPS ложный? · ' : '') + `<span class="nw">От меня <b>${distText(r.d)}</b></span>` + (r.d > 0.05 ? ` · <span class="nw">${angText(r.dir, me)}</span>` : '') +
       (old ? ' · GPS устарел' : gps.acc > 3 ? ` · ±${Math.round(gps.acc)} м` : '');
   }
   el.classList.toggle('draw', draw);
@@ -5906,7 +5935,7 @@ function dxfAskCrs(file, P, sel, opt) {
   showSheet(`<div class="sh-head"><b>Чертёж «${esc(file.name)}»</b><button class="x" data-close>×</button></div>
     <div class="hint">${P.lines.length} ${plural(P.lines.length, 'линия', 'линии', 'линий')}, ${nPts} ${plural(nPts, 'точка привязки', 'точки привязки', 'точек привязки')},${P.texts.length} ${plural(P.texts.length, 'подпись', 'подписи', 'подписей')}.<br>${where}</div>
     ${dxfSkipText(P.skip)}
-    <div class="hint" style="margin-top:8px"><b>В какой системе координат чертёж?</b> ГСК-2011 и СК-42 на глаз не отличить — расхождение до нескольких метров; уточните у того, кто дал чертёж.${msk ? '' : ' МСК — сначала задайте её в настройках системы координат.'}</div>
+    <div class="hint" style="margin-top:8px"><b>В какой системе координат чертёж?</b> Плоские координаты ГСК-2011 и СК-42 одной точки отличаются примерно на 150 м (в Орле) — чертёж в чужой системе ляжет со сдвигом; уточните у того, кто дал чертёж, или сверьте по известной точке.${msk ? '' : ' МСК — сначала задайте её в настройках системы координат.'}</div>
     <div class="row2">${ids.map(id => `<button class="btn${id === sel ? ' primary' : ''}" data-dcrs="${id}">${esc(crsById(id).name)}</button>`).join('')}</div>
     <div class="row2" style="margin-top:6px"><button class="btn${opt.swap ? ' primary' : ''}" data-dswap="1">Поменять X↔Y${opt.swap ? ' ✓' : ''}</button>
       ${F && F.cr.zoned && !F.prefixed ? `<button class="btn" data-dzone="-1">Зона −</button><button class="btn" data-dzone="1">Зона ${F.zone} +</button>` : ''}</div>
@@ -6198,6 +6227,11 @@ function settingsMenu() {
     { id: 'voice', icon: '🗣', text: 'Озвучивать результат голосом', on: voiceOn, check: true },
     ...(NATIVE ? [{ id: 'volkeys', icon: '±', text: 'Кнопки громкости: «−» По GPS, «+» Измерить и Принять', on: pref('volKeys', true), check: true },
       { id: 'screen', icon: '◑', text: 'Экран не гаснет во время работы', on: pref('keepScreen', true), check: true }] : []),
+    { header: 'Углы и координаты' },
+    { id: 'angkind', icon: '∡', text: 'Угол на цель: ' + ANG_KINDS[angCfg.kind].name + ' (нажмите — сменить)' },
+    { id: 'angunit', icon: '◔', text: 'Углы в: ' + ANG_UNITS[angCfg.unit] + ' (нажмите — сменить)' },
+    { id: 'wgsfmt', icon: '🌐', text: 'WGS-84 — ' + WGS_FMTS[wgsFmt] + ' (нажмите — сменить)' },
+    { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() + ' →' },
     { header: 'Вид' },
     { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
     { id: 'netcolors', icon: '◍', text: 'Цвета сетей (выкл. — чёрные, по «Правилам»)', on: netColors, check: true },
@@ -6206,7 +6240,12 @@ function settingsMenu() {
     { id: 'dxfframe', icon: '▭', text: 'В DXF — рамка листа и штамп', on: pref('dxfFrame', true), check: true },
     { header: 'Помощники' },
     { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' }
-  ], act => { MENU[act](); if (['sound', 'voice', 'volkeys', 'screen', 'netcolors', 'dxfframe'].includes(act)) settingsMenu(); });
+  ], act => { MENU[act](); if (['sound', 'voice', 'volkeys', 'screen', 'netcolors', 'dxfframe', 'angkind', 'angunit', 'wgsfmt'].includes(act)) settingsMenu(); });
+}
+// смена настройки углов или формата WGS-84 — сразу перерисовать всё, где они видны
+function angApply(msg) {
+  setPref('ang', angCfg); updateInfo(); updateAim(); updateRubber(); if (selected) updateToObj(); if (typeof updateStake === 'function') updateStake();
+  toast(msg);
 }
 
 const MENU = {
@@ -6275,11 +6314,16 @@ const MENU = {
   about: () => alert(`Полевой план, сборка ${APP_BUILD}.
 
 ` + 'Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
+  angkind: () => { const ks = Object.keys(ANG_KINDS); angCfg = { ...angCfg, kind: ks[(ks.indexOf(angCfg.kind) + 1) % ks.length] };
+    angApply('Угол на цель: ' + ANG_KINDS[angCfg.kind].name + (angCfg.kind === 'mag' && !magDeclOk ? ' — склонение ещё неизвестно (нужен GPS в приложении), пока покажу истинный' : '')); },
+  angunit: () => { const us = Object.keys(ANG_UNITS); angCfg = { ...angCfg, unit: us[(us.indexOf(angCfg.unit) + 1) % us.length] }; angApply('Углы в: ' + ANG_UNITS[angCfg.unit]); },
+  wgsfmt: () => { const fs = Object.keys(WGS_FMTS); wgsFmt = fs[(fs.indexOf(wgsFmt) + 1) % fs.length]; setPref('wgsFmt', wgsFmt); updateInfo(); layout();
+    toast('WGS-84 — ' + WGS_FMTS[wgsFmt] + (coordMode === 'sk' ? '. Вверху сейчас плоские — нажмите на координаты, чтобы показать WGS-84' : '')); },
   crs: () => openList('Система координат', [
-    { header: 'Плоские координаты' },
-    { id: 'gsk', icon: '⌖', text: 'ГСК-2011 — государственная (по умолчанию)', on: crsId === 'gsk', radio: true },
-    { id: 'sk42', icon: '⌖', text: 'СК-42 — для старых материалов (до 2021 г.)', on: crsId === 'sk42', radio: true },
-    { id: 'msk', icon: '⌖', text: msk ? `${msk.name || 'МСК'} — своя местная система` : 'МСК — ввести параметры своей местной системы', on: crsId === 'msk', radio: true },
+    { header: 'Плоские координаты · справа — где сейчас крестик' },
+    { id: 'gsk', icon: '⌖', text: 'ГСК-2011 — государственная (по умолчанию) · ' + crsPreview('gsk'), on: crsId === 'gsk', radio: true },
+    { id: 'sk42', icon: '⌖', text: 'СК-42 — для старых материалов (до 2021 г.) · ' + crsPreview('sk42'), on: crsId === 'sk42', radio: true },
+    { id: 'msk', icon: '⌖', text: msk ? `${msk.name || 'МСК'} — своя местная система · ${crsPreview('msk')}` : 'МСК — ввести параметры своей местной системы', on: crsId === 'msk', radio: true },
     ...(msk ? [{ id: 'mskedit', icon: '✎', text: 'Изменить параметры МСК' }] : [])
   ], pick => {
     if (pick === 'msk' && !msk || pick === 'mskedit') { editMsk(); return; }
@@ -6341,6 +6385,13 @@ async function offlineInfo() {
   });
 }
 /* ── Выбор плоской системы координат и ввод своей МСК ── */
+// координаты крестика в системе id — чтобы при выборе сразу было видно, какие цифры получатся (как в «Тактической карте»)
+function crsPreview(id) {
+  try {
+    const c = crsById(id), ll = map.getCenter(), zone = c.zoned ? Math.floor(ll.lng / 6) + 1 : 0, [y, x] = proj4('WGS84', c.def(zone), [ll.lng, ll.lat]);
+    return isFinite(x) && isFinite(y) ? `X ${f2(x)} Y ${f2(y)}` : '—';
+  } catch (e) { return '—'; }
+}
 function setCrs(id) {
   crsId = id; setPref('crs', id);
   updateInfo();
