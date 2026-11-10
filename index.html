@@ -28,6 +28,7 @@
   html, body { height:100%; margin:0; overflow:hidden; background:var(--bg);   /* повёрнутая карта больше экрана — страница не должна прокручиваться */ font:var(--fs)/1.35 system-ui, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
   #map { position:absolute; inset:0; background:var(--bg); }
   .leaflet-tile-pane { opacity:var(--baseOp, .7); }
+  .sat-tiles .leaflet-tile { width:257px !important; height:257px !important; }   /* снимок: кусок на 1 px шире — без светлых швов на экранах с дробным масштабом */
   body.day .leaflet-tile-pane { filter: saturate(.6); }
   body.night .leaflet-tile-pane { filter: brightness(.55) contrast(1.15) saturate(.55); }
   body.sun .leaflet-tile-pane { filter: contrast(1.2) saturate(1.1); }
@@ -155,9 +156,9 @@
   /* подписи чертежа DXF: точка привязки — левый нижний угол, сдвиг и поворот — от неё */
   .dxf-ti { pointer-events:none; }
   /* привязка чертежа по двум точкам: панель шагов и метки Ч1/М1 */
-  #calBar { position:fixed; left:8px; right:8px; top:calc(62px + env(safe-area-inset-top)); z-index:1200;   /* сверху: внизу всплывают подсказки */ background:var(--panel); color:var(--ink);
+  #calBar, #shiftBar { position:fixed; left:8px; right:8px; top:calc(62px + env(safe-area-inset-top)); z-index:1200;   /* сверху: внизу всплывают подсказки */ background:var(--panel); color:var(--ink);
     border-radius:12px; box-shadow:var(--shadow); padding:10px 12px; font-size:var(--fs); max-width:560px; margin:0 auto; }
-  #calBar .cal-b { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:8px; }
+  #calBar .cal-b, #shiftBar .cal-b { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:8px; }
   .cal-m span { position:absolute; transform:translate(-50%,-50%); background:#7b1fa2; color:#fff; font:700 12px Arial, sans-serif; padding:2px 5px; border-radius:9px; white-space:nowrap; box-shadow:0 0 0 2px #fff; }
   .cal-m.g span { background:#2e7d32; }
   .dxf-t { position:absolute; left:0; bottom:0; white-space:pre; line-height:1.1; transform-origin:0 100%; font-family:Arial, sans-serif;
@@ -968,14 +969,186 @@ const bases = {
   'Спутник подробный (Esri)': cachedTiles('esri','https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: MAX_ZOOM, maxNativeZoom: 18, attribution: 'Снимки © Esri, Maxar, Earthstar Geographics', cache: false }),   // условия Esri: без сохранения в телефон
   'Спутник обзорный (Sentinel-2)': cachedTiles('s2','https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg', { maxZoom: MAX_ZOOM, maxNativeZoom: 14, attribution: 'Sentinel-2 cloudless — s2maps.eu, EOX IT Services GmbH (модиф. данные Copernicus Sentinel 2023), CC BY-NC-SA 4.0', prefetch: 14 })
 };
+/* ───────────── Спутник Google и Яндекс ─────────────
+   Адреса тайлов — в «Настройки → Спутник Google и Яндекс» (если поставщик сменит адрес — поправить без новой сборки).
+   Яндекс рисует в эллиптическом Меркаторе (EPSG:3395), а карта — в сферическом (3857): без пересчёта снимок съехал бы
+   по широте на десятки километров (в Орле ~20 км). SatTiles для каждого куска карты берёт нужные полосы из 1–2 кусков Яндекса. */
+const SAT_DEFAULT = {
+  google: 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+  googleHyb: 'https://mt{s}.google.com/vt/lyrs=y&hl=ru&x={x}&y={y}&z={z}',
+  yandex: 'https://core-sat.maps.yandex.net/tiles?l=sat&x={x}&y={y}&z={z}&lang=ru_RU',
+  yandexSkl: 'https://core-renderer-tiles.maps.yandex.net/tiles?l=skl&x={x}&y={y}&z={z}&lang=ru_RU'
+};
+const satUrlOk = v => /^https:\/\/\S+$/.test(v) && ['{x}', '{y}', '{z}'].every(k => v.includes(k));
+const satUrl = k => { const v = String(pref('satUrl.' + k, '') || '').trim(); return satUrlOk(v) ? v : SAT_DEFAULT[k]; };
+const E_WGS = 0.0818191908426215;                                    // эксцентриситет эллипсоида WGS-84
+const lat3857 = (py, z) => Math.atan(Math.sinh(Math.PI * (1 - 2 * py / (256 * 2 ** z)))) * 180 / Math.PI;
+function y3395(lat, z) {                                             // пиксель по вертикали в эллиптическом Меркаторе
+  const p = Math.max(-85, Math.min(85, lat)) * Math.PI / 180, es = E_WGS * Math.sin(p);
+  return (1 - Math.log(Math.tan(Math.PI / 4 + p / 2) * Math.pow((1 - es) / (1 + es), E_WGS / 2)) / Math.PI) / 2 * 256 * 2 ** z;
+}
+// кусок снимка: из памяти телефона или с сервера. Ошибка: e.status — сервер ответил «нет такого куска» (404 и т. п.), e.net — нет связи
+const tileFlying = new Map();                                       // один кусок качается один раз, даже если его ждут 16 соседей
+const tileOnce = (key, fn) => { if (!tileFlying.has(key)) tileFlying.set(key, fn().finally(() => tileFlying.delete(key))); return tileFlying.get(key); };
+function tileImage(url, key, cache) {
+  const load = src => new Promise((ok, bad) => { const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => ok(im); im.onerror = () => bad(new Error('не картинка')); im.src = src; });
+  const get = () => fetch(url, { mode: 'cors' }).catch(e => { e.net = true; throw e; })
+    .then(r => { if (!r.ok) { const e = new Error(r.status); e.status = r.status; throw e; } return r.blob(); })
+    .then(b => { if (!b.size || !/^image\//.test(b.type)) { const e = new Error('пусто'); e.status = 204; throw e; } return b; });
+  return (cache ? tileStore('readonly', s => s.get(key)).catch(() => null) : Promise.resolve(null))
+    .then(blob => blob || tileOnce(key, () => get().then(b => { if (cache) tileStore('readwrite', s => s.put(b, key)).catch(() => {}); return b; })))   // в память — только картинки
+    .then(b => { const u = URL.createObjectURL(b); return load(u).finally(() => URL.revokeObjectURL(u)); });
+}
+// Снимок кусками 256 px: ell — эллиптический Меркатор (Яндекс, EPSG:3395) пересчитывается в сферический (3857) полосами из 1–2 кусков;
+// нет куска на этом уровне (за городом у Яндекса нет 18–19, у Google — 20) — берётся увеличенная часть куска с уровня мельче (до 4 уровней)
+const SAT_UP = 4;
+const SatTiles = L.GridLayer.extend({
+  initialize(url, o) { this._url = url; L.GridLayer.prototype.initialize.call(this, Object.assign({ className: 'sat-tiles' }, o)); },
+  setUrl(u) { this._url = u; this.redraw(); },
+  _src(x, y, z) { const s = this.options.subdomains || ''; return L.Util.template(this._url, { x, y, z, s: s ? s[Math.abs(x + y) % s.length] : '' }); },
+  _piece(x, r, z, up) {                                               // { img, sx, sy, size } — нужная часть куска (x, r, z), можно с уровня z−up
+    const d = 2 ** up, px = x >> up, pr = r >> up, size = 256 / d, o = this.options;
+    return tileImage(this._src(px, pr, z - up), o.cacheId + '/' + (z - up) + '/' + px + '/' + pr, o.cache)
+      .then(img => ({ img, sx: (x % d) * size, sy: (r % d) * size, size }),
+        e => { if (e.status && up < SAT_UP && z - up > 0) return this._piece(x, r, z, up + 1); throw e; });
+  },
+  createTile(c, done) {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+    const z = c.z, n = 2 ** z, x = ((c.x % n) + n) % n, ell = this.options.ell;
+    const top = ell ? y3395(lat3857(c.y * 256, z), z) : c.y * 256, bot = ell ? y3395(lat3857(c.y * 256 + 256, z), z) : c.y * 256 + 256;
+    const jobs = [];
+    for (let r = Math.max(0, Math.floor(top / 256)); r <= Math.min(n - 1, Math.floor((bot - 1e-6) / 256)); r++)
+      jobs.push(this._piece(x, r, z, 0).then(p => ({ r, ...p }), e => ({ err: e })));
+    Promise.all(jobs).then(list => {
+      const g = cv.getContext('2d'), k = 256 / (bot - top); let any = false;
+      for (const it of list) {
+        if (it.err) continue;
+        const s0 = Math.max(top, it.r * 256), s1 = Math.min(bot, it.r * 256 + 256), f = it.size / 256; if (s1 <= s0) continue;
+        g.drawImage(it.img, it.sx, it.sy + (s0 - it.r * 256) * f, it.size, (s1 - s0) * f, 0, (s0 - top) * k, 256, (s1 - s0) * k); any = true;
+      }
+      if (any) { done(null, cv); return; }
+      const e = new Error('нет снимка'); e.net = list.some(it => it.err && it.err.net); done(e, cv);   // e.net — для подсказки «нет связи»
+    }).catch(e => done(e, cv));                                       // холст не создался (мало памяти) — кусок пустой, но не «вечно грузится»
+    return cv;
+  }
+});
+const G_ATTR = 'Снимки © Google Maps', Y_ATTR = 'Снимки © Яндекс Карты';
+const SAT_NAMES = new Set(['Спутник Google', 'Гибрид Google', 'Спутник Яндекс', 'Гибрид Яндекс']);
+// без сети снимок берётся из памяти: в неё попадает только то, что уже смотрели (заранее участки не скачиваем — так требуют поставщики)
+bases['Спутник Google'] = new SatTiles(satUrl('google'), { maxZoom: MAX_ZOOM, maxNativeZoom: 20, subdomains: '0123', cacheId: 'gsat', cache: true, attribution: G_ATTR });
+bases['Гибрид Google'] = new SatTiles(satUrl('googleHyb'), { maxZoom: MAX_ZOOM, maxNativeZoom: 20, subdomains: '0123', cacheId: 'ghyb', cache: true, attribution: G_ATTR });
+bases['Спутник Яндекс'] = new SatTiles(satUrl('yandex'), { maxZoom: MAX_ZOOM, maxNativeZoom: 19, cacheId: 'ysat', cache: true, ell: true, attribution: Y_ATTR });
+bases['Гибрид Яндекс'] = L.layerGroup([new SatTiles(satUrl('yandex'), { maxZoom: MAX_ZOOM, maxNativeZoom: 19, cacheId: 'ysat', cache: true, ell: true, attribution: Y_ATTR }),
+  new SatTiles(satUrl('yandexSkl'), { maxZoom: MAX_ZOOM, maxNativeZoom: 19, cacheId: 'yskl', cache: true, ell: true })]);
+const SAT_WARN = `<b>Снимки Google и Яндекса подключены не через их платный сервис, а напрямую — так делают многие полевые программы.</b><br><br>
+  Это «серая зона»: условия Google и Яндекса такое не разрешают. Чем грозит: в любой день снимки могут перестать грузиться (сервер откажет или сменит адрес) — тогда адрес можно поправить в «Настройках», а пока выбрать Esri.<br><br>
+  Привязка снимков сама «гуляет» на 1–5 м, у Google и Яндекса по-разному. Для точной работы выставьте <b>«Сдвиг подложки»</b> по снятой точке (кнопка в «Слоях»).`;
+function satSettings() {
+  openForm('Спутник Google и Яндекс', [
+    { key: 'google', label: 'Google, снимок', value: pref('satUrl.google', ''), placeholder: SAT_DEFAULT.google },
+    { key: 'googleHyb', label: 'Google, снимок с подписями', value: pref('satUrl.googleHyb', ''), placeholder: SAT_DEFAULT.googleHyb },
+    { key: 'yandex', label: 'Яндекс, снимок (проекция EPSG:3395)', value: pref('satUrl.yandex', ''), placeholder: SAT_DEFAULT.yandex },
+    { key: 'yandexSkl', label: 'Яндекс, подписи поверх снимка', value: pref('satUrl.yandexSkl', ''), placeholder: SAT_DEFAULT.yandexSkl,
+      hint: 'Пустое поле — адрес по умолчанию. В адресе нужны {x}, {y}, {z}; {s} — номер сервера (у Google 0–3).' }
+  ], v => {
+    if ([v.yandex, v.yandexSkl].some(u => /{s}/.test(u || ''))) { toast('В адресах Яндекса {s} не поддерживается — впишите сервер целиком'); return false; }
+    for (const k of Object.keys(SAT_DEFAULT)) if (v[k] && !satUrlOk(v[k])) { toast('Адрес должен начинаться с https:// и содержать {x}, {y}, {z}'); return false; }
+    for (const k of Object.keys(SAT_DEFAULT)) setPref('satUrl.' + k, v[k] || '');
+    bases['Спутник Google'].setUrl(satUrl('google')); bases['Гибрид Google'].setUrl(satUrl('googleHyb'));
+    bases['Спутник Яндекс'].setUrl(satUrl('yandex'));
+    const [ys, yk] = bases['Гибрид Яндекс'].getLayers(); ys.setUrl(satUrl('yandex')); yk.setUrl(satUrl('yandexSkl'));
+    toast('Адреса снимков сохранены');
+  });
+}
 let baseName = pref('base', 'Схема (OSM)');
 if (!bases[baseName]) baseName = 'Схема (OSM)';
 bases[baseName].addTo(map);
 function setBase(name) {
   if (!bases[name] || name === baseName) return;
-  map.removeLayer(bases[baseName]); bases[name].addTo(map); baseName = name; setPref('base', name);
+  if (typeof shiftJob !== 'undefined' && shiftJob) { shiftJob = null; shiftBar(); toast('Подложка сменилась — совмещение отменено'); }
+  if (SAT_NAMES.has(name) && !pref('satAgree', false)) {                      // один раз объяснить «серую зону» и сдвиг снимков
+    ask(SAT_WARN, 'Понятно, включить').then(y => { if (y) { setPref('satAgree', true); setBase(name); } }); return 'ask';
+  }
+  map.removeLayer(bases[baseName]); bases[name].addTo(map); baseName = name; setPref('base', name); applyBaseShift();
 }
 const layersControl = L.control.layers(bases, null, { position: 'topright' }).addTo(map);   // скрыт: оверлеи регистрируются здесь, а выбирать слои — кнопкой справа
+/* ───────────── Сдвиг подложки: снимок «гуляет» на метры — совместить по снятой точке ─────────────
+   Сдвиг в метрах (на восток, на север) хранится отдельно для каждой подложки и применяется к её слою сдвигом в пикселях. */
+const baseShift = name => { const s = pref('baseShift.' + name, null); return s && isFinite(s.e) && isFinite(s.n) ? s : { e: 0, n: 0 }; };
+const baseLayers = l => l && l.getLayers ? l.getLayers() : l ? [l] : [];
+function applyBaseShift(z) {
+  if (!map._loaded) return;                                           // карта ещё без места и масштаба
+  if (typeof z !== 'number') z = map.getZoom();                   // при плавном приближении — сразу под конечный масштаб
+  const s = baseShift(baseName), c = map.getCenter();
+  const p0 = map.project(c, z), p1 = map.project([c.lat + s.n / 111320, c.lng + s.e / (111320 * Math.cos(c.lat * Math.PI / 180))], z);
+  const t = s.e || s.n ? `${(p1.x - p0.x).toFixed(1)}px ${(p1.y - p0.y).toFixed(1)}px` : '';
+  for (const b of Object.values(bases)) for (const l of baseLayers(b)) { const el = l.getContainer && l.getContainer(); if (el) el.style.translate = b === bases[baseName] ? t : ''; }
+}
+map.on('zoom zoomend viewreset', () => applyBaseShift());
+map.on('zoomanim', e => applyBaseShift(e.zoom));
+// без сети: показать, почему пусто — когда подряд не грузится много кусков и ни один не загрузился (одиночные пустые куски — не повод)
+let tileErrAt = 0, tileErrs = 0;
+for (const b of Object.values(bases)) for (const l of baseLayers(b)) {
+  l.on('tileload', () => { tileErrs = 0; });
+  l.on('tileerror', e => {
+    if (l instanceof SatTiles && !(e.error && e.error.net)) return;    // у снимков «нет куска» (404) — не повод говорить «нет связи»
+    if (++tileErrs < 6 || Date.now() - tileErrAt < 60000) return;
+    tileErrAt = Date.now(); tileErrs = 0;
+    toast(navigator.onLine ? 'Подложка не грузится — нет связи или сервер не отвечает. Видно то, что уже смотрели при связи' : 'Нет интернета: подложка видна только там, где её уже смотрели при связи');
+  });
+}
+const shiftText = s => s.e || s.n ? `${mText(Math.hypot(s.e, s.n), 2)} м (восток ${mText(s.e, 2)}, север ${mText(s.n, 2)})` : 'нет';
+let shiftJob = null;   // { name, ref: LatLng — где объект на самом деле }
+function shiftBar(html) {
+  let bar = $('shiftBar');
+  if (!html) { if (bar) bar.remove(); return; }
+  if (!bar) { bar = document.createElement('div'); bar.id = 'shiftBar'; bar.className = 'calbar-like'; document.body.appendChild(bar); }
+  bar.innerHTML = html;
+  bar.onclick = e => { const b = e.target.closest('[data-sh]'); if (b) shiftAct(b.dataset.sh); };
+}
+function shiftStart() {
+  shiftJob = { name: baseName, ref: null };
+  shiftBar(`<b>Сдвиг подложки «${esc(baseName)}»</b><div class="hint">Шаг 1. Поставьте крестик на снятую точку (знак на плане) — или введите её координаты.</div>
+    <div class="cal-b"><button class="btn" data-sh="stop">Отмена</button><button class="btn" data-sh="xy">Ввести X, Y</button><button class="btn primary" data-sh="pt">Точка под крестиком</button></div>`);
+}
+function shiftStep2(ll) {
+  shiftJob.ref = ll;
+  shiftBar(`<b>Сдвиг подложки «${esc(shiftJob.name)}»</b><div class="hint">Шаг 2. Двигайте карту, пока крестик не встанет на этот же объект <b>на снимке</b> (угол дома, люк, столб).</div>
+    <div class="cal-b"><button class="btn" data-sh="stop">Отмена</button><button class="btn primary" data-sh="here">Здесь — совместить</button></div>`);
+  toast('Двигайте карту: крестик — на тот же объект на снимке');
+}
+function shiftAct(a) {
+  if (!shiftJob) { shiftBar(); return; }
+  if (a === 'stop') { shiftJob = null; shiftBar(); return; }
+  if (a === 'pt') { const p = pointAtCross(); if (!p) { toast('Под крестиком нет точки — подведите его к знаку'); return; } shiftStep2(L.latLng(p.lat, p.lng)); return; }
+  if (a === 'xy') {
+    openForm('Известная точка', [{ key: 'x', label: 'X (на север), м', type: 'number', half: true }, { key: 'y', label: 'Y (на восток), м', type: 'number', half: true }], v => {
+      const x = parseNum(v.x), y = parseNum(v.y);
+      if (!String(v.x).trim() || !String(v.y).trim() || isNaN(x) || isNaN(y)) { toast('X и Y — числа, в метрах'); return false; }
+      const z = planeZone(y); if (!z) { toast('Y — положительное число'); return false; }
+      const ll = fromSk42(x, z.y, z.zone); if (!isFinite(ll.lat) || !isFinite(ll.lng)) { toast('Не удалось пересчитать координаты'); return false; }
+      setTimeout(() => { map.setView(ll, Math.max(map.getZoom(), 18)); shiftStep2(L.latLng(ll.lat, ll.lng)); }, 0);
+    }, 'Дальше');
+    return;
+  }
+  if (a === 'here' && shiftJob.ref) {
+    // снимок показывает объект под крестиком, а на самом деле он в ref → сдвинуть снимок на (ref − крестик), сверх прежнего сдвига
+    const c = map.getCenter(), r = shiftJob.ref, old = baseShift(shiftJob.name);
+    const dn = (r.lat - c.lat) * 111320, de = (r.lng - c.lng) * 111320 * Math.cos(c.lat * Math.PI / 180);
+    const s = { e: +(old.e + de).toFixed(3), n: +(old.n + dn).toFixed(3) };
+    if (Math.hypot(s.e, s.n) > 200) { toast('Сдвиг больше 200 м — похоже, крестик не на том объекте. Попробуйте ещё раз'); return; }
+    setPref('baseShift.' + shiftJob.name, s); shiftJob = null; shiftBar(); applyBaseShift(); map.panTo(r);
+    toast('Подложка сдвинута: ' + shiftText(s));
+  }
+}
+function shiftMenu() {
+  const s = baseShift(baseName);
+  openList('Сдвиг подложки', [
+    { id: 'start', icon: '⌖', text: 'Совместить по снятой точке или по координатам' },
+    ...(s.e || s.n ? [{ id: 'reset', icon: '↺', text: 'Сбросить сдвиг (сейчас ' + shiftText(s) + ')' }] : [])
+  ], a => { if (a === 'start') shiftStart(); if (a === 'reset') { setPref('baseShift.' + baseName, null); applyBaseShift(); toast('Сдвиг подложки сброшен'); } });
+}
+applyBaseShift();
 
 /* ───────────── Координаты перекрестья и масштаб ───────────── */
 
@@ -1611,7 +1784,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 83;
+const APP_BUILD = 84;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -5277,6 +5450,7 @@ window.androidBack = () => {
   const vis = id => { const e = $(id); return !!e && getComputedStyle(e).display !== 'none'; };
   if (vis('sheet')) { $('sheet').dispatchEvent(new MouseEvent('click', { bubbles: true })); return 'handled'; }   // как касание мимо окна: «Нет» в вопросах
   if (vis('card')) { hideCard(); return 'handled'; }
+  if (shiftJob && $('shiftBar')) { shiftAct('stop'); return 'handled'; }
   if (pickTool) { pickEnd(); return 'handled'; }                         // засечка, створ, рулетка — закрыть инструмент, съёмка остаётся
   if (typeof cal !== 'undefined' && cal && vis('calBar')) { ask('Отменить привязку чертежа?', 'Отменить', true).then(y => { if (y && cal) calAct('stop'); }); return 'handled'; }
   if (mode) { $('modeX').click(); return 'handled'; }
@@ -5401,6 +5575,7 @@ document.documentElement.style.setProperty('--baseOp', baseOp);
 $('fabLayers').onclick = () => {
   const items = [{ header: 'Экран' }, { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] + ' (нажмите — сменить)' },
     { header: 'Подложка' }, ...Object.keys(bases).map(n => ({ id: 'base:' + n, icon: '🗺', text: n, on: n === baseName, radio: true })),
+    ...(SAT_NAMES.has(baseName) || /Esri/.test(baseName) ? [{ id: 'shift', icon: '⌖', text: 'Сдвиг подложки: ' + shiftText(baseShift(baseName)) + ' →' }] : []),
     { id: 'fade', icon: '◑', text: 'Яркость подложки: ' + (BASE_FADES.find(f => f[0] === baseOp) || BASE_FADES[1])[1] + ' (нажмите — сменить)' },
     { header: 'Мои карты' }, ...myMaps.map(m => ({ id: 'my:' + m.id, icon: '🗂', text: m.name, on: !!(myMapLayers[m.id] && map.hasLayer(myMapLayers[m.id])), check: true })),
     ...myDxf.map(m => ({ id: 'dxf:' + m.id, icon: '📐', text: 'Чертёж: ' + m.name, on: !!m.on, check: true })),
@@ -5413,7 +5588,8 @@ $('fabLayers').onclick = () => {
     if (pick === 'mymaps') { openMyMaps(); return; }
     if (pick.startsWith('my:') && toggleMyMap(pick.slice(3)) === 'ask') return;   // спрашиваем систему снимка — список «Слоёв» поверх не открывать
     if (pick.startsWith('dxf:')) toggleDxf(pick.slice(4));
-    if (pick.startsWith('base:')) setBase(pick.slice(5));
+    if (pick === 'shift') { shiftMenu(); return; }
+    if (pick.startsWith('base:') && setBase(pick.slice(5)) === 'ask') return;   // вопрос про снимки — «Слои» поверх не открываем
     if (pick === 'fade') { const i = BASE_FADES.findIndex(f => f[0] === baseOp); baseOp = BASE_FADES[(i + 1) % BASE_FADES.length][0]; setPref('baseOp', baseOp); document.documentElement.style.setProperty('--baseOp', baseOp); }
     if (pick === 'grid') MENU.grid();
     if (pick === 'netcolors') MENU.netcolors();
@@ -6517,6 +6693,7 @@ function settingsMenu() {
     { id: 'netcolors', icon: '◍', text: 'Цвета сетей (выкл. — чёрные, по «Правилам»)', on: netColors, check: true },
     { id: 'cal', icon: '⟷', text: PX_MM === PX_MM_DEFAULT ? 'Размер знаков: откалибровать по линейке' : 'Размер знаков: по линейке — повторить' },
     { header: 'Выгрузки' },
+    { id: 'sat', icon: '🛰', text: 'Спутник Google и Яндекс: адреса снимков →' },
     { id: 'dxfframe', icon: '▭', text: 'В DXF — рамка листа и штамп', on: pref('dxfFrame', true), check: true },
     { header: 'Помощники' },
     { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' }
@@ -6595,6 +6772,7 @@ const MENU = {
 
 ` + 'Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
   rxtest: () => rxTestMenu(),
+  sat: () => satSettings(),
   angkind: () => { const ks = Object.keys(ANG_KINDS); angCfg = { ...angCfg, kind: ks[(ks.indexOf(angCfg.kind) + 1) % ks.length] };
     angApply('Угол на цель: ' + ANG_KINDS[angCfg.kind].name + (angCfg.kind === 'mag' && !magDeclOk ? ' — склонение ещё неизвестно (нужен GPS в приложении), пока покажу истинный' : '')); },
   angunit: () => { const us = Object.keys(ANG_UNITS); angCfg = { ...angCfg, unit: us[(us.indexOf(angCfg.unit) + 1) % us.length] }; angApply('Углы в: ' + ANG_UNITS[angCfg.unit]); },
