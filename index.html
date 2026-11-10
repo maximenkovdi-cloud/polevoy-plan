@@ -1153,7 +1153,7 @@ function spoofSheet() {
 function gpsFeed(p) {
   const first = !gps;
   gps = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, altAcc: p.coords.altitudeAccuracy, at: Date.now() };
-  spoofUpdate(gps);
+  if (!rxTest) spoofUpdate(gps);                                      // имитация приёмника — не повод для тревоги о подмене
   if (measuring && !spoof) measuring.onFix(p);                       // при подмене отсчёты в измерение не идут
   fixWatch(gps.acc);
   const ll = [gps.lat, gps.lng];
@@ -1164,7 +1164,8 @@ function gpsFeed(p) {
   if (first && !mode && !spoof) map.setView(ll, Math.max(map.getZoom(), 18));
   else followGps(ll);
   if (selected) updateToObj();
-  trackFeed(); updateDecl(); updateAim();
+  if (!rxTest) trackFeed();                                           // имитацию в трек не пишем
+  updateDecl(); updateAim();
   const acc = gps.acc;
   // RTK-приёмник даёт сантиметры — показываем их, а не округлённые метры
   const accText = acc < 1 ? acc.toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : Math.round(acc);
@@ -1608,7 +1609,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 78;
+const APP_BUILD = 79;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1976,6 +1977,7 @@ function rxSheet(pre) {
     if (!list.length) toast('Нет соединённых устройств. Соедините приёмник в настройках Bluetooth');
   }).catch(e => toast(e.message || 'Bluetooth недоступен'));
   $('rxOn').onclick = async () => {
+    if (rxTest) { toast('Идёт тест приёмника — сначала остановите его в «Настройках»'); return; }
     read();
     if (!rxCfg.address) { toast('Сначала выберите приёмник в списке вверху'); $('rx_dev').scrollIntoView({ block: 'center' }); return; }
     const b = $('rxOn'); b.disabled = true; b.textContent = 'Подключаюсь…';
@@ -1992,6 +1994,73 @@ function rxSheet(pre) {
     catch (e) { toast(e.message || 'Сервер не отвечает'); }
     if ($('rxMounts')) { b.disabled = false; b.textContent = 'Найти точки'; }
   };
+}
+/* ── Тест приёмника без приёмника: проиграть запись NMEA (файл из EFIX, eField, «NMEA Tools») или сымитировать на месте крестика ──
+   Строки идут в rxLine — ровно туда же, куда их шлёт Bluetooth; так в эмуляторе и в браузере видно FIX, точность, «Измерить» */
+const RX_TEST_MS = 1000;                                                // одна эпоха (GGA с её GST) в секунду
+const RX_DEMO_STEPS = [[1, 2.5, 6], [5, 0.25, 6], [4, 0.012, 1e9]];     // [решение, СКО м, секунд]: автономно → FLOAT → FIX
+let rxTest = null;                                                      // { timer, epochs, i, name } — идёт тест
+const nmeaSum = s => { let c = 0; for (let i = 0; i < s.length; i++) c ^= s.charCodeAt(i); return '$' + s + '*' + c.toString(16).toUpperCase().padStart(2, '0'); };
+function nmeaGga(ll, q, sats, hdop, h) {
+  const t = new Date(), hh = [t.getUTCHours(), t.getUTCMinutes(), t.getUTCSeconds()].map(v => String(v).padStart(2, '0')).join('') + '.00';
+  const dm = (v, w) => { const a = Math.abs(v), d = Math.floor(a); return String(d).padStart(w, '0') + ((a - d) * 60).toFixed(6).padStart(9, '0'); };
+  return nmeaSum(`GNGGA,${hh},${dm(ll.lat, 2)},${ll.lat < 0 ? 'S' : 'N'},${dm(ll.lng, 3)},${ll.lng < 0 ? 'W' : 'E'},${q},${sats},${hdop.toFixed(1)},${h.toFixed(3)},M,14.200,M,,`);
+}
+const nmeaGst = s => nmeaSum(`GNGST,000000.00,${s.toFixed(3)},,,,${s.toFixed(3)},${s.toFixed(3)},${(s * 1.6).toFixed(3)}`);
+// эпохи из файла: GGA закрывает эпоху, GST перед ним — её точность
+function rxEpochs(text) {
+  const out = []; let cur = [];
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim(), m = /\$[A-Z]{2}(GGA|GST)/.exec(line); if (!m) continue;
+    cur.push(line.slice(line.indexOf('$')));
+    if (m[1] === 'GGA') { out.push(cur); cur = []; }
+  }
+  return out;
+}
+function rxTestStart(epochs, name) {
+  rxTestStop(true);
+  rxTest = { epochs, i: 0, name, timer: setInterval(rxTestTick, RX_TEST_MS) };
+  rxStateNow = { ...rxStateNow, bt: 'on', msg: '' }; rxOnAt = Date.now();
+  rxTestTick(); toast(`Тест приёмника: ${name}. Остановить — «Настройки» → «Тест приёмника»`); renderRx();
+}
+function rxTestTick() {
+  const t = rxTest; if (!t) return;
+  const ep = typeof t.epochs === 'function' ? t.epochs(t.i) : t.epochs[t.i];
+  if (!ep) { rxTestStop(); toast('Запись NMEA закончилась'); return; }
+  ep.forEach(l => rxLine(l)); t.i++;
+}
+function rxTestStop(quiet) {
+  if (!rxTest) return;
+  clearInterval(rxTest.timer); rxTest = null;
+  rxStateNow = { ...rxStateNow, bt: 'off' }; rxFix = null; rxWasLive = false; gps = null; renderRx();   // место имитации забыть: настоящий GPS — не «скачок»
+  if (!quiet) toast('Тест приёмника остановлен');
+}
+// имитация: точка под крестиком; решение улучшается по шагам, координаты чуть «гуляют» на величину СКО
+function rxDemoEpochs(center) {
+  const h = 180 + Math.random() * 5;
+  return i => {
+    let s = 0, k = 0; for (; k < RX_DEMO_STEPS.length - 1 && i >= s + RX_DEMO_STEPS[k][2]; k++) s += RX_DEMO_STEPS[k][2];
+    const [q, sig] = RX_DEMO_STEPS[k], j = () => (Math.random() - 0.5) * 2 * sig;
+    const ll = planeForward(center, Math.abs(j()) + 1e-6, Math.random() * 360);
+    return [nmeaGst(sig), nmeaGga(ll, q, q === 4 ? 24 : q === 5 ? 20 : 12, q === 1 ? 1.2 : 0.7, h + j())];
+  };
+}
+const rxTestInput = document.createElement('input');
+rxTestInput.type = 'file'; rxTestInput.style.display = 'none'; document.body.appendChild(rxTestInput);
+rxTestInput.onchange = async () => {
+  const f = rxTestInput.files[0]; rxTestInput.value = ''; if (!f) return;
+  if (f.size > 50 * (1 << 20)) { toast('Файл больше 50 МБ — возьмите кусок записи'); return; }
+  const ep = rxEpochs(await f.text());
+  if (!ep.length) { toast('В файле нет строк NMEA GGA ($GPGGA, $GNGGA…)'); return; }
+  rxTestStart(ep, `«${f.name}», ${ep.length} эпох (по одной в секунду)`);
+};
+function rxTestMenu() {
+  if (rxTest) { rxTestStop(); return; }
+  if (RX && (rxStateNow.bt !== 'off' || rxCfg.auto)) { toast('Сначала отключите настоящий приёмник («Приёмник и поправки» → «Отключить»)'); return; }
+  openList('Тест приёмника', [
+    { id: 'demo', icon: '🎯', text: 'Сымитировать на месте крестика: автономно → FLOAT → FIX' },
+    { id: 'file', icon: '📄', text: 'Проиграть запись NMEA из файла (.nmea, .txt, .log)' }
+  ], pick => { if (pick === 'demo') rxTestStart(rxDemoEpochs(map.getCenter()), 'имитация на месте крестика'); else rxTestInput.click(); });
 }
 // Уехали в другой регион, а порт поправок — от прежнего: подсказать сменить (раз на регион, после 3 проверок подряд — не на границе)
 const RX_REG_CHECK_MS = 60000, RX_REG_TIMES = 3, RX_REG_MARGIN = 0.75, RX_REG_MIN_KM = 60;
@@ -2950,6 +3019,8 @@ function showCard(kind, obj) {
     const withH = (obj.hs || []).filter(Boolean).length;
     const lenP = lineLength(obj);
     kv = [...(obj.no ? [['№', 'L' + obj.no]] : []), ['Длина', mText(lenP, 2) + ' м' + groundNote(lenP, obj.latlngs)], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
+    const ci = obj.attr && obj.attr.circle;
+    if (ci) { const cs = sk42(ci.lat, ci.lng); kv.push(['Окружность', `R ${mText(ci.r, 2)} м на местности · центр X ${f2(cs.x)} Y ${f2(cs.y)}`]); }
     if (s.kind === 'building') {
       const a = obj.attr || {}, lab = buildingLabel(s, obj);
       name = s.name; sub = [lab, a.houseNo ? '№ ' + a.houseNo : ''].filter(Boolean).map(esc).join(' · ') || 'контур';
@@ -4642,22 +4713,66 @@ function carryFrom(list, obj, keys) {
 }
 
 /* ───────────── Точка по расстоянию и углу от базы (смещение): база — GPS, если свежий, иначе последняя поставленная ───────────── */
+// «Идти к цели» (как в «Тактической карте»): от крестика, своего места или последней точки — на расстояние и угол.
+// Угол — в градусах (90, 43°18′), тысячных (7-50); какой — дирекционный, истинный или магнитный — по настройке «Угол на цель».
+// Итог: поставить точку (вершину) или только перенести крестик туда — посмотреть и уточнить
+function offsetBases() {
+  const fresh = gps && Date.now() - gps.at < GPS_FRESH_MS && !spoof && !gpsNoSat();   // при подмене от GPS не строим
+  const lastV = mode.kind === 'line' && mode.latlngs.length ? L.latLng(mode.latlngs[mode.latlngs.length - 1]) : null;
+  const lp = mode.kind === 'point' ? data.points.find(p => p.id === lastPlacedId) : null, lastP = lp ? L.latLng(lp.lat, lp.lng) : null;   // только что поставленная, не последняя в списке (после загрузки там чужая)
+  return { cross: map.getCenter(), ...(fresh ? { gps: L.latLng(gps.lat, gps.lng) } : {}), ...(lastV || lastP ? { last: lastV || lastP } : {}) };
+}
+const OFF_BASE_NAMES = { cross: 'от крестика', gps: 'от меня (GPS)', last: 'от последней точки' };
 function offsetPoint() {
-  const fresh = gps && Date.now() - gps.at < GPS_FRESH_MS && !spoof;   // при подмене база — последняя точка, не GPS
-  const last = mode.kind === 'point' ? data.points[data.points.length - 1] : null;
-  const base = fresh ? L.latLng(gps.lat, gps.lng) : mode.kind === 'line' && mode.latlngs.length ? L.latLng(mode.latlngs[mode.latlngs.length - 1]) : last ? L.latLng(last.lat, last.lng) : null;
-  if (!base) { toast('Нет базы: включите GPS или сначала поставьте точку'); return; }
-  openForm('Точка по расстоянию и углу', [
-    { key: 'd', label: 'Расстояние, м', type: 'number', placeholder: '3.50', half: true },
-    { key: 'a', label: 'Дирекционный угол, °', type: 'number', placeholder: '90 — на восток', half: true,
-      hint: `От ${fresh ? 'текущего положения по GPS' : 'последней точки'}. 0° — на север, 90° — на восток, 180° — на юг, 270° — на запад.` }
+  const bases = offsetBases(), keys = Object.keys(bases), kind = angCfg.kind === 'mag' && !magDeclOk ? 'true' : angCfg.kind;
+  const baseSel = keys.includes(pref('offBase', 'cross')) ? pref('offBase', 'cross') : 'cross';
+  openForm('Идти к цели: расстояние и угол', [
+    { key: 'base', label: 'Откуда', type: 'select', value: baseSel, options: keys.map(k => [k, OFF_BASE_NAMES[k]]), half: true },
+    { key: 'act', label: 'Что сделать', type: 'select', value: pref('offAct', 'place'), options: [['place', mode.kind === 'line' ? 'поставить вершину' : 'поставить точку'], ['move', 'только перенести крестик']], half: true },
+    { key: 'd', label: 'Расстояние на местности, м', type: 'number', placeholder: '35.50', half: true },
+    { key: 'a', label: `Угол (${ANG_KINDS[kind].name})`, placeholder: '90 · 43°18′ · 7-50', half: true,
+      hint: `0 — на север, 90 — на восток, 180 — на юг, 270 — на запад. Тысячные — через дефис: 15-00 = 90°. Какой угол — в «Настройках» → «Угол на цель».` }
   ], v => {
-    const d = parseNum(v.d), a = parseNum(v.a);
-    if (!(d >= 0) || isNaN(a)) { toast('Расстояние и угол — числа'); return false; }
-    const b = sk42(base.lat, base.lng), r = a * Math.PI / 180, dp = d * gkScale(base);   // промер на местности → на плане
-    const ll = fromSk42(b.x + dp * Math.cos(r), b.y + dp * Math.sin(r), b.zone);
-    addAt(ll, null, 'offset');
-    toast(`Точка на ${mText(d, 2)} м под углом ${mText(a, 1)}°`);
+    const d = String(v.d).trim() === '' ? NaN : parseNum(v.d), a = parseAz(v.a), base = bases[v.base] || bases.cross;
+    if (!(d >= 0) || a == null) { toast('Расстояние — число, угол — градусы (90, 43°18′) или тысячные (7-50)'); return false; }
+    setPref('offBase', v.base); setPref('offAct', v.act);
+    // в дирекционный: истинный A → α = A − γ; магнитный M → A = M + склонение
+    const dir = (((kind === 'dir' ? a : (kind === 'mag' ? a + magDecl : a) - gammaAt(base)) % 360) + 360) % 360;
+    const ll = planeForward(base, d * gkScale(base), dir);              // промер на местности → на плане
+    const what = `${mText(d, 2)} м, ${ANG_KINDS[kind].short} ${v.a.trim()} ${OFF_BASE_NAMES[v.base] || ''}`;
+    if (v.act === 'move') { map.setView(ll, Math.max(map.getZoom(), 18), { animate: false }); toast('Крестик перенесён: ' + what + '. «+» — поставить сюда'); return; }
+    // точность: от GPS — его СКО; от последней точки — её; от крестика — неизвестна («приближённо»)
+    const lastPt = v.base === 'last' && mode.kind === 'point' ? data.points.find(p => p.id === lastPlacedId) : null;
+    const baseAcc = v.base === 'gps' ? gps.acc : lastPt ? (lastPt.approx != null ? lastPt.approx : lastPt.q && lastPt.q.acc != null ? lastPt.q.acc : null) : null;
+    const polar = { d, ang: v.a.trim(), kind, dirAng: +dir.toFixed(4), from: v.base, baseLat: base.lat, baseLng: base.lng };
+    setTimeout(() => {                                                  // после закрытия формы — иначе карточка свойств колодца/арматуры тут же закроется
+      const pt = addAt(ll, null, 'offset');
+      if (pt && pt.lat != null) { pt.polar = polar; if (baseAcc != null) pt.approx = +baseAcc.toFixed(3); else pt.rough = true; save(); }
+      toast('Поставлено: ' + what + (baseAcc == null ? ' · приближённо (база — крестик)' : ''));
+    }, 0);
+  }, 'Готово');
+}
+
+// Окружность (как в «Тактической карте»): центр — крестик (липнет к точке, как «+»), моё место или последняя точка;
+// радиус — на местности. Сохраняется замкнутой линией из CIRCLE_N отрезков, в свойствах — центр и радиус
+const CIRCLE_N = 72;                                                    // через 5° — на 1:500 при R до 50 м отличие от дуги < 5 см
+function circleForm() {
+  const bases = offsetBases(), snap = snapOn ? snapTarget(map.getCenter()) : null;
+  if (snap) bases.cross = snap.ll;
+  const keys = Object.keys(bases);
+  openForm('Окружность по радиусу', [
+    { key: 'base', label: 'Центр', type: 'select', value: 'cross', options: keys.map(k => [k, k === 'cross' ? (snap ? 'крестик (привязан ' + snap.what + ')' : 'крестик') : OFF_BASE_NAMES[k].replace(/^от /, '')]), half: true },
+    { key: 'r', label: 'Радиус на местности, м', type: 'number', placeholder: '10', half: true },
+    { key: 'cap', label: 'Подпись', placeholder: 'например «охранная зона 10 м»', hint: 'Окружность сохранится линией: её видно в выгрузках DXF и KML, к её точкам липнет крестик.' }
+  ], v => {
+    const r = parseNum(v.r), c = bases[v.base] || bases.cross;
+    if (!(r > 0) || r > 100000) { toast('Радиус — число больше нуля'); return false; }
+    const rp = r * gkScale(c), latlngs = [];
+    for (let i = 0; i <= CIRCLE_N; i++) { const p = planeForward(c, rp, (i % CIRCLE_N) * 360 / CIRCLE_N); latlngs.push([p.lat, p.lng]); }   // последняя = первая — замкнута
+    const line = { id: uid(), no: nextNo(data.lines), type: GENERIC.line, latlngs, caption: v.cap || `R = ${mText(r, 2)} м`, count: 1, state: '', color: pref('color', VIS_COLOR),
+      attr: { circle: { r, lat: c.lat, lng: c.lng } } };
+    data.lines.push(line); save(); redrawAll();
+    toast(`Окружность R ${mText(r, 2)} м поставлена`);
   }, 'Поставить');
 }
 
@@ -4802,7 +4917,7 @@ function setMode(m) {
   const btns = isPt
     ? [...gpsBtns, ['photo', '📷 Фото'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']]
     : [...gpsBtns, ['undo', '↶ Убрать'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']];   // «В перекрестье» — теперь круглая кнопка «+» справа
-  mode.more = [['resect', '📐 Засечка: два промера рулеткой от известных точек'], ['axisline', '⟂ Створ: от А в сторону Б и вправо/влево'], ['tape', '📏 Рулетка: расстояние между точками'], ['offset', '↗ Смещение: расстояние и угол от последней точки'], snapBtn];
+  mode.more = [['resect', '📐 Засечка: два промера рулеткой от известных точек'], ['axisline', '⟂ Створ: от А в сторону Б и вправо/влево'], ['tape', '📏 Рулетка: расстояние между точками'], ['offset', '↗ Идти к цели: расстояние и угол от крестика, меня или последней точки'], ['circle', '◯ Окружность: радиус вокруг крестика (разбивка, охранная зона)'], snapBtn];
   if (pickTool) box.style.display = 'none';                           // идёт выбор точек инструмента — панель инструмента вместо панели съёмки
   // «Знак…» — выбрать условный знак заранее; без него ставится простая точка или линия, знак выбирается потом в карточке
   // ряд «последних» знаков: смена знака одним касанием, без списка
@@ -4890,6 +5005,7 @@ $('modeBtns').addEventListener('click', e => {
     });
   }
   if (act === 'offset') offsetPoint();
+  if (act === 'circle') circleForm();
   if (act === 'resect') pickStart('resect');
   if (act === 'axisline') pickStart('line');
   if (act === 'tape') pickStart('tape');
@@ -4929,6 +5045,7 @@ function addAt(ll, meas, src) {
     if ((POINTS[mode.type] || {}).cadNew) pt.name = nextNewName();      // н1, н2… — следующий свободный
     if (spoof && (src === 'tap' || src === 'center')) { pt.wait = new Date().toISOString(); if (snap) pt.waitSnap = true; }   // на глаз при подмене — доснять по GPS; привязана к чужому объекту — его не двигать      // н1, н2… — следующий свободный
     if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll, ...(hz.src === 'gnss' ? { ant: antH } : {}) }; }
+    if (rxTest && (src === 'gps' || src === 'measure')) { pt.test = true; pt.name = pt.name || 'ТЕСТ'; }   // снята по имитации приёмника — не настоящая
     data.points.push(pt); lastPlacedId = pt.id;
     save(); drawPoints();
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
@@ -6221,7 +6338,9 @@ function exportMenu() {
 // настройки: переключатели — лист остаётся открытым, видно, что включилось
 function settingsMenu() {
   openList('Настройки', [
-    ...(NATIVE ? [{ header: 'ГНСС' }, { id: 'receiver', icon: '📡', text: rxLive() ? 'Приёмник: ' + (RX_Q[rxFix.q] || 'подключён') : rxCfg.address ? 'Приёмник: ' + rxCfg.name : 'Приёмник и поправки: подключить' }] : []),
+    { header: 'ГНСС' },
+    ...(NATIVE ? [{ id: 'receiver', icon: '📡', text: rxLive() && !rxTest ? 'Приёмник: ' + (RX_Q[rxFix.q] || 'подключён') : rxCfg.address ? 'Приёмник: ' + rxCfg.name : 'Приёмник и поправки: подключить' }] : []),
+    { id: 'rxtest', icon: '🧪', text: rxTest ? 'Тест приёмника идёт — остановить' : 'Тест приёмника: имитация FIX или запись NMEA' },
     { header: 'Сигналы' },
     { id: 'sound', icon: '♪', text: 'Звук и вибрация: в допуске / брак / потеря FIX', on: soundOn, check: true },
     { id: 'voice', icon: '🗣', text: 'Озвучивать результат голосом', on: voiceOn, check: true },
@@ -6314,6 +6433,7 @@ const MENU = {
   about: () => alert(`Полевой план, сборка ${APP_BUILD}.
 
 ` + 'Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
+  rxtest: () => rxTestMenu(),
   angkind: () => { const ks = Object.keys(ANG_KINDS); angCfg = { ...angCfg, kind: ks[(ks.indexOf(angCfg.kind) + 1) % ks.length] };
     angApply('Угол на цель: ' + ANG_KINDS[angCfg.kind].name + (angCfg.kind === 'mag' && !magDeclOk ? ' — склонение ещё неизвестно (нужен GPS в приложении), пока покажу истинный' : '')); },
   angunit: () => { const us = Object.keys(ANG_UNITS); angCfg = { ...angCfg, unit: us[(us.indexOf(angCfg.unit) + 1) % us.length] }; angApply('Углы в: ' + ANG_UNITS[angCfg.unit]); },
