@@ -1609,7 +1609,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 80;
+const APP_BUILD = 81;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -7050,12 +7050,12 @@ function toDxf() {
   const ATTRS = [['НОМЕР', 0], ['ОТМ', 0], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]
   for (const p of data.points) {
     // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
-    const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
+    const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : '') + (approxNote(p) ? '_ПРИБЛ' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
     const blk = codeOf(p.type).toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31);
     blocks.add(blk);
     ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z, ...(p.rot ? [50, (-Number(p.rot)).toFixed(1)] : []));   // поворот: на экране — по часовой, в DXF — против
     const val = { НОМЕР: p.no || '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
-      ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : '' };
+      ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : !p.q && p.approx != null ? f3(p.approx) : '' };
     ATTRS.forEach(([tag, inv], k) => ent(0, 'ATTRIB', 8, lay, 10, (Number(x) + 0.6).toFixed(3), 20, (Number(y) + 0.4 - k * 1.2).toFixed(3), 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE));
     ent(0, 'SEQEND', 8, lay);
   }
@@ -7480,7 +7480,7 @@ function toKml(photoDir) {
   const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
   const pts = data.points.map(p => {
     const s = POINTS[p.type] || POINTS.mark;
-    return `<Placemark><name>${xml(p.name || s.name)}</name>${desc(p)}${ext({ tk_id: p.id, tk_photos: p.photos ? JSON.stringify(p.photos) : '', tk_no: p.no, tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '', tk_ctrl: p.ctrl ? JSON.stringify(p.ctrl) : '' })}<Point>${hasH(p.h) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${p.lng},${p.lat},${hasH(p.h) ? Number(p.h) : 0}</coordinates></Point></Placemark>`;
+    return `<Placemark><name>${xml(p.name || s.name)}</name>${desc(p)}${ext({ tk_id: p.id, tk_photos: p.photos ? JSON.stringify(p.photos) : '', tk_no: p.no, tk_type: p.type, tk_name: p.name, tk_h: p.h, tk_note: p.note, tk_rot: p.rot, tk_attr: p.attr ? JSON.stringify(p.attr) : '', tk_hsrc: p.hSrc, tk_color: p.color, tk_meas: p.meas ? JSON.stringify(p.meas) : '', tk_hinfo: p.hInfo ? JSON.stringify(p.hInfo) : '', tk_ctrl: p.ctrl ? JSON.stringify(p.ctrl) : '', tk_how: p.how, tk_approx: p.q ? '' : p.approx, tk_rough: !p.q && p.rough ? 1 : '', tk_polar: p.polar ? JSON.stringify(p.polar) : '' })}<Point>${hasH(p.h) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${p.lng},${p.lat},${hasH(p.h) ? Number(p.h) : 0}</coordinates></Point></Placemark>`;
   });
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
@@ -7495,10 +7495,12 @@ function toKml(photoDir) {
 const f3 = v => Number(v).toFixed(3), f8 = v => Number(v).toFixed(8);
 // отметка точки для выгрузок: у дроби бортового камня — верх (на камне), низ — в примечании
 function pointH(p) { const s = POINTS[p.type] || {}; return s.frac ? (p.attr && hasH(p.attr.top) ? Number(p.attr.top) : null) : hasH(p.h) ? Number(p.h) : null; }
+// пометка для выгрузок: точка построена по азимуту и расстоянию / от крестика — не съёмка
+const approxNote = p => p.q ? '' : p.approx != null ? `приближённо ±${f3(p.approx)} м` : p.rough ? 'приближённо' : '';
 function pointNote(p) {
   const s = POINTS[p.type] || {}, a = p.attr || {}, bot = /^w_/.test(p.type) ? wellBottom(p) : null;
   const lots = /^w_/.test(p.type) && a.lot && a.lot.length ? 'лотки ' + a.lot.map(l => (hasH(l.h) ? planNum(l.h, 2) : '?') + (l.dir ? ' (' + l.dir + ')' : '')).join(', ') : '';
-  return [p.note, s.frac && hasH(a.bot) ? 'рядом с камнем ' + planNum(a.bot, 2) : '', lots, bot != null && hasH(p.h) ? 'глуб. ' + (Number(p.h) - bot).toFixed(2) : ''].filter(Boolean).join('; ');
+  return [p.note, approxNote(p), s.frac && hasH(a.bot) ? 'рядом с камнем ' + planNum(a.bot, 2) : '', lots, bot != null && hasH(p.h) ? 'глуб. ' + (Number(p.h) - bot).toFixed(2) : ''].filter(Boolean).join('; ');
 }
 const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки', dxf: 'с чертежа (архив)' };
 // метаданные отметки для отчёта: СКО, высота над эллипсоидом, высота антенны (с какой снимали), репер привязки
@@ -7972,6 +7974,10 @@ function readExtras(ext) {
   Object.assign(out, readJson(ext.tk_meas, 'meas', v => v && typeof v === 'object' && v.m != null));
   if (/^#[0-9a-f]{6}$/i.test(ext.tk_color || '')) out.color = ext.tk_color;
   Object.assign(out, readJson(ext.tk_hinfo, 'hInfo', v => v && typeof v === 'object'));
+  if (/^[a-z]{2,12}$/.test(ext.tk_how || '')) out.how = ext.tk_how;
+  if (ext.tk_approx != null && ext.tk_approx !== '' && Number(ext.tk_approx) >= 0) out.approx = Number(ext.tk_approx);
+  if (ext.tk_rough === '1') out.rough = true;
+  Object.assign(out, readJson(ext.tk_polar, 'polar', v => v && typeof v === 'object' && !Array.isArray(v)));
   Object.assign(out, readJson(ext.tk_ctrl, 'ctrl', v => Array.isArray(v) && v.every(c => c && c.dS != null && c.at)));
   return out;
 }
@@ -8147,6 +8153,9 @@ const GridLayer = L.Layer.extend({
     const spacingPx = step / mPerPx, arm = step * GRID_ARM, armPx = arm / mPerPx;
     const fontPx = Math.max(10.5, Math.min(13, spacingPx * 0.075));     // текст тоже растёт с масштабом, но остаётся «чертёжным»
     const fmt = v => String(Math.round(v));                             // слитно, как координаты сверху
+    // как на планшетах: полная подпись — по одной линии X и Y (ближайшие к середине экрана), остальные — последние 5 цифр («…74700»)
+    const mid = toGk(m.getSize().divideBy(2)), fullX = Math.round(mid.x / step) * step, fullY = Math.round(mid.y / step) * step;
+    const lbl = (v, full) => step >= 100000 || v === full ? fmt(v) : "…" + String(Math.round(v) % 100000).padStart(5, "0");
     const ll = (x, y) => { const p = fromSk42(x, y, zone); return [p.lat, p.lng]; };
     const x0 = Math.floor(minX / step) * step, y0 = Math.floor(minY / step) * step;
     const x1 = Math.ceil(maxX / step) * step, y1 = Math.ceil(maxY / step) * step;
@@ -8175,14 +8184,14 @@ const GridLayer = L.Layer.extend({
     const doneX = new Set(), doneY = new Set();
     for (const { c, deg, x, y } of labels.slice().sort((p, q) => p.y - q.y)) {   // X — с запада (слева), одна на линию
       if (doneX.has(x)) continue;
-      const cc = m.layerPointToContainerPoint(c), sx = 'X – ' + fmt(x), wx = textWidth(sx, fontPx, true) + 2;
+      const cc = m.layerPointToContainerPoint(c), sx = 'X – ' + lbl(x, fullX), wx = textWidth(sx, fontPx, true) + 2;
       const bx = { x: cc.x + gap - PAD, y: cc.y - 3 - fh - PAD, w: wx + 2 * PAD, h: fh + 2 * PAD + 2 };
       if (cc.x < 0 || cc.x + gap + wx > size.x || cc.y < fh + 4 || hits(bx, null)) continue;
       t(`translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(${deg.toFixed(2)})`, sx); doneX.add(x);
     }
     for (const { c, deg, x, y } of labels.slice().sort((p, q) => p.x - q.x)) {   // Y — с юга (снизу), одна на линию
       if (doneY.has(y)) continue;
-      const cc = m.layerPointToContainerPoint(c), sy = 'Y – ' + fmt(y), wy = textWidth(sy, fontPx, true) + 2;
+      const cc = m.layerPointToContainerPoint(c), sy = 'Y – ' + lbl(y, fullY), wy = textWidth(sy, fontPx, true) + 2;
       const by = { x: cc.x - 3 - fh - PAD, y: cc.y - gap - wy - PAD, w: fh + 2 * PAD + 2, h: wy + 2 * PAD };
       if (cc.y > size.y || cc.y - gap - wy < 0 || cc.x < fh + 4 || hits(by, null)) continue;
       t(`translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(${(deg - 90).toFixed(2)})`, sy); doneY.add(y);
