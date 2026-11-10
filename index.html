@@ -1609,7 +1609,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 79;
+const APP_BUILD = 80;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -5385,7 +5385,7 @@ $('fabLayers').onclick = () => {
   openList('Слои', items, pick => {
     if (pick === 'theme') $('fabTheme').onclick();
     if (pick === 'mymaps') { openMyMaps(); return; }
-    if (pick.startsWith('my:')) toggleMyMap(pick.slice(3));
+    if (pick.startsWith('my:') && toggleMyMap(pick.slice(3)) === 'ask') return;   // спрашиваем систему снимка — список «Слоёв» поверх не открывать
     if (pick.startsWith('dxf:')) toggleDxf(pick.slice(4));
     if (pick.startsWith('base:')) setBase(pick.slice(5));
     if (pick === 'fade') { const i = BASE_FADES.findIndex(f => f[0] === baseOp); baseOp = BASE_FADES[(i + 1) % BASE_FADES.length][0]; setPref('baseOp', baseOp); document.documentElement.style.setProperty('--baseOp', baseOp); }
@@ -5437,6 +5437,7 @@ function myMapBounds(m) {
 }
 function myMapLayer(m) {
   if (myMapLayers[m.id]) return myMapLayers[m.id];
+  if (m.kind === 'tiff') return (myMapLayers[m.id] = new TiffLayer(m));     // снимок GeoTIFF — кусками по экрану, не плитками
   const opt = { mapId: m.id, fmt: m.format === 'jpg' ? 'jpeg' : m.format, maxZoom: MAX_ZOOM, opacity: m.op != null ? m.op : 1, zIndex: MY_MAP_Z, updateWhenZooming: false };
   if (m.maxzoom >= 0) opt.maxNativeZoom = m.maxzoom;                    // крупнее — растягиваем последний уровень
   if (m.minzoom >= 0) { opt.minNativeZoom = m.minzoom; opt.minZoom = Math.max(0, m.minzoom - MY_MAP_UNDER); }   // сильно мельче — не рисуем: иначе тысячи плиток
@@ -5447,6 +5448,7 @@ const saveMyMaps = () => setPref('myMaps', myMaps);
 function toggleMyMap(id, show) {
   const m = myMaps.find(x => x.id === id); if (!m) return;
   if (!mapsOk) { toast(MAPS ? 'Обновите приложение — в этой версии своих карт нет' : 'Свои карты показываются в Android-приложении «Полевой план»'); return; }
+  if (m.kind === 'tiff' && !m.proj && (show == null || show)) { tiffSetup(m).then(ok => { if (ok) { saveMyMaps(); toggleMyMap(id, true); } }); return 'ask'; }   // система снимка не задана (список восстановлен) — спросить
   const l = myMapLayer(m), on = show != null ? show : !map.hasLayer(l);
   if (on) l.addTo(map); else map.removeLayer(l);
   m.on = on; saveMyMaps();
@@ -5456,29 +5458,31 @@ async function loadMyMap() {
   if (!mapsOk) { toast(MAPS ? 'Обновите приложение — в этой версии своих карт нет' : 'Загрузка своих карт работает в Android-приложении «Полевой план»'); return; }
   let sub = null;
   try {
-    sub = await MAPS.addListener('progress', p => toast(p.done < 0 ? 'Файл скопирован, читаю карту… (у большого файла — до минуты)'
+    sub = await MAPS.addListener('progress', p => toast(p.done === -2 ? `Готовлю уменьшенную копию снимка для вида издалека: ${p.pct} %… Не сворачивайте приложение` : p.done < 0 ? 'Файл скопирован, читаю карту… (у большого файла — до минуты)'
       : `Копирую карту: ${mbText(p.done)}${p.size > 0 ? ' из ' + mbText(p.size) : ''}… Не сворачивайте приложение`));
     const m = await MAPS.pick();
+    if (sub) { sub.remove(); sub = null; }
+    if (m.kind === 'tiff' && !await tiffSetup(m)) { MAPS.remove({ id: m.id }).catch(() => {}); toast('Снимок не загружен'); return; }   // система координат снимка — определить или спросить
     myMaps = [...myMaps.filter(x => x.id !== m.id), { ...m, on: true, op: 1 }]; saveMyMaps();
     toggleMyMap(m.id, true);
     const b = myMapBounds(m);
     if (b) map.fitBounds(b, { maxZoom: Math.min(18, m.maxzoom >= 0 ? m.maxzoom : 18) });
-    toast(`Карта «${m.name}» загружена (${mbText(m.size)}, масштабы ${m.minzoom}–${m.maxzoom}) и включена`);
+    toast(m.kind === 'tiff' ? `Снимок «${m.name}» загружен (${mbText(m.size)}, ${m.w}×${m.h} пикс., ${m.crsName}) и включён` : `Карта «${m.name}» загружена (${mbText(m.size)}, масштабы ${m.minzoom}–${m.maxzoom}) и включена`);
   } catch (e) {
     if (e && (e.code === 'CANCEL' || /не выбран/.test(e.message || ''))) return;
     toast((e && e.message) || 'Не удалось загрузить карту');
   } finally { if (sub) sub.remove(); }
 }
 function openMyMaps() {
-  const rows = myMaps.map(m => `<div class="meas-row"><span style="flex:1;min-width:0"><b>${esc(m.name)}</b><br><span style="color:var(--muted)">${esc(m.file || '')} · ${mbText(m.size || 0)} · масштабы ${m.minzoom}–${m.maxzoom} · ${esc(String(m.format || '').toUpperCase())}</span></span>
+  const rows = myMaps.map(m => `<div class="meas-row"><span style="flex:1;min-width:0"><b>${esc(m.name)}</b><br><span style="color:var(--muted)">${esc(m.file || '')} · ${mbText(m.size || 0)} · ${m.kind === 'tiff' ? `снимок GeoTIFF ${m.w}×${m.h} · ${esc(m.crsName || 'система не задана')}` : `масштабы ${m.minzoom}–${m.maxzoom} · ${esc(String(m.format || '').toUpperCase())}`}</span></span>
     <button class="btn" data-mop="${m.id}">${(MY_MAP_OPS.find(o => o[0] === (m.op != null ? m.op : 1)) || MY_MAP_OPS[0])[1]}</button>
     <button class="btn" data-mshow="${m.id}">Показать</button><button class="x" data-mdel="${m.id}" aria-label="Удалить">🗑</button></div>`).join('');
   const drows = myDxf.map(m => `<div class="meas-row"><span style="flex:1;min-width:0"><b>📐 ${esc(m.name)}</b><br><span style="color:var(--muted)">${esc(m.file || '')} · ${mbText(m.size || 0)} · ${esc(m.crsName || '')} · ${m.n ? m.n.lines + ' ' + plural(m.n.lines, 'линия', 'линии', 'линий') + ', ' + m.n.texts + ' ' + plural(m.n.texts, 'подпись', 'подписи', 'подписей') : ''}</span></span>
     <button class="btn" data-dop="${m.id}">${(DXF_OPS.find(o => o[0] === (m.op != null ? m.op : 1)) || DXF_OPS[0])[1]}</button>
     <button class="btn" data-dshow="${m.id}">Показать</button><button class="x" data-ddel="${m.id}" aria-label="Удалить">🗑</button></div>`).join('');
   showSheet(`<div class="sh-head"><b>Мои карты</b><button class="x" data-close>×</button></div>
-    <div class="row2"><button class="btn primary" id="mLoad">＋ Карта (MBTiles)</button><button class="btn primary" id="mDxf">＋ Чертёж (DXF)</button></div>
-    <div class="hint" style="margin:6px 0 10px"><b>Карта MBTiles</b> — растровые плитки из SAS.Planet, QGIS, MOBAC. <b>Чертёж DXF</b> — топоплан или проект из AutoCAD, nanoCAD, GeoniCS, КРЕДО
+    <div class="row2"><button class="btn primary" id="mLoad">＋ Карта или снимок (MBTiles, GeoTIFF)</button><button class="btn primary" id="mDxf">＋ Чертёж (DXF)</button></div>
+    <div class="hint" style="margin:6px 0 10px"><b>Карта MBTiles</b> — растровые плитки из SAS.Planet, QGIS, MOBAC. <b>Снимок GeoTIFF</b> — ортофото, скан с привязкой (СК-42, UTM, WGS-84 — определяется сам, иначе спрошу). <b>Чертёж DXF</b> — топоплан или проект из AutoCAD, nanoCAD, GeoniCS, КРЕДО
       (DWG сначала сохраните как DXF). Файл можно скачать или переслать себе в Телеграм — потом выбрать здесь. Всё копируется в телефон и работает без интернета; к чертежу липнет крестик. Включить и выключить — в «Слоях».</div>
     ${rows || drows ? `<div style="max-height:42vh;overflow:auto">${rows}${drows}</div>` : '<div class="hint">Своих карт и чертежей пока нет.</div>'}
     <div class="row2" style="margin-top:10px"><button class="btn" id="mRaster">Наложить скан по углам</button><button class="btn" id="mRasters">Сканы: прозрачность, удаление</button></div>`);
@@ -5510,6 +5514,137 @@ if (MAPS) MAPS.list().then(r => {
   myMaps = [...myMaps.filter(m => have.has(m.id)), ...phone.filter(m => !known.has(m.id)).map(m => ({ ...m, on: false, op: 1 }))]; saveMyMaps();
   for (const m of myMaps) if (m.on) toggleMyMap(m.id, true);
 }).catch(() => { mapsOk = false; });                                    // старое приложение без MapsPlugin
+
+/* ───────────── «Мои карты»: снимки GeoTIFF — ортофото и сканы с привязкой ───────────── */
+
+// Снимок не режется на плитки: Android (MapsPlugin.render) отдаёт ровно кусок снимка под экраном в разрешении экрана — память
+// телефона не зависит от размера файла. Система координат — по коду EPSG из файла; нет кода — спрашиваем, как у чертежей DXF.
+map.createPane('tiffPane').style.zIndex = 250;                          // над подложкой и плитками MBTiles, под своими растрами и знаками
+map.getPane('tiffPane').style.pointerEvents = 'none';
+const TIFF_MAX_PX = 2048, TIFF_PAD = 0.15;                              // картинка не больше 2048 px; запас 15 % по краям — для прокрутки
+const TOWGS84_SK95 = '24.47,-130.89,-81.56,0,0,0.13,-0.22';
+const utmZoneAt = lng => Math.floor((lng + 180) / 6) + 1;
+// код EPSG → { def (proj4), name, off (прибавить к X, если у восточной координаты нет номера зоны) }
+function tiffProjFromEpsg(epsg) {
+  const sk = TOWGS84_SK42.slice(9);
+  if (epsg === 4326) return { def: '+proj=longlat +datum=WGS84 +no_defs', name: 'WGS-84 (широта, долгота)' };
+  if (epsg === 3857 || epsg === 900913 || epsg === 3785) return { def: 'EPSG:3857', name: 'Web Mercator (как карты в интернете)' };
+  if (epsg === 4284) return { def: `+proj=longlat +ellps=krass +towgs84=${sk} +no_defs`, name: 'СК-42 (широта, долгота)' };
+  if (epsg >= 32601 && epsg <= 32660) return { def: `+proj=utm +zone=${epsg - 32600} +datum=WGS84 +units=m +no_defs`, name: 'UTM, зона ' + (epsg - 32600) + 'N' };
+  if (epsg >= 32701 && epsg <= 32760) return { def: `+proj=utm +zone=${epsg - 32700} +south +datum=WGS84 +units=m +no_defs`, name: 'UTM, зона ' + (epsg - 32700) + 'S' };
+  if (epsg >= 28402 && epsg <= 28432) return { def: CRS.sk42.def(epsg - 28400), name: 'СК-42, зона ' + (epsg - 28400) };
+  if (epsg >= 28462 && epsg <= 28492) { const z = epsg - 28460; return { def: CRS.sk42.def(z), off: z * 1e6, name: 'СК-42, зона ' + z + ' (без номера зоны)' }; }
+  if (epsg >= 20004 && epsg <= 20032) { const z = epsg - 20000; return { def: `+proj=tmerc +lat_0=0 +lon_0=${z * 6 - 3} +k=1 +x_0=${z * 1e6 + 500000} +y_0=0 +ellps=krass +towgs84=${TOWGS84_SK95} +units=m +no_defs`, name: 'СК-95, зона ' + z }; }
+  return null;
+}
+// пиксель → координаты системы снимка (аффинное из файла; «привязка к центру пикселя» — сдвиг на полпикселя)
+function tiffGt(m) { const g = m.gt.slice(); if (m.raster === 2) { g[0] -= (g[1] + g[2]) / 2; g[3] -= (g[4] + g[5]) / 2; } return g; }
+const tiffConvs = {};                                                   // пересчёты по снимкам (в настройки не сохраняются)
+function tiffConv(m) {
+  const key = m.id + '|' + m.proj + '|' + (m.off || 0);
+  if (!tiffConvs[key]) {
+    const g = tiffGt(m), det = g[1] * g[5] - g[2] * g[4], conv = proj4(m.proj, 'WGS84'), off = m.off || 0;
+    tiffConvs[key] = {
+      toLL: (px, py) => { const q = conv.forward([g[0] + g[1] * px + g[2] * py + off, g[3] + g[4] * px + g[5] * py]); return L.latLng(q[1], q[0]); },
+      toPx: ll => { const q = conv.inverse([ll.lng, ll.lat]), X = q[0] - off, Y = q[1]; return [(g[5] * (X - g[0]) - g[2] * (Y - g[3])) / det, (-g[4] * (X - g[0]) + g[1] * (Y - g[3])) / det]; }
+    };
+  }
+  return tiffConvs[key];
+}
+// система снимка: из кода EPSG или ответа пользователя; заодно — границы для «Показать». false — отказались
+async function tiffSetup(m, forceAsk) {
+  for (let tries = 0; tries < 5; tries++) {
+    const p = (!forceAsk && !tries && tiffProjFromEpsg(m.epsg)) || await tiffAskCrs(m);
+    if (!p) return false;
+    const cand = { ...m, proj: p.def, off: p.off || 0 };
+    let b = null;
+    try {
+      const c = tiffConv(cand), cs = [[0, 0], [m.w, 0], [0, m.h], [m.w, m.h]].map(([x, y]) => c.toLL(x, y));
+      if (!cs.some(ll => !isFinite(ll.lat) || !isFinite(ll.lng) || Math.abs(ll.lat) > 85)) b = L.latLngBounds(cs);
+    } catch (e) { b = null; }
+    if (!b) { toast('Снимок не попадает на карту в системе ' + p.name + ' — выберите другую'); continue; }
+    const km = map.getCenter().distanceTo(b.getCenter()) / 1000;
+    if (km > DXF_FAR_KM && !await ask(`Снимок оказался в ${Math.round(km)} км от карты (${esc(p.name)}). Если это не то место — система выбрана неверно. Оставить так?`, 'Оставить', false)) continue;
+    Object.assign(m, { proj: p.def, off: p.off || 0, crsName: p.name, bounds: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(',') });
+    return true;
+  }
+  return false;
+}
+// спросить систему (код EPSG в файле не записан или незнакомый): по виду координат подсказываем
+function tiffAskCrs(m) {
+  return new Promise(resolve => {
+    const g = tiffGt(m), cx = g[0] + g[1] * m.w / 2 + g[2] * m.h / 2, cy = g[3] + g[4] * m.w / 2 + g[5] * m.h / 2;
+    const geo = Math.abs(cx) <= 180 && Math.abs(cy) <= 90, zone = cx >= 1e6 ? Math.floor(cx / 1e6) : Math.min(60, Math.max(1, Math.floor(map.getCenter().lng / 6) + 1));
+    const opts = [['gsk', 'ГСК-2011'], ['sk42', 'СК-42'], ...(msk ? [['msk', msk.name || 'МСК']] : []), ['wgs', 'WGS-84 (градусы)'], ['utm', 'UTM WGS-84']];
+    showSheet(`<div class="sh-head"><b>Снимок «${esc(m.name)}»</b><button class="x" data-close>×</button></div>
+      <div class="hint">В файле не записано, в какой он системе координат${m.epsg > 0 ? ` (код EPSG ${m.epsg} незнаком)` : ''}. Середина снимка: на восток ${f2(cx)}, на север ${f2(cy)}${geo ? ' — похоже на градусы (WGS-84)' : ''}.</div>
+      <div class="hint" style="margin-top:8px"><b>В какой системе снимок?</b> Спросите у того, кто его делал, или посмотрите в QGIS (свойства слоя → «Система координат»).</div>
+      <div class="row2">${opts.map(([id, n]) => `<button class="btn${(geo ? id === 'wgs' : id === crsId) ? ' primary' : ''}" data-tcrs="${id}">${esc(n)}</button>`).join('')}</div>`);
+    let done = false;
+    const finish = v => { if (done) return; done = true; $('sheetPanel').onclick = null; closeSheet(); resolve(v); };
+    const x = $('sheetPanel').querySelector('[data-close]'); if (x) x.addEventListener('click', () => finish(null));
+    const watch = setInterval(() => { if (done) clearInterval(watch); else if ($('sheet').style.display !== 'block') { clearInterval(watch); finish(null); } }, 300);   // закрыли касанием мимо окна — тоже «отказались»
+    $('sheetPanel').onclick = e => {
+      const b = e.target.closest('[data-tcrs]'); if (!b) return;
+      const id = b.dataset.tcrs;
+      if (id === 'wgs') finish({ def: '+proj=longlat +datum=WGS84 +no_defs', name: 'WGS-84 (широта, долгота)' });
+      else if (id === 'utm') { const z = utmZoneAt(map.getCenter().lng); finish({ def: `+proj=utm +zone=${z} +datum=WGS84 +units=m +no_defs`, name: 'UTM WGS-84, зона ' + z }); }
+      else if (id === 'msk') finish({ def: crsById('msk').def(0), name: msk.name || 'МСК' });
+      else { const c = crsById(id); finish({ def: c.def(zone), off: cx < 1e6 ? zone * 1e6 : 0, name: c.name + ', зона ' + zone }); }
+    };
+  });
+}
+const TiffLayer = L.Layer.extend({
+  initialize(m) { this.m = m; this.seq = 0; this.shown = null; },
+  onAdd(map_) {
+    this._img = L.DomUtil.create('img', 'tiff-img', map_.getPane('tiffPane'));
+    Object.assign(this._img.style, { position: 'absolute', left: '0', top: '0', transformOrigin: '0 0', opacity: this.m.op != null ? this.m.op : 1, display: 'none', maxWidth: 'none' });
+    this._img.alt = '';
+    map_.on('moveend', this._update, this); map_.on('zoomend viewreset', this._place, this); map_.on('zoomstart', this._hide, this);
+    this._update();
+  },
+  _hide() { if (this._img) this._img.style.display = 'none'; },          // во время приближения не дёргать старую картинку
+  onRemove(map_) { map_.off('moveend', this._update, this); map_.off('zoomend viewreset', this._place, this); map_.off('zoomstart', this._hide, this); this._img.remove(); this._img = null; this.shown = null; this.seq++; },
+  setOpacity(o) { if (this._img) this._img.style.opacity = o; },
+  // уже показанная картинка — на своё место при новом масштабе (пока не пришла новая)
+  _place() {
+    const s = this.shown, img = this._img; if (!s || !img || !this._map) return;
+    const c = tiffConv(this.m), P = (x, y) => this._map.latLngToLayerPoint(c.toLL(x, y));
+    const p0 = P(s.x0, s.y0), p1 = P(s.x1, s.y0), p2 = P(s.x0, s.y1);
+    img.style.transform = `matrix(${(p1.x - p0.x) / s.w},${(p1.y - p0.y) / s.w},${(p2.x - p0.x) / s.h},${(p2.y - p0.y) / s.h},${p0.x},${p0.y})`;
+    img.style.display = '';
+  },
+  async _update() {
+    const map_ = this._map, m = this.m; if (!map_ || !m.proj || !MAPS) return;
+    if (this.busy) { this.again = true; return; }                       // пока телефон читает прошлый кусок — новый не заказываем, только запоминаем
+    const c = tiffConv(m), sz = map_.getSize();
+    const pts = [[0, 0], [sz.x, 0], [0, sz.y], [sz.x, sz.y]].map(([x, y]) => c.toPx(map_.containerPointToLatLng([x, y])));
+    if (pts.some(p => !isFinite(p[0]) || !isFinite(p[1]))) return;
+    let x0 = Math.min(...pts.map(p => p[0])), x1 = Math.max(...pts.map(p => p[0])), y0 = Math.min(...pts.map(p => p[1])), y1 = Math.max(...pts.map(p => p[1]));
+    const px = (x1 - x0) * TIFF_PAD, py = (y1 - y0) * TIFF_PAD;
+    x0 = Math.max(0, Math.floor(x0 - px)); y0 = Math.max(0, Math.floor(y0 - py)); x1 = Math.min(m.w, Math.ceil(x1 + px)); y1 = Math.min(m.h, Math.ceil(y1 + py));
+    if (x1 - x0 < 1 || y1 - y0 < 1) { if (this._img) this._img.style.display = 'none'; this.shown = null; return; }   // снимок за экраном
+    // размер картинки — как этот кусок на экране, но не крупнее самого снимка и не больше TIFF_MAX_PX
+    const P = (x, y) => map_.latLngToContainerPoint(c.toLL(x, y)), a = P(x0, y0);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);              // чёткость — как у экрана телефона (не больше ×2)
+    let w = Math.round(a.distanceTo(P(x1, y0)) * dpr), h = Math.round(a.distanceTo(P(x0, y1)) * dpr);
+    const k = Math.min(1, TIFF_MAX_PX / Math.max(w, h, 1), (x1 - x0) / Math.max(w, 1), (y1 - y0) / Math.max(h, 1));
+    w = Math.max(1, Math.round(w * k)); h = Math.max(1, Math.round(h * k));
+    const s = this.shown;
+    if (s && s.x0 <= x0 && s.y0 <= y0 && s.x1 >= x1 && s.y1 >= y1 && (s.x1 - s.x0) / s.w <= (x1 - x0) / w * 1.25) return;   // уже показано не хуже
+    const seq = ++this.seq;
+    this.busy = true;
+    try {
+      const r = await MAPS.render({ id: m.id, x0, y0, x1, y1, w, h, s16: m.s16 });
+      if (seq !== this.seq || !this._img || !r || !r.data) return;
+      const img = this._img;
+      await new Promise(res => { img.onload = img.onerror = res; img.src = `data:image/${r.fmt};base64,${r.data}`; });
+      if (seq !== this.seq || !this._img) return;
+      img.width = w; img.height = h; this.shown = { x0, y0, x1, y1, w, h }; this._place();
+    } catch (e) { if (seq === this.seq) toast('Снимок «' + m.name + '»: ' + ((e && e.message) || 'не прочитался')); }
+    finally { this.busy = false; if (this.again && this._map) { this.again = false; this._update(); } }
+  }
+});
 
 /* ───────────── «Мои карты»: чертежи DXF (топоплан, проект из AutoCAD, nanoCAD, GeoniCS, КРЕДО) поверх карты ───────────── */
 
