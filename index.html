@@ -1609,7 +1609,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 81;
+const APP_BUILD = 82;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3597,7 +3597,7 @@ function stakeByCoords() {
     { key: 'name', label: 'Название', placeholder: 'например ось 1' }
   ], v => {
     const x = parseNum(v.x), y = parseNum(v.y);
-    if (isNaN(x) || isNaN(y)) { toast('X и Y — числа, в метрах'); return false; }
+    if (!String(v.x).trim() || !String(v.y).trim() || isNaN(x) || isNaN(y)) { toast('X и Y — числа, в метрах'); return false; }   // пустое поле — не 0
     const z = planeZone(y); if (!z) { toast('Y — положительное число'); return false; }
     try { startStake(fromSk42(x, z.y, z.zone), v.name || `X ${x} Y ${y}`); } catch (e) { toast('Не удалось пересчитать координаты'); return false; }
   }, 'Вынести');
@@ -7509,16 +7509,28 @@ const hInfoCols = hi => { const h = hi || {}, ref = h.ref;
 function toCsv() {
   const rows = [['№', 'Код', 'Знак', 'Подпись', 'X ' + planeName(), 'Y ' + planeName(), 'H', 'Отметка из', 'Точность в плане, м', 'Решение (оценка по точности)', 'Время',
     'Широта WGS-84', 'Долгота WGS-84', 'Зона', 'Примечание', 'Фото', 'СКО измерения, м', 'Измерение, с', 'Отсчётов', 'HDOP', 'Допуск, м', 'Масштаб',
-    'СКО отметки, м', 'Высота над эллипсоидом, м', 'Высота антенны, м', 'Привязка отметки', 'Контроль в плане, м', 'Контроль по высоте, м', 'Контроль: итог']];
+    'СКО отметки, м', 'Высота над эллипсоидом, м', 'Высота антенны, м', 'Привязка отметки', 'Контроль в плане, м', 'Контроль по высоте, м', 'Контроль: итог',
+    'Построение: расстояние, м', 'Угол', 'Вид угла', 'Дирекционный угол', 'База', 'X базы', 'Y базы']];
   for (const p of data.points) {
     const c = sk42(p.lat, p.lng), m = p.meas, H = pointH(p), q = p.q || {};
     rows.push([p.no || '', p.type, (POINTS[p.type] || POINTS.mark).name, p.name || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(2),
       H == null ? '' : H_SRC[p.hSrc] || 'вручную', q.acc != null ? f3(q.acc) : p.approx != null ? f3(p.approx) : '', (p.approx != null || p.rough) && q.acc == null ? 'приближённо' : fixText(q.fix), q.at ? new Date(q.at).toLocaleString('ru-RU') : '',
       f8(p.lat), f8(p.lng), c.zone, pointNote(p), (p.photos || []).map(photoFile).join(' '),
       ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', '']),
-      ...hInfoCols(p.hInfo), ...ctrlCols(p.ctrl && p.ctrl[p.ctrl.length - 1])]);
+      ...hInfoCols(p.hInfo), ...ctrlCols(p.ctrl && p.ctrl[p.ctrl.length - 1]), ...polarCols(p.polar)]);
   }
   return '\ufeff' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+}
+// точка, построенная по расстоянию и углу: исходные данные — чтобы в офисе можно было перепроверить построение
+const POLAR_BASE = { gps: 'от GPS', point: 'от точки', cross: 'от крестика', last: 'от последней точки' };
+function polarCols(o) {
+  const num = v => v !== '' && v != null && Number.isFinite(Number(v)) ? Number(v) : null;   // из чужого KML может прийти что угодно
+  const own = (t, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(t, k) ? t[k] : null;
+  if (!o || typeof o !== 'object' || num(o.d) == null) return ['', '', '', '', '', '', ''];
+  const bLat = num(o.baseLat), bLng = num(o.baseLng), b = bLat != null && bLng != null ? sk42(bLat, bLng) : null;
+  const ang = typeof o.ang === 'number' ? (Number.isFinite(o.ang) ? degMin(o.ang) : '') : typeof o.ang === 'string' ? o.ang : '';
+  return [f3(num(o.d)), ang, (own(ANGLE_KINDS, o.kind) || {}).short || '', num(o.dirAng) != null ? degMin(num(o.dirAng)) : '',
+    own(POLAR_BASE, o.base) || own(POLAR_BASE, o.from) || '', b ? f3(b.x) : '', b ? f3(b.y) : ''];
 }
 const ctrlCols = c => c ? [f3(c.dS), c.dH == null ? '' : f3(c.dH), CTRL_MARK[c.ok]] : ['', '', ''];
 // Ведомость контрольных измерений: каждое повторное измерение отдельной строкой
