@@ -224,7 +224,7 @@
   .h { font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:12px 2px 6px; }
   .tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(78px, 1fr)); gap:7px; }
   .tile { border:1px solid var(--line); background:none; color:var(--ink); border-radius:13px; padding:9px 3px 7px; display:flex; flex-direction:column; align-items:center; gap:5px; text-align:center; font-size:11px; line-height:1.15; min-height:84px; min-width:0; }
-  .tile span { max-width:100%; hyphens:manual; -webkit-hyphens:manual; }   /* длинные слова переносятся по мягким переносам из tileName() */
+  .tile span { max-width:100%; hyphens:manual; -webkit-hyphens:manual; overflow-wrap:anywhere; }   /* слово без мягкого переноса всё равно не вылезет из плитки */   /* длинные слова переносятся по мягким переносам из tileName() */
   #modeTitle span, #card .name, #card .sub { overflow-wrap:anywhere; hyphens:auto; -webkit-hyphens:auto; }
   body.sun .tile { border:2px solid #000; }
   .tile:active { background:color-mix(in srgb, var(--accent) 15%, transparent); }
@@ -907,6 +907,8 @@ function toast(msg) {
   const above = vis('sheet') ? $('sheetPanel').offsetHeight : vis('mode') || vis('pick') || vis('card') || 0;
   t.style.top = 'auto';
   t.style.bottom = (above ? above + ($('sheet').style.display === 'block' ? 0 : $('bar').offsetHeight + 8) + 10 : $('bar').offsetHeight + 56) + 'px';
+  const fp = $('fabPlus'), fr = fp && getComputedStyle(fp).display !== 'none' ? fp.getBoundingClientRect() : null;   // не закрывать кнопку «+»
+  if (fr && fr.height && !vis('sheet')) t.style.bottom = Math.max(parseFloat(t.style.bottom) || 0, innerHeight - fr.top + 8) + 'px';
   t.textContent = String(msg).replace(/(\d) (см|мм|м|с|км)(?![а-яё])/g, '$1\u00a0$2').replace(/± /g, '±');
   t.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = 'none', document.body.classList.contains('glove') ? 5000 : 3200);   // в перчатках — дольше
 }
@@ -1609,7 +1611,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 82;
+const APP_BUILD = 83;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1794,7 +1796,7 @@ if (NATIVE && GNSS && GNSS.spoofInfo) setInterval(() => { if (gnssOn) spoofPoll(
 // RX:NMEA-START
 const RX_FIX_M = 0.02, RX_FLOAT_M = 0.3, RX_HDOP_M = 2.5;   // если приёмник не прислал GST: оценка точности по виду решения
 const nmeaDeg = (v, dir) => {
-  const n = Number(v); if (!v || !isFinite(n)) return null;
+  const n = Number(v); if (!v || !String(v).trim() || !isFinite(n)) return null;
   const d = Math.floor(n / 100), deg = d + (n - d * 100) / 60;
   return dir === 'S' || dir === 'W' ? -deg : deg;
 };
@@ -2003,7 +2005,8 @@ let rxTest = null;                                                      // { tim
 const nmeaSum = s => { let c = 0; for (let i = 0; i < s.length; i++) c ^= s.charCodeAt(i); return '$' + s + '*' + c.toString(16).toUpperCase().padStart(2, '0'); };
 function nmeaGga(ll, q, sats, hdop, h) {
   const t = new Date(), hh = [t.getUTCHours(), t.getUTCMinutes(), t.getUTCSeconds()].map(v => String(v).padStart(2, '0')).join('') + '.00';
-  const dm = (v, w) => { const a = Math.abs(v), d = Math.floor(a); return String(d).padStart(w, '0') + ((a - d) * 60).toFixed(6).padStart(9, '0'); };
+  const dm = (v, w) => { const m6 = Math.round(Math.abs(v) * 60e6), d = Math.floor(m6 / 60e6);   // в миллионных долях минуты: «60.000000» не бывает
+    return String(d).padStart(w, '0') + ((m6 - d * 60e6) / 1e6).toFixed(6).padStart(9, '0'); };
   return nmeaSum(`GNGGA,${hh},${dm(ll.lat, 2)},${ll.lat < 0 ? 'S' : 'N'},${dm(ll.lng, 3)},${ll.lng < 0 ? 'W' : 'E'},${q},${sats},${hdop.toFixed(1)},${h.toFixed(3)},M,14.200,M,,`);
 }
 const nmeaGst = s => nmeaSum(`GNGST,000000.00,${s.toFixed(3)},,,,${s.toFixed(3)},${s.toFixed(3)},${(s * 1.6).toFixed(3)}`);
@@ -3636,6 +3639,8 @@ function parseSoText(txt) {
     const n = f.map(num);
     let no, x, y, rest;
     if (f.length >= 3 && !isNaN(n[1]) && !isNaN(n[2])) { no = f[0]; x = n[1]; y = n[2]; rest = f.slice(3); }
+    // «№;X;опечатка;H» — не читать как «X;Y;код»: после нечислового третьего поля есть ещё число → строка испорчена
+    else if (/[;\t]/.test(line) && f.length >= 4 && isNaN(n[2]) && n.slice(3).some(v => !isNaN(v))) { skipped++; continue; }
     else if (f.length >= 2 && !isNaN(n[0]) && !isNaN(n[1])) { no = String(out.length + 1); x = n[0]; y = n[1]; rest = f.slice(2); }
     else { skipped++; continue; }
     const h = rest.length && !isNaN(num(rest[0])) ? num(rest[0]) : null, code = rest.slice(h == null ? 0 : 1).filter(Boolean).join(' ');
@@ -5262,6 +5267,24 @@ function showSheet(html) {
   syncVolKeys();
 }
 function closeSheet() { $('sheet').style.display = 'none'; syncVolKeys(); }
+// подсказка, показанная до окна или пока окно меняет высоту (вкладки), — всегда над окном, а не поверх его заголовка
+if (window.ResizeObserver) new ResizeObserver(() => { const t = $('toast'); if (t.style.display !== 'block') return;
+  if ($('sheet').style.display === 'block') t.style.bottom = $('sheetPanel').offsetHeight + 10 + 'px';   // закрытое окно не трогаем: после closeSheet() часто сразу идёт новая подсказка
+}).observe($('sheetPanel'));
+// кнопка «Назад» Android (её передаёт MainActivity): закрыть верхнее окно, выйти из съёмки; на пустой карте — двойное нажатие сворачивает
+let backAt = 0;
+window.androidBack = () => {
+  const vis = id => { const e = $(id); return !!e && getComputedStyle(e).display !== 'none'; };
+  if (vis('sheet')) { $('sheet').dispatchEvent(new MouseEvent('click', { bubbles: true })); return 'handled'; }   // как касание мимо окна: «Нет» в вопросах
+  if (vis('card')) { hideCard(); return 'handled'; }
+  if (pickTool) { pickEnd(); return 'handled'; }                         // засечка, створ, рулетка — закрыть инструмент, съёмка остаётся
+  if (typeof cal !== 'undefined' && cal && vis('calBar')) { ask('Отменить привязку чертежа?', 'Отменить', true).then(y => { if (y && cal) calAct('stop'); }); return 'handled'; }
+  if (mode) { $('modeX').click(); return 'handled'; }
+  if (vis('stake') && $('stakeStop')) { $('stakeStop').click(); return 'handled'; }
+  if (Date.now() - backAt < 2000) return 'exit';
+  backAt = Date.now(); toast('Нажмите «Назад» ещё раз — приложение свернётся');
+  return 'handled';
+};
 
 // Мягкие переносы в длинных словах — чтобы в узкой плитке слово рвалось по слогам («нефте-провода»), а не по одной букве
 const SOFT = '­';
@@ -5271,7 +5294,10 @@ function tileName(name) {
     .replace(/фундаментальный/gi, 'фундамен' + SOFT + 'тальный')
     .replace(/канализаци/gi, 'канали' + SOFT + 'заци')
     .replace(/(съёмоч)(ной)/gi, '$1' + SOFT + '$2')
-    .replace(/(напр)(яжения)/gi, '$1' + SOFT + '$2');
+    .replace(/(напр)(яжения)/gi, '$1' + SOFT + '$2')
+    .replace(/(производ)(ствен)/gi, '$1' + SOFT + '$2')
+    .replace(/(подразде)(лени)/gi, '$1' + SOFT + '$2')
+    .replace(/(противо)(пожар)/gi, '$1' + SOFT + '$2');
 }
 
 // Выбор знака или линии: поиск, вкладки, «последние», крупные плитки
@@ -6412,7 +6438,7 @@ dxfStore('readonly', s => s.getAllKeys()).then(keys => {
 // Меню: короткий главный список; выгрузки и настройки — в своих подменю (2 касания до любой выгрузки)
 $('btnMenu').onclick = () => openList('Меню', [
   { header: 'Объект' },
-  { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || 'без названия') + ' — сменить, новый' },
+  { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || ((projectList().find(p => p.id === projectId) || {}).name) || 'без названия') + ' — сменить, новый' },
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
   { id: 'check', icon: '✓', text: 'Проверка перед сдачей' },
   { id: 'journal', icon: '☰', text: `Журнал съёмки: ${data.points.length} ${plural(data.points.length, 'точка', 'точки', 'точек')}, фильтры` },
@@ -7243,7 +7269,7 @@ function projectsMenu() {
   showSheet(`<div class="sh-head"><b>Объекты</b><button class="x" data-close>×</button></div>
     <div class="hint" style="margin:4px 0 10px">У каждого объекта свой план и паспорт. Фото и настройки — общие. Название объекта попадает в имена файлов.</div>
     <div class="list">${list.map(p => `<div class="item${p.id === projectId ? ' on' : ''}" data-proj="${esc(p.id)}"><span class="i">${p.id === projectId ? '●' : '○'}</span>
-      <span>${esc(p.name || 'без названия')}<br><span class="hint">${p.n != null ? `объектов ${p.n}` : ''}${p.at ? ' · ' + when(p.at) : ''}${p.id === projectId ? ' · открыт' : ''}</span></span>
+      <span>${esc(p.name || 'без названия')}<br><span class="hint">${p.n != null ? `${p.n} ${plural(p.n, 'знак или линия', 'знака и линии', 'знаков и линий')}` : ''}${p.at ? ' · ' + when(p.at) : ''}${p.id === projectId ? ' · открыт' : ''}</span></span>
       ${p.id === projectId ? '' : `<button class="x" data-del="${esc(p.id)}" title="Удалить">×</button>`}</div>`).join('')}</div>
     <div style="display:grid;gap:6px;margin-top:10px"><button class="btn primary" id="projNew">Новый объект…</button><button class="btn" id="projPass">Паспорт открытого объекта</button></div>`);
   $('projNew').onclick = () => newProjectWizard();
