@@ -187,6 +187,8 @@
   #mode .btn.off { opacity:.45; }
   #mode .title svg { flex:none; }
   #mode .btns { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; }
+  /* телефон боком: панель съёмки — одной строкой кнопок и не под столбиком кнопок справа, чтобы карте осталось место */
+  @media (max-height:520px) { #mode { right:92px; padding:6px 8px 8px; } #mode .hd { margin-bottom:4px; } #mode .btns { grid-template-columns:repeat(5, 1fr); } #mode .btns .btn { min-height:40px; padding-top:6px; padding-bottom:6px; } }
   #mode .quick { display:flex; gap:6px; overflow-x:auto; flex:1; min-width:0; }
   #mode .quick button { flex:none; display:flex; align-items:center; gap:4px; min-height:40px; padding:4px 10px; border:1px solid var(--line); border-radius:22px; background:var(--panel); color:var(--ink); font-size:12px; max-width:150px; }
   #mode .quick button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1784,7 +1786,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 84;
+const APP_BUILD = 85;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2582,8 +2584,8 @@ function placePointLabels() {
   }
 }
 // Кадр отрисовки: сначала занимаем места знаками и линиями, потом расставляем надписи
-function frame() {
-  occupied = [];
+function frame(mayReuse) {                                            // mayReuse — простой сдвиг карты: линии не перерисовывать, если хватает запаса
+  occReset();
   for (const { p } of pointMarkers) { const c = map.latLngToContainerPoint([p.lat, p.lng]); reserve({ x: c.x - SYM_R, y: c.y - SYM_R, w: 2 * SYM_R, h: 2 * SYM_R }, p.id); }
   for (const line of data.lines) {                                    // сама линия — препятствие для чужих надписей
     const pts = screenPts(line);
@@ -2593,7 +2595,10 @@ function frame() {
     }
   }
   placePointLabels();
-  drawLines();
+  if (mayReuse === true && netReusable()) {                              // линии не перерисованы — их подписи всё равно занимают место (для сетки)
+    const o = map.containerPointToLayerPoint([0, 0]), dx = drawnAt.origin.x - o.x, dy = drawnAt.origin.y - o.y;
+    for (const b of drawnAt.txt || []) reserve({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }, b.owner);
+  } else { netTxt = []; try { drawLines(); } finally { if (drawnAt) drawnAt.txt = netTxt; netTxt = null; } }
   if (typeof gridLayer !== 'undefined' && map.hasLayer(gridLayer)) gridLayer._draw();   // сетка — последней
 }
 
@@ -2698,8 +2703,29 @@ function textWidth(str, px, italic) {
   measureCtx.font = `${italic ? 'italic ' : ''}${px}px "Roboto Condensed", "Arial Narrow", Arial, sans-serif`;
   return measureCtx.measureText(str).width;
 }
-function hits(r, owner) { return occupied.some(o => (owner == null || o.owner !== owner) && r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y); }
-function reserve(r, owner) { occupied.push(Object.assign({ owner }, r)); }
+// занятые места — ещё и по клеткам 48 px: проверка надписи смотрит только соседние клетки, а не все сотни знаков (иначе карта тормозит на 300+ точках)
+const OCC_CELL = 48, OCC_MAX_CELLS = 400;
+let occGrid = new Map();
+function occReset() { occupied = []; occGrid = new Map(); occBig = []; }
+const occCells = (r, fn) => {
+  const x0 = Math.floor(r.x / OCC_CELL), x1 = Math.floor((r.x + r.w) / OCC_CELL), y0 = Math.floor(r.y / OCC_CELL), y1 = Math.floor((r.y + r.h) / OCC_CELL);
+  if ((x1 - x0 + 1) * (y1 - y0 + 1) > OCC_MAX_CELLS) return false;    // огромный прямоугольник — по клеткам не раскладываем
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) if (fn(x * 1000003 + y)) return true;
+  return null;
+};
+const occHit = (r, o, owner) => (owner == null || o.owner !== owner) && r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y;
+let occBig = [];                                                       // прямоугольники больше 400 клеток — проверяются перебором
+function hits(r, owner) {
+  if (occBig.some(o => occHit(r, o, owner))) return true;
+  const res = occCells(r, k => { const a = occGrid.get(k); return !!a && a.some(o => occHit(r, o, owner)); });
+  return res === false ? occupied.some(o => occHit(r, o, owner)) : res === true;
+}
+let netTxt = null;                                                     // занятые подписями линий места (экран на момент рисования) — для кадров без перерисовки линий
+function reserve(r, owner) {
+  const o = Object.assign({ owner }, r); occupied.push(o);
+  if (netTxt) netTxt.push(o);
+  if (occCells(r, k => { let a = occGrid.get(k); if (!a) occGrid.set(k, a = []); a.push(o); }) === false) occBig.push(o);
+}
 // Прямоугольник надписи шириной w и высотой h с центром в p, повёрнутой на deg и сдвинутой поперёк на dy
 function textBox(p, deg, dy, w, h) {
   const a = deg * Math.PI / 180, cx = p.x - Math.sin(a) * dy, cy = p.y + Math.cos(a) * dy;
@@ -2955,16 +2981,22 @@ const NO_STATE = new Set(['building', 'fence', 'road', 'relief', 'veg', 'cad']);
 function drawLines() {
   planSizes();
   const size = map.getSize();
-  L.DomUtil.setPosition(netSvg, map.containerPointToLayerPoint([0, 0]));
-  drawnAt = { zoom: map.getZoom(), ll: map.containerPointToLatLng([0, 0]) };
-  netSvg.setAttribute('width', size.x); netSvg.setAttribute('height', size.y);
+  // слой линий — с запасом в экран со всех сторон: при сдвиге карты в пределах запаса линии не перерисовываются (300+ объектов — без тормозов)
+  const P = Math.max(size.x, size.y);
+  L.DomUtil.setPosition(netSvg, map.containerPointToLayerPoint([-P, -P]));
+  drawnAt = { zoom: map.getZoom(), ll: map.containerPointToLatLng([-P, -P]), origin: map.containerPointToLayerPoint([0, 0]), size, P };
+  netSvg.setAttribute('width', size.x + 2 * P); netSvg.setAttribute('height', size.y + 2 * P);
   netSvg.innerHTML = '';
+  const netRoot = el('g', { transform: `translate(${P} ${P})` }, netSvg);
   polesDrawn = [];
+  const clipBox = L.bounds([-P, -P], [size.x + P, size.y + P]);
   for (const line of data.lines) {
     const spec = LINES[line.type] || LINES.plain;
-    const pts = screenPts(line);
+    const all = screenPts(line);
+    // далеко за краем запаса линию не рисуем (на крупном масштабе узор вдоль длинных линий дорог для телефона); замкнутые — целиком, ради заливки
+    for (const pts of !CLIP_KINDS.has(spec.kind) || spec.closed || all.length < 2 ? [all] : clipPieces(all, clipBox)) {   // режем только простые линии: у трассы пикеты, у опор и стрелок — вершины
     if (pts.length < 2) continue;
-    const g = el('g', {}, netSvg);
+    const g = el('g', {}, netRoot);
     const isSel = selected && selected.obj === line;
     g.style.color = isSel && !line.color ? 'var(--accent)' : objColor(line, 'line');   // свой цвет виден и у выбранной линии — выбор показывает толщина
     if (isSel) el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 12, opacity: 0.22, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);   // подсветка выбранной линии
@@ -2984,7 +3016,19 @@ function drawLines() {
     const cap = [tag, spec.tag, netCaption(line)].filter(Boolean).join(' ');
     if (cap) captionAlong(g, path, pts, cap, spec.sleeve || (line.attr || {}).sleeve ? 1.6 * MM : spec.double ? spec.double * MM : spec.double2 ? spec.double2 * MM : 0);
     curOwner = null;
+    }
   }
+}
+const CLIP_KINDS = new Set(['plain', 'cad', 'indexed', 'relief']);
+function clipPieces(pts, b) {                                         // куски ломаной внутри прямоугольника b
+  const out = []; let cur = null;
+  for (let i = 1; i < pts.length; i++) {
+    const seg = L.LineUtil.clipSegment(pts[i - 1], pts[i], b, false, false);
+    if (!seg) { cur = null; continue; }
+    if (cur && cur[cur.length - 1].distanceTo(seg[0]) < 0.01) cur.push(seg[1]); else out.push(cur = [seg[0], seg[1]]);
+    if (!seg[1].equals(pts[i])) cur = null;                           // вышли за край — следующий кусок отдельно
+  }
+  return out;
 }
 // Подпись линии — над (или под) серединой участка, где она помещается и ни с чем не пересекается; иначе появится при приближении
 function captionAlong(g, path, pts, str, extra) {          // extra — на сколько дальше от оси (футляр, двойная линия)
@@ -3066,11 +3110,24 @@ function drawHits() {
     ((LINES[line.type] || {}).closed ? L.polygon(line.latlngs, { opacity: 0, fillOpacity: 0, weight: 24, interactive: true })
       : L.polyline(line.latlngs, { opacity: 0, weight: 24, interactive: true })).on('click', e => { L.DomEvent.stop(e); if (mode && pickTool) { pickTap(e.latlng); return; } if (mode) addAt(e.latlng); else { lineTap = { line, ll: e.latlng }; showCard('line', line); } }).addTo(hitLayer);   // в режиме рисования — ставим точку и поверх объектов
 }
-map.on('moveend resize viewreset', frame);                              // после изменения масштаба тоже придёт moveend
+// moveend и viewreset приходят парой при смене масштаба — перерисовываем один раз, в следующем кадре
+let frameQ = null;
+function frameSoon(mayReuse) {
+  if (frameQ) { frameQ.reuse = frameQ.reuse && mayReuse; return; }
+  frameQ = { reuse: mayReuse };
+  requestAnimationFrame(() => { const q = frameQ; frameQ = null; frame(q.reuse); });
+}
+map.on('moveend', () => frameSoon(true));
+map.on('resize viewreset', () => frameSoon(false));                              // после изменения масштаба тоже придёт moveend
 map.on('zoomend', () => { const was = MM; planSizes(); if (MM !== was || generalized !== planDenom() > GEN_DENOM) { drawPoints(); if (soList().length) drawSo(); } });   // размер знаков — по масштабу (как на плане 1:500); линии — в frame по moveend
 // Во время приближения (кнопки, щипок) линии не прячем, а растягиваем вместе с картой; после — перерисовываем начисто
 netSvg.classList.add('leaflet-zoom-animated');
 netSvg.style.transformOrigin = '0 0';
+function netReusable() {
+  const d = drawnAt; if (!d || !d.origin || d.zoom !== map.getZoom()) return false;
+  const s = map.getSize(), o = map.containerPointToLayerPoint([0, 0]);
+  return s.x === d.size.x && s.y === d.size.y && Math.abs(o.x - d.origin.x) < d.P * 0.6 && Math.abs(o.y - d.origin.y) < d.P * 0.6;
+}
 let drawnAt = null;                                                   // { zoom, ll } — при каком масштабе и где левый верхний угол слоя
 function stretchNet(ll0, scale, pos) { if (drawnAt) L.DomUtil.setTransform(netSvg, pos, scale); }
 map.on('zoomanim', e => { if (drawnAt) stretchNet(null, map.getZoomScale(e.zoom, drawnAt.zoom), map._latLngToNewLayerPoint(drawnAt.ll, e.zoom, e.center)); });
@@ -7723,7 +7780,7 @@ function toCsv() {
       ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', '']),
       ...hInfoCols(p.hInfo), ...ctrlCols(p.ctrl && p.ctrl[p.ctrl.length - 1]), ...polarCols(p.polar)]);
   }
-  return '\ufeff' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  return csvJoin(rows, new Set([0, 1, 2, 3, 14, 15]));                // №, код, знак, подпись, примечание, фото — как есть (подпись «3.10» не число)
 }
 // точка, построенная по расстоянию и углу: исходные данные — чтобы в офисе можно было перепроверить построение
 const POLAR_BASE = { gps: 'от GPS', point: 'от точки', cross: 'от крестика', last: 'от последней точки' };
@@ -7747,7 +7804,9 @@ function toCtrlSheet() {
 }
 // ведомость для Excel: паспорт объекта строками над таблицей
 const sheetJoin = rows => csvJoin([...passportLines().map(l => [l]), [], ...rows]);
-const csvJoin = rows => '\ufeff' + rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+// \u0432\u0435\u0434\u043e\u043c\u043e\u0441\u0442\u0438 \u2014 \u0434\u043b\u044f \u0440\u0443\u0441\u0441\u043a\u043e\u0433\u043e Excel: \u0440\u0430\u0437\u0434\u0435\u043b\u0438\u0442\u0435\u043b\u044c \u00ab;\u00bb, \u0434\u0440\u043e\u0431\u043d\u0430\u044f \u0447\u0430\u0441\u0442\u044c \u0447\u0435\u0440\u0435\u0437 \u0437\u0430\u043f\u044f\u0442\u0443\u044e (\u0441 \u0442\u043e\u0447\u043a\u043e\u0439 Excel \u0441\u0447\u0438\u0442\u0430\u0435\u0442 \u0447\u0438\u0441\u043b\u043e \u0442\u0435\u043a\u0441\u0442\u043e\u043c \u0438\u043b\u0438 \u0434\u0430\u0442\u043e\u0439)
+const xlsNum = v => { const s = String(v == null ? '' : v); return /^-?\d+\.\d+$/.test(s) ? s.replace('.', ',') : s; };
+const csvJoin = (rows, textCols) => '\ufeff' + rows.map(r => r.map((v, i) => `"${(textCols && textCols.has(i) ? String(v == null ? '' : v) : xlsNum(v)).replace(/"/g, '""')}"`).join(';')).join('\r\n');
 // Ведомость колодцев: номер, координаты, отметки люка и лотков, глубина, колодец
 function toWellsSheet() {
   const rows = [['№ п/п', '№ колодца', 'Вид', 'X ' + planeName(), 'Y ' + planeName(), 'Отм. люка', 'Лоток 1', 'Куда 1', 'Лоток 2', 'Куда 2', 'Лоток 3', 'Куда 3', 'Глубина', 'Диаметр, мм', 'Материал', 'Примечание']];
