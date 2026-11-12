@@ -102,7 +102,7 @@
   .dot.ok { background:#2e7d32; } .dot.mid { background:#f9a825; } .dot.bad { background:#c62828; }
 
   /* ── перекрестье ── */
-  #cross { position:absolute; left:50%; top:50%; width:34px; height:34px; margin:-17px 0 0 -17px; z-index:900; pointer-events:none; }
+  #cross { position:absolute; left:50%; top:50%; width:var(--cs, 34px); height:var(--cs, 34px); margin:calc(var(--cs, 34px) / -2) 0 0 calc(var(--cs, 34px) / -2); z-index:900; pointer-events:none; }
   /* служебная графика — графитом, не красным: красный занят знаками (трасса демонтажа и др.) */
   #cross path + path { stroke:var(--svc); } #cross circle { fill:var(--svc); }
   #cross.snap path + path { stroke:#00c853; } #cross.snap circle { fill:#00c853; }   /* ярко-зелёный — «+» прилипнет к точке под ним (не путать с сеткой) */
@@ -879,6 +879,11 @@ netColors = pref('netColors', false);
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const THEMES = { day: 'Дневная тема', sun: 'Режим «солнце» — максимальный контраст', night: 'Ночная тема' };
+// размер крестика в центре: мелкий не закрывает снимок, крупный видно на солнце и в перчатках
+const CROSS_SIZES = { s: ['маленький', 26], m: ['обычный', 34], l: ['крупный', 46] };
+let crossSize = Object.prototype.hasOwnProperty.call(CROSS_SIZES, pref('crossSize', 'm')) ? pref('crossSize', 'm') : 'm';
+const applyCrossSize = () => document.documentElement.style.setProperty('--cs', CROSS_SIZES[crossSize][1] + 'px');
+applyCrossSize();
 let theme = pref('theme', 'day'), ready = false;      // ready — карта и слои созданы (в конце файла)
 function applyTheme() {
   document.body.classList.remove('day', 'sun', 'night'); document.body.classList.add(THEMES[theme] ? theme : 'day');   // другие классы (перчатки) не трогаем
@@ -1786,7 +1791,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 86;
+const APP_BUILD = 87;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -6747,6 +6752,7 @@ function settingsMenu() {
     { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() + ' →' },
     { header: 'Вид' },
     { id: 'theme', icon: '☀', text: 'Тема: ' + THEMES[theme] },
+    { id: 'crosssize', icon: '✛', text: 'Крестик в центре: ' + CROSS_SIZES[crossSize][0] + ' (нажмите — сменить)' },
     { id: 'netcolors', icon: '◍', text: 'Цвета сетей (выкл. — чёрные, по «Правилам»)', on: netColors, check: true },
     { id: 'cal', icon: '⟷', text: PX_MM === PX_MM_DEFAULT ? 'Размер знаков: откалибровать по линейке' : 'Размер знаков: по линейке — повторить' },
     { header: 'Выгрузки' },
@@ -6754,7 +6760,7 @@ function settingsMenu() {
     { id: 'dxfframe', icon: '▭', text: 'В DXF — рамка листа и штамп', on: pref('dxfFrame', true), check: true },
     { header: 'Помощники' },
     { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' }
-  ], act => { MENU[act](); if (['sound', 'voice', 'volkeys', 'screen', 'netcolors', 'dxfframe', 'angkind', 'angunit', 'wgsfmt'].includes(act)) settingsMenu(); });
+  ], act => { MENU[act](); if (['sound', 'voice', 'volkeys', 'screen', 'netcolors', 'dxfframe', 'angkind', 'angunit', 'wgsfmt', 'crosssize'].includes(act)) settingsMenu(); });
 }
 // смена настройки углов или формата WGS-84 — сразу перерисовать всё, где они видны
 function angApply(msg) {
@@ -6804,6 +6810,7 @@ const MENU = {
   offline: () => saveArea(),
   offlineinfo: () => offlineInfo(),
   theme: () => $('fabTheme').click(),
+  crosssize: () => { const ks = Object.keys(CROSS_SIZES); crossSize = ks[(ks.indexOf(crossSize) + 1) % ks.length]; setPref('crossSize', crossSize); applyCrossSize(); toast('Крестик: ' + CROSS_SIZES[crossSize][0]); },
   labels: () => { labelsAll = !labelsAll; setPref('labelsAll', labelsAll); redrawAll(); toast(labelsAll ? 'Показываю все подписи — на мелком масштабе они могут налезать' : 'Подписи без наложений: лишние появятся при приближении'); },
   netcolors: () => {
     netColors = !netColors; setPref('netColors', netColors); redrawAll();
