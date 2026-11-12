@@ -1786,7 +1786,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 85;
+const APP_BUILD = 86;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -5522,8 +5522,8 @@ const SOFT = '­';
 function tileName(name) {
   return esc(name)
     .replace(/(электро|воздухо|мазуто|нефте|бензо|золо|водо|газо|трубо)(провод|кабел)/gi, '$1' + SOFT + '$2')
-    .replace(/фундаментальный/gi, 'фундамен' + SOFT + 'тальный')
-    .replace(/канализаци/gi, 'канали' + SOFT + 'заци')
+    .replace(/(фундамен)(тальн)/gi, '$1' + SOFT + '$2')
+    .replace(/(канали)(заци)/gi, '$1' + SOFT + '$2')
     .replace(/(съёмоч)(ной)/gi, '$1' + SOFT + '$2')
     .replace(/(напр)(яжения)/gi, '$1' + SOFT + '$2')
     .replace(/(производ)(ствен)/gi, '$1' + SOFT + '$2')
