@@ -328,8 +328,14 @@
   .leaflet-top.leaflet-left .leaflet-control { margin-top:0; }          /* отступ уже учтён в --topH */
   .leaflet-control-zoom a { width:40px !important; height:40px !important; line-height:40px !important; font-size:20px !important; background:var(--panel) !important; color:var(--ink) !important; border-color:var(--line) !important; }
   .leaflet-bottom { bottom:var(--barH, 70px); }
+  body.yjs .leaflet-bottom { bottom:calc(var(--barH, 70px) + 34px); }
+  .yjs-box, .yjs-inner { position:absolute; left:0; top:0; }
+  .yjs-box { transform-origin:0 0; }
   .leaflet-control-attribution { background:color-mix(in srgb, var(--panel) 80%, transparent) !important; color:var(--muted) !important; }
   .leaflet-control-attribution a { color:var(--accent) !important; }
+  #yLogo { position:absolute; right:0; bottom:0; display:block; line-height:0; pointer-events:auto; }
+  #yLogo img { display:block; width:88px; height:48px; }
+  body.ymap .leaflet-bottom.leaflet-right .leaflet-control-attribution { margin-right:88px; }
 
   #toast { position:absolute; left:50%; transform:translateX(-50%); z-index:3000; background:#222; color:#fff; padding:9px 15px; border-radius:18px; font-size:14px; display:none; width:max-content; max-width:calc(100% - 32px); text-align:center; line-height:1.3; }
 </style>
@@ -897,13 +903,15 @@ $('fabTheme').onclick = () => {
   theme = { day: 'sun', sun: 'night', night: 'day' }[theme] || 'day';
   setPref('theme', theme); applyTheme(); drawTracks(); dxfRedraw(); toast(THEMES[theme]);   // трек и чертежи ночью — светлее
 };
+const Y_JS_LIFT = 34;                                                 // высота строки «Условия · Яндекс Карты» у JS API
 // раскладка: кнопки, масштаб, панели — относительно реальной высоты верхней плашки и нижней панели
 function layout() {
   const topH = $('top').offsetHeight + 16, barH = $('bar').style.display === 'none' ? 0 : $('bar').offsetHeight;
   document.documentElement.style.setProperty('--topH', topH + 'px');
   document.documentElement.style.setProperty('--barH', (barH + 6) + 'px');
   $('fabs').style.top = topH + 'px';
-  $('scale').style.bottom = (barH + 10) + 'px';
+  $('scale').style.bottom = (barH + 10 + (document.body.classList.contains('yjs') ? Y_JS_LIFT : 0)) + 'px';
+  if (window.yjsLayer) window.yjsLayer._sync();                       // полоса Яндекса — по новой высоте нижней панели
   $('mode').style.bottom = barH ? (barH + 8) + 'px' : 'calc(8px + env(safe-area-inset-bottom))';
   if (typeof layoutStake === 'function' && $('stake').style.display === 'block') layoutStake();
   $('card').style.bottom = (barH + 8) + 'px';
@@ -1047,6 +1055,115 @@ bases['Гибрид Google'] = new SatTiles(satUrl('googleHyb'), { maxZoom: MAX_
 bases['Спутник Яндекс'] = new SatTiles(satUrl('yandex'), { maxZoom: MAX_ZOOM, maxNativeZoom: 19, cacheId: 'ysat', cache: true, ell: true, attribution: Y_ATTR });
 bases['Гибрид Яндекс'] = L.layerGroup([new SatTiles(satUrl('yandex'), { maxZoom: MAX_ZOOM, maxNativeZoom: 19, cacheId: 'ysat', cache: true, ell: true, attribution: Y_ATTR }),
   new SatTiles(satUrl('yandexSkl'), { maxZoom: MAX_ZOOM, maxNativeZoom: 19, cacheId: 'yskl', cache: true, ell: true })]);
+// Схема Яндекса — официальный Tiles API (бесплатный, ключ пользователя из Кабинета разработчика Яндекса).
+// projection=web_mercator — та же проекция, что у OSM, пересчёт не нужен. По условиям Яндекса куски не сохраняются
+// (только при интернете), а в углу карты — логотип Яндекса со ссылкой на Яндекс Карты.
+const Y_MAP = 'Схема Яндекса', Y_TILES = 'https://tiles.api-maps.yandex.ru/v1/tiles/?apikey={k}&lang=ru_RU&x={x}&y={y}&z={z}&l=map&projection=web_mercator';
+const Y_TERMS = 'https://yandex.ru/legal/maps_api/';
+const Y_LOGO = 'data:image/png;base64,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';   // официальный логотип из набора Яндекса для Tiles API (отступы уже внутри картинки)
+const yandexKey = () => { const v = String(pref('yandexKey', '') || '').trim(); return /^[\w-]{20,80}$/.test(v) ? v : ''; };
+bases[Y_MAP] = new CachedTiles(Y_TILES + (window.devicePixelRatio >= 1.5 ? '&scale=2' : ''), { cacheId: 'ymap', cache: false, k: yandexKey() || 'none',
+  maxZoom: MAX_ZOOM, maxNativeZoom: 20, attribution: '© <a href="' + Y_TERMS + '" target="_blank" rel="noopener">Яндекс Карты</a>' });
+function yandexKeyForm(then) {
+  openForm('Ключ Яндекс Карт', [{ key: 'k', label: 'Ключ Tiles API', value: pref('yandexKey', ''), placeholder: 'например 1a2b3c4d-…',
+    hint: 'Ключ бесплатный. Как получить: войдите в Яндекс ID → developer.tech.yandex.ru → «Подключить API» → Tiles API → скопируйте ключ сюда. Включается до 15 минут. Ключ хранится только в этом телефоне.' }], v => {
+    const k = String(v.k || '').trim();
+    if (k && !/^[\w-]{20,80}$/.test(k)) { toast('Ключ — латинские буквы, цифры и дефисы, без пробелов'); return false; }
+    setPref('yandexKey', k); bases[Y_MAP].options.k = k || 'none'; bases[Y_MAP].redraw();
+    if (!k && baseName === Y_MAP) setBase('Схема (OSM)');                // ключ удалили — без него схема Яндекса пустая
+    toast(k ? 'Ключ Яндекс Карт сохранён' : 'Ключ Яндекс Карт удалён');
+    if (k && then) setTimeout(then, 0);
+  }, 'Сохранить');
+}
+/* Спутник и гибрид Яндекса — официальный JavaScript API 2.1 (бесплатный ключ пользователя; в версии 3 спутника у Яндекса нет).
+   Под нашей картой рисуется карта Яндекса и повторяет её центр и масштаб. Яндекс считает в эллиптическом Меркаторе (EPSG:3395):
+   при том же центре и масштабе его картинка мельче на √(1 − e²·sin²φ) (~0,2 %) — растягиваем на столько же. Логотип и «Условия»
+   рисует сам API (обязательно по правилам) — пока слой выбран, наши нижние кнопки приподняты, чтобы их не закрывать.
+   Работает только при интернете: сохранять снимки Яндекс не разрешает. */
+const Y_JS = { 'Спутник Яндекс — официально': 'yandex#satellite', 'Гибрид Яндекс — официально': 'yandex#hybrid' };
+const yandexJsKey = () => { const v = String(pref('yandexJsKey', '') || '').trim(); return /^[\w-]{20,80}$/.test(v) ? v : ''; };
+let ymapsP = null;
+function ymapsLoad() {                                                  // скрипт Яндекса — один раз, с ключом пользователя
+  if (window.ymaps && window.ymaps.Map) return Promise.resolve(window.ymaps);
+  if (ymapsP) return ymapsP;
+  ymapsP = new Promise((ok, bad) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://api-maps.yandex.ru/2.1/?apikey=' + encodeURIComponent(yandexJsKey()) + '&lang=ru_RU';
+    const fail = e => { ymapsP = null; sc.remove(); try { delete window.ymaps; } catch (x) { window.ymaps = undefined; } bad(e); };
+    sc.onload = () => window.ymaps && window.ymaps.ready ? window.ymaps.ready(() => ok(window.ymaps), fail) : fail(new Error('нет ymaps'));
+    sc.onerror = () => fail(new Error('нет связи'));
+    document.head.appendChild(sc);
+  });
+  return ymapsP;
+}
+const YandexJsLayer = L.Layer.extend({
+  initialize(type) { this._type = type; },
+  onAdd(m) {
+    const pane = m.getPane('yjsPane') || m.createPane('yjsPane'); pane.style.zIndex = 150; pane.style.pointerEvents = 'none';   // под всеми слоями
+    this._box = L.DomUtil.create('div', 'yjs-box' + (m._zoomAnimated ? ' leaflet-zoom-animated' : ''), pane);
+    this._inner = L.DomUtil.create('div', 'yjs-inner', this._box);
+    m.on('moveend zoomend viewreset resize', this._sync, this); m.on('zoomanim', this._anim, this);
+    document.body.classList.add('yjs'); window.yjsLayer = this;
+    // раскладка и компас — после загрузки: при запуске слой включается раньше, чем созданы кнопки и переменные GPS
+    // (поворот карты по компасу унёс бы логотип Яндекса за край)
+    setTimeout(() => { if (!this._map) return; layout(); if (gpsView === 'compass') setGpsView('follow', true); }, 0);
+    this._sync();
+    const inner = this._inner;
+    ymapsLoad().then(ym => {
+      if (!this._map || this._ym || this._inner !== inner) return;     // слой успели выключить или включить заново
+      const c = m.getCenter();
+      this._ym = new ym.Map(this._inner, { center: [c.lat, c.lng], zoom: m.getZoom(), type: this._type, controls: [] }, { avoidFractionalZoom: false, yandexMapDisablePoiInteractivity: true });
+      this._ym.behaviors.disable(['drag', 'scrollZoom', 'dblClickZoom', 'multiTouch', 'rightMouseButtonMagnifier', 'leftMouseButtonMagnifier']);
+      this._sync();
+    }, () => this._map && this._inner === inner && toast(navigator.onLine ? 'Снимок Яндекса не загрузился: проверьте ключ JavaScript API (Настройки → «Ключ Яндекс Карт: спутник»)' : 'Снимок Яндекса работает только при интернете'));
+  },
+  onRemove(m) {
+    m.off('moveend zoomend viewreset resize', this._sync, this); m.off('zoomanim', this._anim, this);
+    if (this._ym) { this._ym.destroy(); this._ym = null; }
+    L.DomUtil.remove(this._box); this._box = this._inner = null;
+    document.body.classList.remove('yjs'); if (window.yjsLayer === this) window.yjsLayer = null; if (typeof layout === 'function') layout();
+  },
+  getContainer() { return this._box; },
+  _sync() {
+    const m = this._map; if (!m || !this._box) return;
+    const size = m.getSize(), bar = $('bar'), barH = bar && bar.style.display !== 'none' ? bar.offsetHeight : 0, h = Math.max(50, size.y - barH);
+    L.DomUtil.setPosition(this._box, m.containerPointToLayerPoint([0, 0]));
+    this._box.style.width = this._inner.style.width = size.x + 'px'; this._box.style.height = this._inner.style.height = h + 'px';
+    const c = m.getCenter(), sn = Math.sin(c.lat * Math.PI / 180), k = 1 / Math.sqrt(1 - E_WGS * E_WGS * sn * sn);
+    this._inner.style.transformOrigin = '50% 50%'; this._inner.style.transform = 'scale(' + k + ')';   // растяжение вокруг середины — там общая точка обеих карт
+    if (this._ym) {
+      this._ym.container.fitToViewport();
+      // центр карты Яндекса — точка нашей карты, что приходится на середину коробки Яндекса
+      const ll = m.containerPointToLatLng([size.x / 2, h / 2]);
+      this._ym.setCenter([ll.lat, ll.lng], m.getZoom(), { duration: 0 });
+    }
+  },
+  _anim(e) {                                                            // плавное приближение — как у обычных подложек
+    const m = this._map; if (!this._box) return;
+    L.DomUtil.setTransform(this._box, m._latLngToNewLayerPoint(m.containerPointToLatLng([0, 0]), e.zoom, e.center), m.getZoomScale(e.zoom));
+  }
+});
+for (const [name, type] of Object.entries(Y_JS)) bases[name] = new YandexJsLayer(type);
+function yandexJsKeyForm(then) {
+  openForm('Ключ Яндекс Карт: спутник', [{ key: 'k', label: 'Ключ «JavaScript API и HTTP Геокодер»', value: pref('yandexJsKey', ''), placeholder: 'например 1a2b3c4d-…',
+    hint: 'Ключ бесплатный. Как получить: войдите в Яндекс ID → developer.tech.yandex.ru → «Подключить API» → «JavaScript API и HTTP Геокодер» → скопируйте ключ сюда. Это другой ключ, не тот, что для схемы. Хранится только в этом телефоне.' }], v => {
+    const k = String(v.k || '').trim();
+    if (k && !/^[\w-]{20,80}$/.test(k)) { toast('Ключ — латинские буквы, цифры и дефисы, без пробелов'); return false; }
+    const was = yandexJsKey(); setPref('yandexJsKey', k);
+    if (!k && Y_JS[baseName]) setBase('Схема (OSM)');
+    toast(!k ? 'Ключ удалён' : window.ymaps && was && was !== k ? 'Ключ сохранён — перезапустите приложение, чтобы он заработал' : 'Ключ сохранён');
+    if (k && then) setTimeout(then, 0);
+  }, 'Сохранить');
+}
+// логотип Яндекса в углу карты — пока выбрана схема Яндекса (обязательное условие Tiles API)
+function yandexLogo() {
+  let el = $('yLogo');
+  document.body.classList.toggle('ymap', baseName === Y_MAP);
+  if (baseName !== Y_MAP) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('a'); el.id = 'yLogo'; el.href = 'https://yandex.ru/maps/'; el.target = '_blank'; el.rel = 'noopener';
+    el.setAttribute('aria-label', 'Яндекс Карты'); el.innerHTML = '<img src="' + Y_LOGO + '" width="88" height="48" alt="Яндекс">';
+    const corner = document.querySelector('.leaflet-bottom.leaflet-right'); if (corner) corner.prepend(el); else $('map').appendChild(el); }   // в самом углу, подпись авторства — левее
+}
 const SAT_WARN = `<b>Снимки Google и Яндекса подключены не через их платный сервис, а напрямую — так делают многие полевые программы.</b><br><br>
   Это «серая зона»: условия Google и Яндекса такое не разрешают. Чем грозит: в любой день снимки могут перестать грузиться (сервер откажет или сменит адрес) — тогда адрес можно поправить в «Настройках», а пока выбрать Esri.<br><br>
   Привязка снимков сама «гуляет» на 1–5 м, у Google и Яндекса по-разному. Для точной работы выставьте <b>«Сдвиг подложки»</b> по снятой точке (кнопка в «Слоях»).`;
@@ -1069,14 +1186,19 @@ function satSettings() {
 }
 let baseName = pref('base', 'Схема (OSM)');
 if (!bases[baseName]) baseName = 'Схема (OSM)';
+if (baseName === Y_MAP && !yandexKey()) baseName = 'Схема (OSM)';
+if (Y_JS[baseName] && !yandexJsKey()) baseName = 'Схема (OSM)';             // ключ удалили — без него схема Яндекса пустая
 bases[baseName].addTo(map);
+setTimeout(() => yandexLogo(), 0);
 function setBase(name) {
   if (!bases[name] || name === baseName) return;
   if (typeof shiftJob !== 'undefined' && shiftJob) { shiftJob = null; shiftBar(); toast('Подложка сменилась — совмещение отменено'); }
+  if (name === Y_MAP && !yandexKey()) { yandexKeyForm(() => setBase(name)); return 'ask'; }
+  if (Y_JS[name] && !yandexJsKey()) { yandexJsKeyForm(() => setBase(name)); return 'ask'; }
   if (SAT_NAMES.has(name) && !pref('satAgree', false)) {                      // один раз объяснить «серую зону» и сдвиг снимков
     ask(SAT_WARN, 'Понятно, включить').then(y => { if (y) { setPref('satAgree', true); setBase(name); } }); return 'ask';
   }
-  map.removeLayer(bases[baseName]); bases[name].addTo(map); baseName = name; setPref('base', name); applyBaseShift();
+  map.removeLayer(bases[baseName]); bases[name].addTo(map); baseName = name; setPref('base', name); applyBaseShift(); yandexLogo();
 }
 const layersControl = L.control.layers(bases, null, { position: 'topright' }).addTo(map);   // скрыт: оверлеи регистрируются здесь, а выбирать слои — кнопкой справа
 /* ───────────── Сдвиг подложки: снимок «гуляет» на метры — совместить по снятой точке ─────────────
@@ -1101,6 +1223,7 @@ for (const b of Object.values(bases)) for (const l of baseLayers(b)) {
     if (l instanceof SatTiles && !(e.error && e.error.net)) return;    // у снимков «нет куска» (404) — не повод говорить «нет связи»
     if (++tileErrs < 6 || Date.now() - tileErrAt < 60000) return;
     tileErrAt = Date.now(); tileErrs = 0;
+    if (l === bases[Y_MAP] && navigator.onLine) { toast('Схема Яндекса не грузится: проверьте ключ (Настройки → «Ключ Яндекс Карт»). Новый ключ включается до 15 минут'); return; }
     toast(navigator.onLine ? 'Подложка не грузится — нет связи или сервер не отвечает. Видно то, что уже смотрели при связи' : 'Нет интернета: подложка видна только там, где её уже смотрели при связи');
   });
 }
@@ -1791,7 +1914,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 87;
+const APP_BUILD = 88;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2311,6 +2434,7 @@ const milText = deg => { const m = Math.round(deg / 360 * 6000) % 6000; return M
 // followPaused — карту сдвинули рукой: режим (и поворот по компасу) остаётся, но карта не тянется обратно, пока снова не нажать GPS
 let followPaused = false;
 function setGpsView(v, quiet) {
+  if (v === 'compass' && window.yjsLayer) { if (!quiet) toast('На снимке Яндекса карта не поворачивается по компасу — только слежение'); v = 'follow'; }
   if (v === 'compass' && compassDeg == null) { if (!quiet) toast('Компас телефона не отвечает — только слежение'); v = 'follow'; }
   gpsView = v; followPaused = false;
   $('fabMe').dataset.view = v; delete $('fabMe').dataset.paused;
@@ -6757,6 +6881,8 @@ function settingsMenu() {
     { id: 'cal', icon: '⟷', text: PX_MM === PX_MM_DEFAULT ? 'Размер знаков: откалибровать по линейке' : 'Размер знаков: по линейке — повторить' },
     { header: 'Выгрузки' },
     { id: 'sat', icon: '🛰', text: 'Спутник Google и Яндекс: адреса снимков →' },
+    { id: 'yjskey', icon: '🔑', text: yandexJsKey() ? 'Ключ Яндекс Карт: спутник — введён, сменить или удалить' : 'Ключ Яндекс Карт: спутник и гибрид →' },
+    { id: 'ykey', icon: '🔑', text: yandexKey() ? 'Ключ Яндекс Карт: введён — сменить или удалить' : 'Ключ Яндекс Карт — для «Схемы Яндекса» →' },
     { id: 'dxfframe', icon: '▭', text: 'В DXF — рамка листа и штамп', on: pref('dxfFrame', true), check: true },
     { header: 'Помощники' },
     { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' }
@@ -6834,9 +6960,11 @@ const MENU = {
   dxfframe: () => { const on = !pref('dxfFrame', true); setPref('dxfFrame', on); toast(on ? 'DXF — с рамкой листа, сеткой и штампом' : 'DXF — только план, без рамки (для вставки в чужой чертёж)'); },
   about: () => alert(`Полевой план, сборка ${APP_BUILD}.
 
-` + 'Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
+` + 'Схема, спутник и гибрид Яндекса — по условиям использования сервисов Яндекс Карт: ' + Y_TERMS + '\n\n' + 'Полевой план — карта с условными знаками для планов 1:500 (ГКИНП 02-049-86).\n\nДанные хранятся только на этом телефоне. Выгружайте KML, чтобы не потерять их.\n\nКоординаты: ГСК-2011 (по умолчанию), СК-42 или своя МСК. Пересчёт из WGS-84 по параметрам ГОСТ 32453-2017: для ГСК-2011 — сантиметры–дециметры, для СК-42 — около метра. Для RTK-работ берите плоские координаты из программы приёмника.'),
   rxtest: () => rxTestMenu(),
   sat: () => satSettings(),
+  ykey: () => yandexKeyForm(),
+  yjskey: () => yandexJsKeyForm(),
   angkind: () => { const ks = Object.keys(ANG_KINDS); angCfg = { ...angCfg, kind: ks[(ks.indexOf(angCfg.kind) + 1) % ks.length] };
     angApply('Угол на цель: ' + ANG_KINDS[angCfg.kind].name + (angCfg.kind === 'mag' && !magDeclOk ? ' — склонение ещё неизвестно (нужен GPS в приложении), пока покажу истинный' : '')); },
   angunit: () => { const us = Object.keys(ANG_UNITS); angCfg = { ...angCfg, unit: us[(us.indexOf(angCfg.unit) + 1) % us.length] }; angApply('Углы в: ' + ANG_UNITS[angCfg.unit]); },
@@ -7638,7 +7766,7 @@ function guardExport(go) {
 /* ───────────── Копии плана: автокопия в «Загрузки», полная копия с фото, восстановление ───────────── */
 
 // настройки в копию (кроме ключа Яндекса и самого плана) — чтобы на новом телефоне вернулись коды, МСК, допуски
-const PREF_SKIP = /^tk\.(plan\.|ai$|projects?$|tracks$|trackLive$)/;   // треки — не в копии плана: они большие и к объекту не относятся
+const PREF_SKIP = /^tk\.(plan\.|ai$|yandexKey$|yandexJsKey$|projects?$|tracks$|trackLive$)/;   // треки — не в копии плана: они большие и к объекту не относятся
 function backupJson() {
   const prefs = {};
   try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('tk.') && !PREF_SKIP.test(k)) prefs[k] = localStorage.getItem(k); } } catch (e) { /* без настроек */ }
