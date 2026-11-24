@@ -1923,7 +1923,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 92;
+const APP_BUILD = 93;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3600,7 +3600,7 @@ function showVertices(line) {
   const inp = i => `<td><input data-dep="${i}" inputmode="decimal" value="${hasH(dep[i]) ? dep[i] : ''}" placeholder="—" style="width:64px;min-height:40px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)"></td>`;
   const rows = line.latlngs.map((a, i) => {
     const c = sk42(a[0], a[1]), z = line.hs && line.hs[i];
-    return `<tr><td>${i + 1}</td><td>${f2(c.x)}</td><td>${f2(c.y)}</td><td>${z ? planNum(z.h, 2) : '—'}</td><td class="vsrc">${z ? esc(heightNote(z.h, z.src, z).split(',')[0]) : ''}</td>${net ? inp(i) : ''}</tr>`;
+    return `<tr><td>${i + 1}</td><td>${f2(c.x)}</td><td>${f2(c.y)}</td><td>${z && hasH(z.h) ? planNum(z.h, 2) : '—'}</td><td class="vsrc">${!z ? '' : !hasH(z.h) && z.hEll != null ? 'ждёт модель геоида' : esc(heightNote(z.h, z.src, z).split(',')[0])}</td>${net ? inp(i) : ''}</tr>`;
   }).join('');
   showSheet(`<div class="sh-head"><b>Вершины полилинии</b><button class="x" data-close>×</button></div>
     <div style="overflow-x:auto"><table class="sat-tab" id="vertTab"><tr><th>№</th><th>X</th><th>Y</th><th>H, м</th><th>откуда</th>${net ? '<th>глубина по прибору, м</th>' : ''}</tr>${rows}</table></div>
@@ -3718,7 +3718,7 @@ function editDefect(p, s) {
       hint: s.id === 'd_hatch' ? 'Ставьте рядом с колодцем, а не поверх — иначе знак закроет колодец.' : 'Сеть и ближний колодец ведомость найдёт сама. Фото — кнопкой «📷 Фото» в карточке.' }];
   openForm(s.name, fields, v => {
     const found = parseDay(v.found), fixedAt = parseDay(v.fixedAt), fixed = v.fixed === '1';
-    if (found == null || fixedAt == null) { toast('Дата — например 01.11.2026'); return false; }
+    if (found == null || (fixed && fixedAt == null)) { toast('Дата — например 01.11.2026'); return false; }
     p.name = v.name || ''; p.note = v.note;
     p.attr = { ...a, found, urgent: v.urgent === '1', fixed, fixedAt: fixed ? fixedAt || today() : '' };
     save(); drawPoints(); frame(); showCard('point', p);
@@ -4251,7 +4251,7 @@ let tracks = (() => { try { const v = JSON.parse(localStorage.getItem(TRACK_KEY)
 let trackRec = null, trackSavedAt = 0, tracksShown = pref('tracksShown', true);
 const trackLayer = L.layerGroup().addTo(map);
 for (const t of tracks) delete t.native;
-for (const t of tracks) if (!t.end) t.end = t.pts.length ? new Date(t.pts[t.pts.length - 1][2] * 1000).toISOString() : t.start;   // запись прервалась с закрытием приложения
+for (const t of tracks) if (!t.end) { const sec = t.pts.length ? Number(t.pts[t.pts.length - 1][2]) : NaN; t.end = isFinite(sec) ? new Date(sec * 1000).toISOString() : t.start; }   // запись прервалась с закрытием приложения
 let trackFullWarned = false, trackBusy = false;                         // trackBusy — идёт запуск или остановка: повторное нажатие не учитываем
 const trackLiveLayer = L.layerGroup().addTo(map);                      // записываемый трек — отдельно: новая точка не перерисовывает все старые
 function saveTracks() {
@@ -8344,7 +8344,7 @@ function toMifMid() {
   const mif = ['Version 300', 'Charset "WindowsCyrillic"', 'Delimiter ";"', `CoordSys NonEarth Units "m" Bounds (${f3(b[0])}, ${f3(b[1])}) (${f3(b[2])}, ${f3(b[3])})`,
     'Columns 14', '  NO Char(20)', '  CODE Char(40)', '  NAME Char(100)', '  H Float', '  LABEL Char(120)', '  STATE Char(30)', '  NOTE Char(200)',
     '  MAT Char(60)', '  DIAM Char(20)', '  DEPTH Char(10)', '  YEAR Char(10)', '  OWNER Char(100)', '  ACC Char(10)', '  FIX Char(20)', 'Data'];
-  const mid = [], q = v => '"' + String(v == null ? '' : v).replace(/"/g, "'") + '"';
+  const mid = [], q = v => '"' + String(v == null ? '' : v).replace(/"/g, "'").replace(/[\r\n]+/g, ' ') + '"';
   for (const { o, kind, pts } of objs) {
     const sp = (kind === 'point' ? POINTS : LINES)[o.type] || {};
     if (kind === 'point') mif.push(`Point ${f3(pts[0].y)} ${f3(pts[0].x)}`);
