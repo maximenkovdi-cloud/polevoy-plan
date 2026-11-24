@@ -1923,7 +1923,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 93;
+const APP_BUILD = 94;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -4442,7 +4442,7 @@ if (TRACK_N) TRACK_N.points({ from: 0 }).then(r => {
     const t = tracks.find(x => x.id === liveId);
     if (t && r && r.total > srvFrom(t)) {
       const added = addSrvPoints(t, (r.pts || []).slice(srvFrom(t))); t.srvN = r.total;
-      if (t.pts.length) t.end = new Date(t.pts[t.pts.length - 1][2] * 1000).toISOString();
+      if (t.pts.length) { const sec = Number(t.pts[t.pts.length - 1][2]); if (isFinite(sec)) t.end = new Date(sec * 1000).toISOString(); }   // испорченное время от службы — конец не трогаем
       saveTracks(); drawTracks();
       if (added) toast(`Запись трека прервалась (приложение закрывалось) — путь сохранён до ${new Date(Date.parse(t.end)).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`);
     }
@@ -8493,18 +8493,40 @@ async function readZip(u8) {
   let eocd = -1;
   for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   if (eocd < 0) throw new Error('архив повреждён');
+  // защита от «архивной бомбы»: маленький файл, который распаковывается в гигабайты и роняет приложение.
+  // Распакованного всего — не больше 300 МБ; отдельный файл больше 50 МБ, сжатый сильнее чем в 200 раз, — подделка (снимки и KML
+  // так не жмутся). Несжатые записи не считаем: это куски уже прочитанного файла, памяти они не добавляют (полная копия с фото — вся такая)
+  const ZIP_TOTAL_MAX = 300 * (1 << 20), ZIP_BIG = 50 * (1 << 20), ZIP_RATIO_MAX = 200;
+  let total = 0;
+  const inflate = async raw => {
+    const reader = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader(), parts = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length; total += value.length;
+      if (total > ZIP_TOTAL_MAX || (size > ZIP_BIG && size > raw.length * ZIP_RATIO_MAX)) { await reader.cancel().catch(() => {}); throw new Error('архив распаковывается в слишком большой объём — похоже на испорченный файл'); }
+      parts.push(value);
+    }
+    const res = new Uint8Array(size);
+    let at = 0;
+    for (const v of parts) { res.set(v, at); at += v.length; }
+    return res;
+  };
   const out = {}, count = dv.getUint16(eocd + 10, true);
   let p = dv.getUint32(eocd + 16, true);
   for (let k = 0; k < count; k++) {
-    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('архив повреждён');
+    // смещение за концом файла — DataView бросит RangeError; показываем понятное «архив повреждён»
+    if (p + 46 > u8.length || dv.getUint32(p, true) !== 0x02014b50) throw new Error('архив повреждён');
     const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nlen = dv.getUint16(p + 28, true),
       xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true), lho = dv.getUint32(p + 42, true);
     const name = dec.decode(u8.subarray(p + 46, p + 46 + nlen)).replace(/\\/g, '/');
     p += 46 + nlen + xlen + clen;
     if (name.endsWith('/')) continue;
+    if (lho + 30 > u8.length) throw new Error('архив повреждён');
     const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true), raw = u8.subarray(start, start + csize);
     if (method === 0) out[name] = raw;
-    else if (method === 8) out[name] = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    else if (method === 8) out[name] = await inflate(raw);
   }
   return out;
 }
