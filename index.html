@@ -1923,7 +1923,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 91;
+const APP_BUILD = 92;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3203,12 +3203,33 @@ function inPoly(x, y, poly) {
   return inside;
 }
 // Надпись в точке (x, y) под углом deg; inside — целиком внутри контура. Ставится, только если ни с чем не пересекается
+const segCross = (a, b, c, d) => { const o = (p, q, r) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  return o(a, b, c) * o(a, b, d) <= 0 && o(c, d, a) * o(c, d, b) <= 0; };   // касание — тоже пересечение: надпись не должна прилипать к линии
+function boxCrossesPoly(corners, poly) {
+  for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length];
+    if (inPoly(p.x, p.y, corners)) return true;                          // выступ контура заходит в рамку
+    for (let j = 0; j < 4; j++) if (segCross(p, q, corners[j], corners[(j + 1) % 4])) return true; }
+  return false;
+}
+// самое просторное место внутри контура (дальше всего от сторон) — для Г- и П-образных зданий, где центр тяжести снаружи
+function roomyPoint(poly) {
+  const xs = poly.map(p => p.x), ys = poly.map(p => p.y), x0 = Math.min(...xs), y0 = Math.min(...ys), N = 12;
+  const sx = (Math.max(...xs) - x0) / N, sy = (Math.max(...ys) - y0) / N, mx = x0 + sx * N / 2, my = y0 + sy * N / 2;
+  const edgeDist = (x, y) => { let m = Infinity; for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length], dx = q.x - p.x, dy = q.y - p.y, L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - p.x) * dx + (y - p.y) * dy) / L2)); m = Math.min(m, Math.hypot(p.x + t * dx - x, p.y + t * dy - y)); } return m; };
+  let best = null, bd = -1;
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const x = x0 + (i + 0.5) * sx, y = y0 + (j + 0.5) * sy;
+    if (!inPoly(x, y, poly)) continue; const d = edgeDist(x, y) - 0.05 * Math.hypot(x - mx, y - my);   // при равном просторе — ближе к середине
+    if (d > bd) { bd = d; best = { x, y }; } }
+  return best;
+}
 function placeFree(g, poly, x, y, deg, str, size, o) {
   o = o || {};
   if (size * TEXT_K < LBL_HIDE_PX) return false;
   const w = tw(str, size, o.italic) + 4, h = size * TEXT_K + 3, r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
   const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => ({ x: x + u * w / 2 * c - v * h / 2 * s, y: y + u * w / 2 * s + v * h / 2 * c }));
-  if (o.inside && !corners.every(p => inPoly(p.x, p.y, poly))) return false;
+  if (o.inside && (!corners.every(p => inPoly(p.x, p.y, poly)) || boxCrossesPoly(corners, poly))) return false;
+  if (o.outside && (corners.some(p => inPoly(p.x, p.y, poly)) || boxCrossesPoly(corners, poly))) return false;   // отмостка — целиком снаружи
   const box = textBox({ x, y }, deg, 0, w, h);
   if (!labelsAll && hits(box, null)) return false;
   el('text', { x: x.toFixed(1), y: y.toFixed(1), 'font-size': size * TEXT_K, 'text-anchor': 'middle', 'dominant-baseline': 'central',
@@ -3231,11 +3252,17 @@ function buildingLabels(g, poly, spec, line) {
   const c = Math.abs(A) > 1 ? { x: cx / (3 * A), y: cy / (3 * A) } : { x: poly.reduce((s, p) => s + p.x, 0) / poly.length, y: poly.reduce((s, p) => s + p.y, 0) / poly.length };
   const r = deg * Math.PI / 180, down = { x: -Math.sin(r), y: Math.cos(r) };   // «вниз» в повёрнутой надписи
   const label = buildingLabel(spec, line);
-  let placed = false, size = 3 * MM;
-  if (label) for (size of [3 * MM, 2.4 * MM]) if ((placed = placeFree(g, poly, c.x, c.y, deg, label, size, { inside: true, italic: !!spec.word }))) break;
+  let placed = false, size = 3 * MM, at = c;
+  const spots = [c]; let roomy;                                       // центр тяжести, затем — самое просторное место внутри
+  const nextSpot = () => { if (roomy === undefined) { roomy = roomyPoint(poly); if (roomy && Math.hypot(roomy.x - c.x, roomy.y - c.y) > 2) spots.push(roomy); } };
+  if (label) outer: for (let k = 0; k < spots.length; k++) {           // просторное место ищем, только если в центре не встало
+    for (size of [3 * MM, 2.4 * MM]) if ((placed = placeFree(g, poly, spots[k].x, spots[k].y, deg, label, size, { inside: true, italic: !!spec.word }))) { at = spots[k]; break outer; }
+    if (k === 0 && 2.4 * MM * TEXT_K >= LBL_HIDE_PX) nextSpot();      // на мелком масштабе подпись всё равно скрыта
+  }
   if (a.hFloor != null && a.hFloor !== '') {                          // отметка пола первого этажа — под надписью, внутри контура
     const d = placed ? (size + 2.3 * MM) / 2 + 4 : 0;                // вплотную под надписью, но не налезая на неё
-    placeFree(g, poly, c.x + down.x * d, c.y + down.y * d, deg, planNum(a.hFloor, 2), 2.3 * MM, { inside: true, italic: true });
+    if (!placed) nextSpot();
+    (placed ? [at] : spots).some(p => placeFree(g, poly, p.x + down.x * d, p.y + down.y * d, deg, planNum(a.hFloor, 2), 2.3 * MM, { inside: true, italic: true }));
   }
   const corner = poly.reduce((m, p) => (p.x + p.y > m.x + m.y ? p : m), poly[0]);   // правый нижний угол на экране
   const to = { x: c.x - corner.x, y: c.y - corner.y }, len = Math.hypot(to.x, to.y) || 1;
@@ -3243,7 +3270,7 @@ function buildingLabels(g, poly, spec, line) {
   if (a.hBlind != null && a.hBlind !== '') {                          // отметка отмостки — снаружи у угла: по диагонали, ниже или правее
     const str = planNum(a.hBlind, 2), half = tw(str, 2.3 * MM, true) / 2 + 3;
     [[-to.x / len * 4.5 * MM, -to.y / len * 4.5 * MM], [0, 3.2 * MM], [half + 2, 0], [0, -3.2 * MM], [-half - 2, 3.2 * MM]]
-      .some(([dx, dy]) => placeFree(g, poly, corner.x + dx, corner.y + dy, 0, str, 2.3 * MM, { italic: true }));
+      .some(([dx, dy]) => placeFree(g, poly, corner.x + dx, corner.y + dy, 0, str, 2.3 * MM, { italic: true, outside: true }));
   }
 }
 function polyArea(line) { return planeArea(line.latlngs); }            // площадь контура, м² — на плане, как у Росреестра
@@ -4906,7 +4933,7 @@ function cadSheet() {
     const key = rings[inp.dataset.pk].key, v = inp.value.trim();
     const names = (Array.isArray(meta().parcelNames) ? meta().parcelNames : []).filter(o => Math.hypot(o.x - key.x, o.y - key.y) > PARCEL_NAME_M);
     if (v) names.push({ x: +key.x.toFixed(2), y: +key.y.toFixed(2), name: v });
-    data.meta = { ...meta(), parcelNames: names }; save(); infos[inp.dataset.pk].name = v || infos[inp.dataset.pk].name; toast(v ? `Участок: ${v}` : 'Обозначение — по умолчанию'); });
+    data.meta = { ...meta(), parcelNames: names }; save(); toast(v ? `Участок: ${v}` : 'Обозначение — по умолчанию'); cadSheet(); });   // окно заново: очищенное обозначение сразу становится «по умолчанию» (:ЗУ1…)
   $('sheetPanel').querySelectorAll('[data-cad]').forEach(b => b.onclick = () => { const [kind, k] = b.dataset.cad.split(':'), r = infos[k];
     const nm = fileSafe(r.name) || 'uchastok' + (+k + 1);
     if (kind === 'svg') { download(`chertezh_${nm}_${today()}.svg`, cadDrawing(r, xy), 'image/svg+xml'); return; }
