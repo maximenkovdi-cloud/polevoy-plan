@@ -403,7 +403,7 @@ const BENCHMARK = '<circle cx="12" cy="12" r="8" fill="currentColor"/><rect x="5
 const BOLT = '<path d="M15.2 3.2 8.4 12.8h6.4l-4.5 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="miter" stroke-miterlimit="6"/><path d="M9.2 21.4 12.4 20.1 8.7 17.6Z" fill="currentColor"/>';
 const BOXK = t => `<rect x="2.5" y="5" width="19" height="14" fill="#fff" stroke="currentColor" stroke-width="1.6"/><text x="12" y="16.3" font-size="10.5" text-anchor="middle" font-style="italic" font-family="Roboto Condensed, Arial Narrow, Arial, sans-serif" fill="currentColor">${t}</text>`;
 
-const hasH = h => h != null && h !== '' && !isNaN(Number(h));       // есть ли числовая отметка
+const hasH = h => h != null && String(h).trim() !== '' && isFinite(Number(h));       // есть ли числовая отметка
 const VIS_COLOR = '#ff00b4';                                         // хорошо заметный и на схеме, и на снимке — для простых точек и линий
 const REL = 'var(--rel)', REL_HEX = '#8a4b1c';                    // цвет рельефа (в KML — как на светлой теме)
 const VEG = 'var(--veg)', VEG_HEX = '#2e7d32';                       // растительность — зелёным (ГКИНП)
@@ -509,7 +509,7 @@ const POINT_GROUPS = [
   ]},
   // Улицы, крыльца и входы — ГКИНП, табл. 8 и 39 (зн. 33–40, 189; п. 77–82, 262, 268). wall — знак разворачивается стеной (справа) к ближнему зданию
   { id: 'street', title: 'Улицы, крыльца', items: [
-    { id: 'cover', name: 'Материал покрытия (А, Ц, Щ…)', svg: COVER_SVG('А'), svgFor: p => COVER_SVG((p.attr && p.attr.cover) || 'А') },
+    { id: 'cover', name: 'Материал покрытия (А, Ц, Щ…)', svg: COVER_SVG('А'), svgFor: p => COVER_SVG(COVERS.some(c => c[0] === (p.attr && p.attr.cover)) ? p.attr.cover : 'А') },
     { id: 'kerb', name: 'Отметки у бортового камня', svg: '<circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M15 12H23" stroke="currentColor" stroke-width="1.2"/>', frac: true },
     { id: 'porch_stone', name: 'Крыльцо каменное закрытое', wall: true, svg: P_WALL + `<rect x="9" y="6" width="12" height="12" ${P_S}/><path d="M9 6L21 12L9 18" ${P_S}/>` + P_STEPS },
     { id: 'porch_wood', name: 'Крыльцо деревянное закрытое', wall: true, svg: P_WALL + `<rect x="9" y="6" width="12" height="12" ${P_S}/><path d="M9 6L15 18L21 6" ${P_S}/>` + P_STEPS },
@@ -773,7 +773,7 @@ function crsById(id) {          // система по её коду — для 
 }
 function crs() { return crsById(crsId); }
 const planeName = () => crs().name;
-const zoneOf = lng => crs().zoned ? Math.floor(lng / 6) + 1 : 0;
+const zoneOf = lng => crs().zoned ? Math.floor((((lng % 360) + 360) % 360) / 6) + 1 : 0;   // долгота −180…180 и за краем карты — зоны 1–60
 const gkDef = zone => crs().def(zone);
 // Имена sk42/fromSk42 оставлены для краткости: считают в выбранной плоской системе
 function sk42(lat, lng) {
@@ -811,7 +811,7 @@ const wgsText = ll => `<span class="nw">${degFmt(ll.lat, wgsFmt, 'с. ш.', 'ю.
 // для мгновенного запуска. При запуске берётся более свежая из двух записей.
 const STORE_KEY = 'tk.plan.v1', STORE_AT = 'tk.plan.at';
 let data = { points: [], lines: [] }, dataAt = 0;
-try { const raw = localStorage.getItem(STORE_KEY); if (raw) { data = JSON.parse(raw); dataAt = Number(localStorage.getItem(STORE_AT)) || 0; } } catch (e) { /* хранилище недоступно — возьмём из базы */ }
+try { const raw = localStorage.getItem(STORE_KEY); if (raw) { const d = JSON.parse(raw); if (d && Array.isArray(d.points) && Array.isArray(d.lines)) { data = d; dataAt = Number(localStorage.getItem(STORE_AT)) || 0; } } } catch (e) { /* хранилище недоступно или запись испорчена — возьмём из базы */ }
 const planDb = new Promise(resolve => {
   try {
     const req = indexedDB.open('tk-plan', 1);
@@ -862,6 +862,7 @@ function undo() {
   if (!undoStack.length) return;
   lastSaved = undoStack.pop(); undoChars -= lastSaved.length;
   data = JSON.parse(lastSaved);
+  if (outage) clearOutage();                                         // подсветка отключения относилась к другому плану
   persist(lastSaved);
   showUndo(); hideCard();
   toast(undoStack.length ? `Возвращено. Можно вернуть ещё ${undoStack.length}` : 'Возвращено');
@@ -869,8 +870,9 @@ function undo() {
 // при запуске: если в базе план свежее (localStorage переполнился или очищен) — берём его; старый план переносим в базу
 planTx('readonly', st => st.get('current')).then(rec => {
   if (touched) return;                                               // план уже меняли — не затираем свежие правки старой записью
-  if (rec && rec.json && rec.at > dataAt) {
-    data = JSON.parse(rec.json); lastSaved = rec.json;
+  const d = rec && rec.json ? JSON.parse(rec.json) : null;
+  if (d && Array.isArray(d.points) && Array.isArray(d.lines) && rec.at > dataAt) {
+    data = d; lastSaved = rec.json;
     if (typeof redrawAll === 'function') redrawAll();
   } else if (data.points.length || data.lines.length) planTx('readwrite', st => st.put({ id: 'current', at: dataAt || Date.now(), json: lastSaved })).catch(() => {});
 }).catch(() => { /* базы нет — работаем на localStorage */ });
@@ -950,7 +952,7 @@ async function tileStore(mode, fn) {
     try {
       const tx = db.transaction('t', mode), req = fn(tx.objectStore('t'));
       tx.oncomplete = () => resolve(req && req.result);
-      tx.onerror = () => resolve(null);
+      tx.onerror = tx.onabort = () => resolve(null);
     } catch (e) { resolve(null); }
   });
 }
@@ -960,13 +962,13 @@ const CachedTiles = L.TileLayer.extend({
     const img = document.createElement('img'), url = this.getTileUrl(coords), opt = this.options;
     const key = opt.cacheId + '/' + coords.z + '/' + coords.x + '/' + coords.y;
     img.alt = ''; img.setAttribute('role', 'presentation');
-    const show = (src, revoke) => { img.onload = () => { if (revoke) URL.revokeObjectURL(src); done(null, img); }; img.onerror = e => done(e, img); img.src = src; };
+    const show = (src, revoke, bad) => { img.onload = () => { if (revoke) URL.revokeObjectURL(src); done(null, img); }; img.onerror = e => { if (revoke) URL.revokeObjectURL(src); if (bad) bad(); else done(e, img); }; img.src = src; };
     if (!opt.cache) { show(url); return img; }
     tileStore('readonly', s => s.get(key)).then(blob => {
-      if (blob) { show(URL.createObjectURL(blob), true); return; }
+      if (blob) { show(URL.createObjectURL(blob), true, () => { tileStore('readwrite', s => s.delete(key)); show(url); }); return; }   // испорченный кусок — заново из сети
       fetch(url, { mode: 'cors' })
         .then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); })
-        .then(b => { tileStore('readwrite', s => s.put(b, key)); show(URL.createObjectURL(b), true); })
+        .then(b => { if (b.size && !/^(text\/|application\/(json|xml))/.test(b.type)) tileStore('readwrite', s => s.put(b, key)); show(URL.createObjectURL(b), true); })
         .catch(() => show(url));                                   // без сети и без сохранённого куска — пустое место
     });
     return img;
@@ -994,7 +996,7 @@ const SAT_DEFAULT = {
   yandex: 'https://core-sat.maps.yandex.net/tiles?l=sat&x={x}&y={y}&z={z}&lang=ru_RU',
   yandexSkl: 'https://core-renderer-tiles.maps.yandex.net/tiles?l=skl&x={x}&y={y}&z={z}&lang=ru_RU'
 };
-const satUrlOk = v => /^https:\/\/\S+$/.test(v) && ['{x}', '{y}', '{z}'].every(k => v.includes(k));
+const satUrlOk = v => /^https:\/\/\S+$/.test(v) && ['{x}', '{y}', '{z}'].every(k => v.includes(k)) && !/\{(?![xyzsr]\})[^}]*\}/.test(v);   // {foo} уронил бы показ снимка
 const satUrl = k => { const v = String(pref('satUrl.' + k, '') || '').trim(); return satUrlOk(v) ? v : SAT_DEFAULT[k]; };
 const E_WGS = 0.0818191908426215;                                    // эксцентриситет эллипсоида WGS-84
 const lat3857 = (py, z) => Math.atan(Math.sinh(Math.PI * (1 - 2 * py / (256 * 2 ** z)))) * 180 / Math.PI;
@@ -1465,6 +1467,7 @@ function gpsFeed(p) {
   if (!gpsMarker) {
     gpsCircle = L.circle(ll, { radius: gps.acc, color: '#1e88e5', weight: 1, fillOpacity: .12, interactive: false }).addTo(map);
     gpsMarker = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1, interactive: false }).addTo(map);
+    if (spoof) renderSpoof();                                         // первый же отсчёт под подменой — точку не показываем
   } else { gpsMarker.setLatLng(ll); gpsCircle.setLatLng(ll).setRadius(gps.acc); }
   if (first && !mode && !spoof) map.setView(ll, Math.max(map.getZoom(), 18));
   else followGps(ll);
@@ -1489,15 +1492,17 @@ function startGps() {
   if (gpsWatch != null) return;
   spoofGpsStart = Date.now(); if (typeof spoofPoll === 'function') setTimeout(spoofPoll, 1500);   // данные вышек — сразу, не через 10 с
   $('gpsText').textContent = 'Ищу спутники…'; $('gpsDot').className = 'dot mid';
+  let errCode = null;
   gpsWatch = navigator.geolocation.watchPosition(p => {
+    errCode = null;
     if (!rxLive()) gpsFeed(p);                                         // пока говорит внешний приёмник, телефон молчит
   }, err => {
-    if (gpsWatch != null) navigator.geolocation.clearWatch(gpsWatch);
-    gpsWatch = null;
+    if (err.code === 1) { if (gpsWatch != null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; }   // нет разрешения — ждать нечего; нет сигнала — телефон ищет дальше
     if (rxLive()) return;
+    const again = errCode === err.code; errCode = err.code;
     $('gpsDot').className = 'dot bad'; $('gpsLine').dataset.st = 'bad';
     $('gpsText').textContent = ({ 1: 'GPS: нет разрешения', 2: 'GPS: нет сигнала', 3: 'GPS: нет ответа' }[err.code] || 'GPS: нет доступа');
-    toast({ 1: 'Разрешите местоположение для «Полевого плана» в настройках телефона', 2: 'Нет сигнала GPS — выйдите на открытое место', 3: 'GPS не ответил — нажмите плашку ещё раз' }[err.code] || 'Нет доступа к GPS');
+    if (!again) toast({ 1: 'Разрешите местоположение для «Полевого плана» в настройках телефона', 2: 'Нет сигнала GPS — выйдите на открытое место, поиск продолжается', 3: 'GPS пока не ответил — поиск продолжается' }[err.code] || 'Нет доступа к GPS');
   }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
   loadGeoid().catch(() => { /* без модели геоида отметки не считаем — координаты работают */ });
 }
@@ -1534,15 +1539,15 @@ function geoidN(lat, lng) {
 // отметка без поправки по реперу
 // высота антенны над точкой (веха), м — отметка относится к земле, а не к антенне
 let antH = Number(pref('antH', 0)) || 0;
-function rawHeight(lat, lng, hEll) {
+function rawHeight(lat, lng, hEll, ant) {                            // ant — высота вехи при съёмке (по умолчанию — текущая)
   if (hEll == null || isNaN(hEll)) return null;
-  hEll = Number(hEll) - antH;
+  hEll = Number(hEll) - (ant != null && isFinite(ant) ? Number(ant) : antH);
   if (hgt.src === 'normal') return hEll;
   const N = geoidN(lat, lng);
   return N == null ? null : hEll - N;
 }
-function normalHeight(lat, lng, hEll) {
-  const H = rawHeight(lat, lng, hEll);
+function normalHeight(lat, lng, hEll, ant) {
+  const H = rawHeight(lat, lng, hEll, ant);
   return H == null ? null : H + (hgt.dh || 0);
 }
 function refDistanceKm(lat, lng) {
@@ -1590,7 +1595,7 @@ function heightsMenu() {
     const v = $('antH').value.trim() === '' ? 0 : parseNum($('antH').value);
     if (isNaN(v) || v < 0 || v > 5) { toast('Высота антенны — от 0 до 5 м, например 1.8'); return; }
     antH = v; setPref('antH', v); antChipText();
-    const n = gnssHeights().length && confirm(`Высота антенны ${mText(v, 3)} м. Пересчитать ранее снятые отметки по ГНСС?`) ? recomputeHeights(false) : 0;
+    const n = gnssHeights().length && confirm(`Высота антенны ${mText(v, 3)} м. Пересчитать ранее снятые отметки по ГНСС?`) ? recomputeHeights(false, v) : 0;
     if (n) { save(); redrawAll(); }
     toast(`Высота антенны ${mText(v, 3)} м${n ? `, пересчитано отметок: ${n}` : ''}`);
   };
@@ -1607,17 +1612,18 @@ function heightsMenu() {
 function gnssHeights() {
   const out = [];
   for (const p of data.points) { const e = p.hInfo && p.hInfo.hEll != null ? p.hInfo.hEll : p.meas && p.meas.hEll;
-    if (p.hSrc === 'gnss' && e != null) out.push({ ll: [p.lat, p.lng], hEll: e, has: p.h != null && p.h !== '', set: (H, ref) => { p.h = H; p.hInfo = { ...(p.hInfo || {}), ref, hEll: e }; } }); }
-  for (const l of data.lines) (l.hs || []).forEach((z, i) => { if (z && z.src === 'gnss' && z.hEll != null) out.push({ ll: l.latlngs[i], hEll: z.hEll, has: z.h != null, set: (H, ref) => { z.h = H; z.ref = ref; } }); });
+    if (p.hSrc === 'gnss' && e != null) out.push({ ll: [p.lat, p.lng], hEll: e, ant: p.hInfo && p.hInfo.ant != null ? p.hInfo.ant : null, has: p.h != null && p.h !== '', set: (H, ref, ant) => { p.h = H; p.hInfo = { ...(p.hInfo || {}), ref, hEll: e, ...(ant != null ? { ant } : {}) }; }, setAnt: ant => { p.hInfo = { ...(p.hInfo || {}), ant }; } }); }
+  for (const l of data.lines) (l.hs || []).forEach((z, i) => { if (z && z.src === 'gnss' && z.hEll != null) out.push({ ll: l.latlngs[i], hEll: z.hEll, ant: z.ant != null ? z.ant : null, has: z.h != null, set: (H, ref, ant) => { z.h = H; z.ref = ref; if (ant != null) z.ant = ant; }, setAnt: ant => { z.ant = ant; } }); });
   return out;
 }
-function recomputeHeights(onlyMissing) {
+function recomputeHeights(onlyMissing, newAnt) {                    // newAnt — веху исправили: пересчитать с ней и запомнить
   const ref = hgt.ref ? hgt.ref.name || 'репер' : hgt.dh ? 'поправка вручную' : '';
   let n = 0;
   for (const g of gnssHeights()) {
     if (onlyMissing && g.has) continue;
-    const H = normalHeight(g.ll[0], g.ll[1], g.hEll);
-    if (H != null) { g.set(+H.toFixed(2), ref); n++; }
+    const ant = newAnt != null ? newAnt : g.ant, H = normalHeight(g.ll[0], g.ll[1], g.hEll, ant);
+    if (H != null) { g.set(+H.toFixed(2), ref, newAnt); n++; }
+    else if (newAnt != null) g.setAnt(newAnt);                        // модели геоида ещё нет — веху всё равно запомнить
   }
   // вершины, привязанные к точкам, берут их новую отметку
   for (const l of data.lines) (l.hs || []).forEach((z, i) => {
@@ -1629,7 +1635,7 @@ function recomputeHeights(onlyMissing) {
 }
 function bindToBenchmark(ll, meas) {
   const H0 = rawHeight(ll.lat, ll.lng, meas.hEll);
-  if (H0 == null) { toast(meas.hEll == null ? 'Приёмник не дал высоту — привязка невозможна' : 'Модель геоида не загрузилась — проверьте интернет и повторите'); return; }
+  if (H0 == null) { toast(meas.hEll == null ? 'Приёмник не дал высоту — привязка невозможна' : 'Модель геоида не загрузилась или точка вне её покрытия — проверьте интернет и повторите'); return; }
   openForm('Привязка к реперу', [
     { key: 'name', label: 'Репер или пункт', placeholder: 'например Рп 1234' },
     { key: 'H', label: 'Отметка репера, м', type: 'number', placeholder: 'например 145.312', hint: `Измерено без поправки: ${mText(H0, 3)} м (±${cmText(meas.hm)}).` }
@@ -1703,7 +1709,8 @@ function controlPoint(p) {
   const ant0 = p.hInfo && p.hInfo.ant != null ? Number(p.hInfo.ant) : null;
   if (ant0 != null && Math.abs(ant0 - antH) < 0.005) toast(`Совет: для независимого контроля смените высоту вехи (сейчас ${mText(antH, 2)} м, как при съёмке) или повторите позже`);
   openMeasure((ll, meas) => {
-    const a = sk42(p.lat, p.lng), b = sk42(ll.lat, ll.lng), H0 = pointH(p), H1 = normalHeight(ll.lat, ll.lng, meas.hEll);
+    const a = sk42(p.lat, p.lng), b0 = sk42(ll.lat, ll.lng), H0 = pointH(p), H1 = normalHeight(ll.lat, ll.lng, meas.hEll);
+    const b = b0.zone === a.zone ? b0 : (([y, x]) => ({ x, y }))(proj4('WGS84', gkDef(a.zone), [ll.lng, ll.lat]));   // у границы зон — в зоне точки
     const dS = Math.hypot(b.x - a.x, b.y - a.y), dH = H0 != null && H1 != null ? H1 - H0 : null, hTol = heightTol(meas.scale);
     const vs = ctrlVerdict(dS, meas.tol), vh = ctrlVerdict(dH == null ? null : Math.abs(dH), hTol);
     const ok = [vs, vh].includes('bad') ? 'bad' : [vs, vh].includes('mid') ? 'mid' : 'ok';
@@ -1712,7 +1719,7 @@ function controlPoint(p) {
     const sameAnt = ant0 != null && Math.abs(ant0 - antH) < 0.005, soon = p.q && p.q.at && Date.now() - Date.parse(p.q.at) < 30 * 60e3;
     p.ctrl = [...(p.ctrl || []), rec];
     save();
-    showSheet(`<div class="sh-head"><b>Контроль точки${p.no ? ' № ' + p.no : ''}</b><button class="x" data-close>×</button></div>
+    showSheet(`<div class="sh-head"><b>Контроль точки${p.no ? ' № ' + esc(p.no) : ''}</b><button class="x" data-close>×</button></div>
       <div class="meas-verdict ${ok}"><div class="meas-big">в плане ${cmText(dS)}</div>${CTRL_MARK[vs]} (средняя ${cmText(meas.tol)}, предельная ${cmText(2 * meas.tol)} для 1:${meas.scale})</div>
       ${dH != null ? `<div class="meas-h">по высоте ${dH >= 0 ? '+' : '−'}${cmText(Math.abs(dH))} <span>${CTRL_MARK[vh]} (допуск ${cmText(hTol)})</span></div>`
         : `<div class="meas-sub">${H0 == null ? 'У точки нет отметки — высоту сравнить не с чем' : 'Приёмник не дал высоту — сравнение только в плане'}</div>`}
@@ -1747,7 +1754,7 @@ function openMeasure(onAccept) {
     <div class="acts" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">
       <button class="btn" data-close>Отмена</button><button class="btn primary" id="measGo">Начать</button></div></div>`);
   const tolNote = () => {
-    const k = MEAS_KINDS.find(x => x.id === o.kind);
+    const k = MEAS_KINDS.find(x => x.id === o.kind) || MEAS_KINDS[0];
     $('measSum').innerHTML = `${o.sec < 60 ? o.sec + ' с' : o.sec / 60 + ' мин'} · ${esc(k.name)} · 1:${o.scale}${o.auto ? ' · автоприём' : ''} <span class="pen">✎ изменить</span>`;
     if (!measuring) $('measLive').innerHTML = `<div class="meas-big">допуск ${cmText(measTol(o))}</div>
       <div class="meas-sub">${String(k.mm).replace('.', ',')} мм на плане, ${k.hint} СП 47.13330. Стойте неподвижно, веха — по уровню, затем «Начать».</div>`;
@@ -1770,11 +1777,12 @@ function runMeasure(o, onAccept) {
   startGps();
   loadGeoid().catch(() => toast('Модель геоида не загрузилась — отметки не посчитаются'));
   const fixes = [], t0 = Date.now(), tol = measTol(o);
-  let lastTs = 0, timer = null, hdops = [];
+  let lastTs = 0, timer = null, hdops = [], sawSpoof = false;
   const stop = () => { clearInterval(timer); measuring = null; holdGnss(false); };
   const live = () => {
-    if (!$('measBox') || $('sheet').style.display === 'none') { stop(); return; }     // лист закрыли — измерение отменено
-    const sec = Math.min(o.sec, Math.round((Date.now() - t0) / 1000));
+    if (!$('measBox') || $('sheet').style.display === 'none') { stop(); return; }
+    if (spoof) sawSpoof = true;     // лист закрыли — измерение отменено
+    const sec = Math.min(o.sec, Math.floor((Date.now() - t0) / 1000));
     if (!fixes.length) { $('measLive').innerHTML = `<div class="meas-big">жду координаты…</div><div class="meas-sub">${sec} с</div>`; }
     else {
       const use = goodFixes(fixes, tol), dropped = fixes.length - use.length;
@@ -1792,7 +1800,7 @@ function runMeasure(o, onAccept) {
   };
   const finish = () => {
     stop();
-    if (spoof) { $('measLive').textContent = 'Похоже на подмену GPS — измерение не принято. Подробнее — нажмите красную плашку GPS вверху.'; cue('bad'); resetButtons(); return; }
+    if (spoof || sawSpoof) { $('measLive').textContent = (spoof ? 'Похоже на подмену GPS' : 'Во время измерения была подмена GPS') + ' — измерение не принято. Подробнее — нажмите красную плашку GPS вверху.'; cue('bad'); resetButtons(); return; }
     if (fixes.length < MEAS_MIN_FIXES) { $('measLive').textContent = `Мало отсчётов (${fixes.length}) — нужен хотя бы ${MEAS_MIN_FIXES}. Проверьте GPS и повторите.`; resetButtons(); return; }
     const use = goodFixes(fixes, tol), s = measStats(use), [cls0] = measVerdict(s.m, tol, o.scale);
     const cls = s.hm != null && s.hm > heightTol(o.scale) && cls0 === 'ok' ? 'mid' : cls0;
@@ -1801,7 +1809,7 @@ function runMeasure(o, onAccept) {
       hdop: hd == null ? null : +hd.toFixed(1), hEll: s.hEll == null ? null : +s.hEll.toFixed(3), hm: s.hm == null ? null : +s.hm.toFixed(3), kind: o.kind, scale: o.scale, tol: +tol.toFixed(3), ok: cls, dropped: fixes.length - use.length, at: new Date().toISOString() };
     const go = $('measGo'), accept = () => { if (spoofBlocks()) return; closeSheet(); onAccept(L.latLng(s.lat, s.lng), meas); };
     cue(cls);
-    if (o.auto && cls === 'ok') { say(`${VERDICT_SPEECH.ok}, плюс-минус ${cmSpeech(s.m)}. Принято`); accept(); return; }
+    if (o.auto && cls === 'ok' && !gpsNoSat()) { say(`${VERDICT_SPEECH.ok}, плюс-минус ${cmSpeech(s.m)}. Принято`); accept(); return; }
     say(`${VERDICT_SPEECH[cls]}, плюс-минус ${cmSpeech(s.m)}`);
     go.textContent = 'Принять'; go.disabled = false;
     go.onclick = accept;
@@ -1906,7 +1914,8 @@ function syncVolKeys() {
     const open = $('sheet').style.display === 'block' && !!($('measBox') || $('askYes'));
     const on = pref('volKeys', true) && (!!mode || open || !!(stake && (stake.so || stake.redo) && $('sheet').style.display !== 'block'));
     if (on === volCap || !GNSS || !GNSS.volumeKeys) return;
-    GNSS.volumeKeys({ on }).then(() => { volCap = on; }).catch(() => {});
+    volCap = on;
+    GNSS.volumeKeys({ on }).catch(() => { volCap = null; });         // не вышло — при следующей проверке попробовать снова
   } catch (e) { /* ещё идёт запуск — режима съёмки нет */ }
 }
 setTimeout(syncVolKeys, 0);                                          // после запуска: сбросить перехват громкости
@@ -1914,7 +1923,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 90;
+const APP_BUILD = 91;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2054,15 +2063,15 @@ function satSheetBody() {
 // пока идёт «Измерить», свёрнутое приложение не выключает спутники (в остальное время — выключает ради батареи)
 function holdGnss(on) { if (GNSS && GNSS.hold) GNSS.hold({ on }).catch(() => {}); }
 let satMsg = '';
-function satMessage(msg) { satMsg = msg; $('satText').textContent = msg; if (/нет доступа|не найден|ни одного/.test(msg)) toast(msg); }   // строки спутников нет — важное всплывает
+function satMessage(msg) { const again = msg === satMessage.last; satMessage.last = satMsg = msg; $('satText').textContent = msg; if (!again && /нет доступа|не найден|ни одного/.test(msg)) toast(msg); }   // строки спутников нет — важное всплывает
 function startGnss() {
   if (!NATIVE || gnssOn) return;
   if (!GNSS) { satMessage('Спутники: модуль не найден — сообщите разработчику'); return; }
   gnssOn = true;
   satMessage('Спутники: поиск… (на открытом месте, без сим-карты — до нескольких минут)');
-  GNSS.addListener('status', showSats);
+  if (!startGnss.listening) { startGnss.listening = true; GNSS.addListener('status', showSats); }   // после неудачного запуска — без второй подписки
   if (GNSS.keepScreen) GNSS.keepScreen({ on: pref('keepScreen', true) }).catch(() => {});   // экран не гаснет, пока открыт план
-  GNSS.start().catch(e => { gnssOn = false; satMessage('Спутники: ' + (e && e.message || 'нет доступа') + ' — нажмите ◎'); });
+  GNSS.start().catch(e => { gnssOn = false; satMessage.last = null; satMessage('Спутники: ' + (e && e.message || 'нет доступа') + ' — нажмите ◎'); });
 }
 $('spoofLine').onclick = () => spoofSheet();
 $('gpsLine').onclick = () => { if (spoof) { spoofSheet(); return; } if (!gps || gpsWatch == null) { startGps(); startGnss(); return; } if (sats && sats.total) { $('satLine').onclick(); return; } toast(satMsg || $('gpsLine').title || 'GPS'); };
@@ -2226,8 +2235,8 @@ function rxDistToRegion(ll, code) {
 function rxPreset(netId, modeId, reg) {
   const n = RX_NETS[netId], m = n && (n.modes[modeId] || Object.values(n.modes)[0]);
   if (!m) return null;
-  const r = reg || rxRegion('57'), port = m.port(r), other = RX_REGIONS.find(x => x.fd !== r.fd) || r;
-  return { host: n.host, port, mount: m.mount, byRegion: m.port(other) !== port || m.port === RX_REG_PORT };
+  const r = reg || rxRegion('57'), port = m.port(r);
+  return { host: n.host, port, mount: m.mount, byRegion: m.port === RX_REG_PORT || RX_REGIONS.some(x => m.port(x) !== port) };
 }
 // поля выбора сети; net, mode, reg — то, что выбрано в окне сейчас (сохраняется только кнопками окна)
 function rxNetFields(net, mode, reg) {
@@ -2246,6 +2255,8 @@ function rxApplyPreset() {
   if (!RX_NETS[net]) return;
   const mode = $('rx_mode') ? $('rx_mode').value : 'near', reg = rxRegion($('rx_reg') ? $('rx_reg').value : '57');
   const p = rxPreset(net, mode, reg), portChanged = String($('rx_port').value) !== String(p.port);
+  const oldHost = $('rx_host').value.trim(), uIn = $('rx_user'), pIn = $('rx_pass');
+  if (oldHost && oldHost !== p.host && uIn && pIn && (uIn.value || pIn.value)) { uIn.value = ''; pIn.value = ''; toast('Сеть сменилась — впишите логин и пароль от новой сети'); }   // чужому серверу прежний пароль не отправляем
   $('rx_host').value = p.host; $('rx_port').value = p.port;
   const known = Object.values(RX_NETS).some(x => Object.values(x.modes).some(m => m.mount === $('rx_mount').value));
   if (p.mount || portChanged || known || $('rx_mount').value === '') $('rx_mount').value = p.mount;
@@ -2551,7 +2562,7 @@ function updateDecl() {
   if (!gps || !TRACK_N || !TRACK_N.declination) return;
   if (magDeclAt && magDeclAt.distanceTo([gps.lat, gps.lng]) < DECL_KM * 1000) return;
   magDeclAt = L.latLng(gps.lat, gps.lng);
-  TRACK_N.declination({ lat: gps.lat, lng: gps.lng, alt: gps.alt || 0 }).then(r => { if (r && isFinite(r.deg)) { magDecl = r.deg; magDeclOk = true; } }).catch(() => { magDeclAt = null; });
+  TRACK_N.declination({ lat: gps.lat, lng: gps.lng, alt: gps.alt || 0 }).then(r => { if (r && isFinite(r.deg)) { magDecl = r.deg; magDeclOk = true; } else magDeclAt = null; }).catch(() => { magDeclAt = null; });
 }
 addEventListener('deviceorientationabsolute', e => {
   if (e.alpha == null) return;
@@ -2901,6 +2912,7 @@ const DRAW = {
       const e = Math.min(s + period, total);
       run(s, e);
       if (e + gap < total) { if (k % EVERY === 1 && placeText(g, path, e + gap / 2, index, { size })) placed++; else run(e, e + gap); }   // занято — линия без разрыва
+      else if (e < total) run(e, total);                              // до конца меньше разрыва — дотянуть линию
       s = e + gap;
     }
     if (spec.flow && total > 14 * MM) {                                 // стрелка направления течения — по ходу рисования
@@ -2913,7 +2925,8 @@ const DRAW = {
     const total = path.getTotalLength(), arrowLen = 8 * MM, plain = 9 * MM, size = 3 * MM;
     const num = spec.numbered ? String(line.count || spec.defCount || 1) : null, gap = num ? tw(num, size, true) + 1.6 * MM : 2 * MM;
     const run = (a, b) => { if (spec.double2) { segment(g, path, a, b, w, -spec.double2); segment(g, path, a, b, w, spec.double2); } else segment(g, path, a, b, w); };
-    const sep = (a) => { if (num && a + gap < total && !placeText(g, path, a + gap / 2, num, { size })) run(a, a + gap); };
+    const sep = (a) => { if (a + gap >= total) { if (a < total) run(a, total); return; }   // хвост короче разрыва — дотянуть до конца
+      if (num && !placeText(g, path, a + gap / 2, num, { size })) run(a, a + gap); };
     for (let s = 0, n = 0; s < total; n++) {
       const a1 = Math.min(s + arrowLen, total);
       run(s, a1);
@@ -3401,7 +3414,7 @@ function showCard(kind, obj) {
     if (NET_LINE_KINDS.has(s.kind) && obj.attr) { const a = obj.attr;
       const parts = [[esc(netCaption({ attr: a, type: obj.type })), ''], [a.depth !== '' && a.depth != null ? 'глубина ' + mText(Number(a.depth), 2) + ' м' : '', ''], [a.year ? esc(a.year) + ' г.' : '', ''], [a.owner ? esc(a.owner) : '', '']].map(x => x[0]).filter(Boolean);
       if (parts.length) kv.push(['Сеть', parts.join(' · ')]); }
-    if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${esc(obj.pk0)}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
+    if (s.kind === 'route' && obj.pk0 != null && obj.pk0 !== '') kv.push(['Пикеты', `от ПК ${esc(obj.pk0)}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
   }
   kv.splice(obj.no ? 1 : 0, 0, ['От меня', '<span id="fromMe"></span>']);   // расстояние и азимут — сразу видно, далеко ли
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x trash-h" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button><button class="x" data-act="close">×</button></div>
@@ -3634,9 +3647,9 @@ function editPoint(p) {
     { key: 'h', label: 'Отметка, м', type: 'number', value: p.h, placeholder: 'например 245.51' },
     { key: 'note', label: 'Примечание', value: p.note, placeholder: 'необязательно' }
   ], v => {
-    p.name = v.name || ''; p.note = v.note;
     const h = v.h === '' ? null : parseNum(v.h);
     if (v.h !== '' && isNaN(h)) { toast('Отметка — это число, например 245.51'); return false; }
+    p.name = v.name || ''; p.note = v.note;                            // после проверки: при ошибке точка не меняется
     if (h !== p.h) { delete p.hSrc; delete p.hInfo; }                                   // отметку исправили вручную — она уже не из ГНСС
     p.h = h;
     save(); showCard('point', p);
@@ -3735,7 +3748,7 @@ function editBuilding(line, isNew) {
       hint: 'Надпись внутри контура ставится сама вдоль длинной стороны; если не помещается — появится при приближении.' });
   openForm(spec.name, fields, v => {
     const next = { ...a, houseNo: v.houseNo || '' };
-    if ('floors' in v) { const n = parseInt(v.floors, 10); if (!(n >= 1 && n < 200)) { toast('Этажей — целое число от 1'); return false; } next.floors = n; }
+    if ('floors' in v) { const n = parseNum(String(v.floors)); if (!(Number.isInteger(n) && n >= 1 && n < 200)) { toast('Этажей — целое число от 1'); return false; } next.floors = n; }
     if ('mat' in v) next.mat = v.mat;
     if ('purpose' in v) next.purpose = v.purpose;
     for (const k of ['hFloor', 'hBlind']) {
@@ -3855,11 +3868,15 @@ function editLine(line, isNew) {
       hint: spec.tag ? `«${spec.tag}» поставится само.` : '' });
   }
   openForm(spec.name, fields, v => {
-    if ('pk0' in v) { line.pk0 = v.pk0 === '' ? null : parseNum(v.pk0); if (line.pk0 != null && isNaN(line.pk0)) { toast('ПК — это число'); return false; } line.pkDir = Number(v.pkDir) || 1; }
+    const pk0 = 'pk0' in v && v.pk0 !== '' ? parseNum(v.pk0) : null;
+    if (pk0 != null && isNaN(pk0)) { toast('ПК — это число'); return false; }
+    const nx = NET_LINE_KINDS.has(spec.kind) ? readNetFields(v, line.attr || {}) : null;
+    if (NET_LINE_KINDS.has(spec.kind) && !nx) { toast('Диаметр, глубина, год и частота — числа'); return false; }   // при ошибке линия не меняется
+    if ('pk0' in v) { line.pk0 = pk0; line.pkDir = Number(v.pkDir) || 1; }
     if ('count' in v) line.count = Math.max(1, parseInt(v.count, 10) || 1);
     if ('state' in v) line.state = v.state || '';
     if ('solid' in v) line.attr = { ...(line.attr || {}), solid: v.solid === '1' };
-    if (NET_LINE_KINDS.has(spec.kind)) { const nx = readNetFields(v, line.attr || {}); if (!nx) { toast('Диаметр, глубина, год и частота — числа'); return false; } line.attr = { ...nx, solid: (line.attr || {}).solid }; if (nx.tDev) setPref('tracerDev', nx.tDev); }
+    if (nx) { line.attr = { ...nx, solid: (line.attr || {}).solid }; if (nx.tDev) setPref('tracerDev', nx.tDev); }
     line.caption = v.caption || '';
     if (isNew) data.lines.push(line);
     save(); showCard('line', line);
@@ -4203,7 +4220,7 @@ $('fabSearch').onclick = openSearch;
 
 // Треки хранятся отдельно от плана: не попадают в выгрузки съёмки и в «Вернуть». Пишется, пока приложение открыто
 const TRACK_KEY = 'tk.tracks', TRACK_MIN_M = 3, TRACK_MAX_ACC = 30, TRACK_KEEP = 30, TRACK_SAVE_MS = 10000, TRACK_SMOOTH = 2;
-let tracks = (() => { try { return JSON.parse(localStorage.getItem(TRACK_KEY)) || []; } catch (e) { return []; } })();
+let tracks = (() => { try { const v = JSON.parse(localStorage.getItem(TRACK_KEY)); return Array.isArray(v) ? v.filter(t => t && Array.isArray(t.pts)) : []; } catch (e) { return []; } })();
 let trackRec = null, trackSavedAt = 0, tracksShown = pref('tracksShown', true);
 const trackLayer = L.layerGroup().addTo(map);
 for (const t of tracks) delete t.native;
@@ -4283,8 +4300,10 @@ const TRACK_MAX_SPEED = 70;                                             // м/с
 const TRACK_REJECT_MAX = 3;                                             // три «прыжка» подряд — значит ложной была прошлая точка, принимаем новую
 function addSrvPoints(t, pts) {
   let n = 0;
+  const inSpoof = sec => { const ms = sec * 1000, cur = spoof && spoofLog[spoofLog.length - 1];   // точка из окна подмены (идущая — до сих пор)
+    return spoofLog.some(e => ms >= e.from && ms <= (e === cur ? Date.now() : e.to || e.from)); };
   for (const p of pts) {
-    if (spoof) continue;
+    if (inSpoof(p[2])) continue;
     const last = t.pts[t.pts.length - 1];
     if (last && L.latLng(last[0], last[1]).distanceTo([p[0], p[1]]) > TRACK_MAX_SPEED * Math.max(1, p[2] - last[2]) && (t.rej = (t.rej || 0) + 1) < TRACK_REJECT_MAX) continue;
     t.rej = 0; t.pts.push(p); n++;
@@ -4311,6 +4330,7 @@ async function trackCheckNative(t) {
   let r = null; try { r = await TRACK_N.points({ from: srvFrom(t) }); } catch (e) { /* ниже — как будто не работает */ }
   if (r && r.running) return;
   if (trackRec !== t) return;
+  if (r && r.pts && r.pts.length) { addSrvPoints(t, r.pts); t.srvN = r.total; saveTracksSoon(); }   // записанное службой не терять
   t.native = false; clearInterval(trackPoll); setPref('trackLive', null); screenOn(true); trackFeed();
   toast('Запись с выключенным экраном не запустилась (проверьте разрешение на местоположение) — пишу, пока приложение открыто');
 }
@@ -4355,8 +4375,8 @@ function tracksGpx(list) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Полевой план" xmlns="http://www.topografix.com/GPX/1/1">\n${list.map(trk).join('\n')}\n</gpx>\n`;
 }
 function openTracks() {
-  const rows = tracks.map(t => `<div class="meas-row" data-tid="${t.id}"><span style="flex:1;min-width:0"><b>${esc(t.name)}</b><br><span style="color:var(--muted)">${kmText(trackLen(t))}${t.end ? ', ' + Math.max(1, Math.round((Date.parse(t.end) - Date.parse(t.start)) / 60000)) + ' мин' : ''}</span></span>
-    <button class="btn" data-tshow="${t.id}">Показать</button><button class="x" data-tdel="${t.id}" aria-label="Удалить">🗑</button></div>`).join('');
+  const rows = tracks.map(t => `<div class="meas-row" data-tid="${esc(t.id)}"><span style="flex:1;min-width:0"><b>${esc(t.name)}</b><br><span style="color:var(--muted)">${kmText(trackLen(t))}${t.end ? ', ' + Math.max(1, Math.round((Date.parse(t.end) - Date.parse(t.start)) / 60000)) + ' мин' : ''}</span></span>
+    <button class="btn" data-tshow="${esc(t.id)}">Показать</button><button class="x" data-tdel="${esc(t.id)}" aria-label="Удалить">🗑</button></div>`).join('');
   showSheet(`<div class="sh-head"><b>Треки — пройденный путь</b><button class="x" data-close>×</button></div>
     <button class="btn primary" id="tStart" style="width:100%">● Начать запись трека</button>
     <div class="hint" style="margin:6px 0 10px">${TRACK_N ? 'Путь пишется и с выключенным экраном, и когда приложение свёрнуто — в шторке будет уведомление «Идёт запись трека». Если телефон спросит про уведомления — разрешите.' : 'Путь пишется, пока «Полевой план» открыт: экран на время записи не гаснет.'} Остановить — красная кнопка с отпечатками ног справа или красная полоса «ЗАПИСЬ ТРЕКА» вверху.</div>
@@ -4878,7 +4898,7 @@ function cadSheet() {
         ${noPt.length ? `<br><small style="color:#c62828">вершин без характерной точки: ${noPt.length}</small>` : ''}${noMt.length ? `<br><small style="color:#c62828">точек без Mt (поставлены касанием): ${noMt.map(c => esc(ptName(c))).join(', ')}</small>` : ''}${bad.length ? `<br><small style="color:#c62828">Mt хуже допуска: ${bad.map(c => esc(ptName(c)) + ' ' + mText(cadMt(c.pt), 2)).join(', ')}</small>` : ''}
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px"><button class="btn" data-cad="pts:${k}">Сведения о точках</button><button class="btn" data-cad="sides:${k}">Части границы</button><button class="btn" data-cad="svg:${k}">Чертёж А4</button></div></div>`; }).join('')
       : '<div class="hint">Замкнутых участков нет. Нарисуйте границу линиями группы «Кадастр» так, чтобы концы сомкнулись (привязка к точкам и вершинам делает это сама). При разделе общая граница рисуется один раз — приложение отнесёт её к обоим участкам.</div>'}
-    ${open.length ? `<div class="hint" style="color:#c62828;margin-top:6px">Не замкнуты: ${open.map(g => g.map(l => 'L' + (l.no || '')).join(', ')).join('; ')} — конец части границы ни к чему не примкнул.</div>` : ''}</div>
+    ${open.length ? `<div class="hint" style="color:#c62828;margin-top:6px">Не замкнуты: ${open.map(g => g.map(l => 'L' + esc(l.no || '')).join(', ')).join('; ')} — конец части границы ни к чему не примкнул.</div>` : ''}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px"><button class="btn" id="cadTxt">Каталог для Полигон Про / ТехноКада</button><button class="btn" id="cadAll">Все точки (CSV)</button></div>
     <div class="hint" style="margin-top:6px;color:var(--muted)">Новые точки — «Знак…» → «Кадастр» → «Вновь образованная точка»: обозначение н1, н2… ставится само. Mt — СКО измерения «По GPS» / «Измерить», округлено вверх до сантиметра.</div>`);
   $('cadCat').onchange = e => { data.meta = { ...meta(), landCat: e.target.value }; save(); cadSheet(); };
@@ -5354,8 +5374,8 @@ $('modeBtns').addEventListener('click', e => {
   if (act === 'gps' && spoofBlocks()) return;
   if (act === 'gps' && gps && Date.now() - gps.at > GPS_FRESH_MS) { toast(`Координаты GPS устарели (${Math.round((Date.now() - gps.at) / 1000)} с назад) — подождите сигнал`); startGps(); return; }
   if (act === 'gps' && gps && gps.acc > GPS_WARN_M) {
-    const m = mode, at = L.latLng(gps.lat, gps.lng);
-    ask(`Точность GPS ±${cmText(gps.acc)} (${fixText(fixKind(gps.acc))}) — хуже допуска 1:500 (25 см). Поставить всё равно?`, 'Поставить').then(ok => { if (ok && mode === m && !spoofBlocks()) addAt(at, null, 'gps'); });
+    const m = mode, at = L.latLng(gps.lat, gps.lng), g0 = gps;         // отсчёт на момент нажатия
+    ask(`Точность GPS ±${cmText(gps.acc)} (${fixText(fixKind(gps.acc))}) — хуже допуска 1:500 (25 см). Поставить всё равно?`, 'Поставить').then(ok => { if (!ok || mode !== m || spoofBlocks()) return; const cur = gps; gps = g0; try { addAt(at, null, 'gps'); } finally { gps = cur; } });   // пока думали, GPS ушёл вперёд
     return;
   }
   if (act === 'gps') { if (gps) addAt(L.latLng(gps.lat, gps.lng), null, 'gps'); else { startGps(); toast('Ищу спутники — нажмите ещё раз через пару секунд'); } }
@@ -5462,7 +5482,7 @@ function heightFor(ll, meas, src, snap) {
     const hEll = src === 'measure' ? meas.hEll : gps && gps.alt, H = normalHeight(ll.lat, ll.lng, hEll);
     if (hEll == null || isNaN(hEll)) return null;
     // высота над эллипсоидом хранится всегда: если модель геоида ещё не загрузилась — отметка посчитается позже
-    return { h: H == null ? null : +H.toFixed(2), src: 'gnss', acc: src === 'measure' ? meas.hm : gps && gps.altAcc, ref, from: src, hEll: +Number(hEll).toFixed(3) };
+    return { h: H == null ? null : +H.toFixed(2), src: 'gnss', acc: src === 'measure' ? meas.hm : gps && gps.altAcc, ref, from: src, hEll: +Number(hEll).toFixed(3), ant: antH };
   }
   if (snap && snap.h != null && snap.h !== '' && snap.dxf) return { h: Number(snap.h), src: 'dxf', from: 'dxf', ref: snap.dxf };   // архивная отметка с чертежа — помечаем отдельно
   if (snap && snap.h != null && snap.h !== '') return { h: Number(snap.h), src: 'snap', from: 'snap' };
@@ -5504,6 +5524,11 @@ function midHandles() {
     out.push(L.circleMarker(m, { radius: MID_R, color: '#1e88e5', weight: 1.5, dashArray: '2 2', fillColor: '#fff', fillOpacity: 0.55, bubblingMouseEvents: false })
       .on('click', e => { L.DomEvent.stop(e); insertVertexAt(i); }));
   }
+  if ((LINES[mode.type] || {}).closed && V.length >= 3) {               // замыкающая сторона (последняя → первая): вставка в конец
+    const a = L.latLng(V[V.length - 1]), b = L.latLng(V[0]), m = L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2);
+    out.push(L.circleMarker(m, { radius: MID_R, color: '#1e88e5', weight: 1.5, dashArray: '2 2', fillColor: '#fff', fillOpacity: 0.55, bubblingMouseEvents: false })
+      .on('click', e => { L.DomEvent.stop(e); insertVertexAt(V.length); }));
+  }
   return out;
 }
 // «↶ Убрать»: если последним действием была вставка кружком — убрать вставленную вершину, иначе — последнюю
@@ -5518,7 +5543,7 @@ function insertVertexAt(i) {
   if (!mode || mode.kind !== 'line' || pickTool) return;               // идёт засечка / створ / рулетка — касание для них
   let ll = map.getCenter();
   let snap = snapOn ? snapTarget(ll) : null;
-  const nb = [mode.latlngs[i - 1], mode.latlngs[i]].map(a => L.latLng(a));
+  const nb = [mode.latlngs[i - 1], mode.latlngs[i % mode.latlngs.length]].map(a => L.latLng(a));   // i = длина — замыкающая сторона
   if (snap && nb.some(a => a.equals(snap.ll))) snap = null;             // к соседним вершинам не липнем — получился бы отрезок нулевой длины
   if (snap) ll = snap.ll;
   const hz = heightFor(ll, null, 'center', snap);
@@ -5528,7 +5553,7 @@ function insertVertexAt(i) {
   if (spoof) mode.wait = true;
   mode.lastIns = i;
   cue('tick'); refreshTemp(); setMode(mode);
-  toast(`Вершина вставлена между ${i} и ${i + 1}${snap ? ', привязано ' + snap.what : ''}. Не туда — «↶ Убрать»`);
+  toast(`Вершина вставлена между ${i} и ${i + 1 > mode.latlngs.length - 1 ? 1 : i + 1}${snap ? ', привязано ' + snap.what : ''}. Не туда — «↶ Убрать»`);
   if (!pref('midHint', false)) { setPref('midHint', true); setTimeout(() => toast('Кружок посередине отрезка вставляет вершину под крестик — для пропущенного угла'), 2500); }
 }
 // «Резинка»: еле видный пунктир от последней вершины до перекрестья и расстояние по нему — видно, сколько метров до следующей точки
@@ -6393,7 +6418,7 @@ async function dxfPlace(P, id, opt) {
   }
   const one = o => { const q = ll(o.x, o.y, true); if (!q) { dropped++; return null; } grow(q[1], q[0]); return [q[1], q[0]]; };
   const pts = P.pts.map(o => { const c = one(o); return c && { lat: c[0], lng: c[1], z: o.z * k, c: o.c }; }).filter(Boolean);
-  const texts = P.texts.map(o => { const c = one(o); return c && { lat: c[0], lng: c[1], t: o.t, h: o.h * (S ? sScale : k), r: o.r + sRot, ax: o.ax, ay: o.ay, c: o.c }; }).filter(Boolean);
+  const texts = P.texts.map(o => { const c = one(o); return c && { lat: c[0], lng: c[1], t: o.t, h: o.h * (S ? sScale : k), r: (opt.swap ? 90 - o.r : o.r) + sRot, ax: o.ax, ay: o.ay, c: o.c }; }).filter(Boolean);
   const sn = [];
   for (let j = 0; j < P.snap.length; j += 3) { const q = ll(P.snap[j], P.snap[j + 1], true); if (q) sn.push(q[1], q[0], P.snap[j + 2] * k); }   // привязки — без счёта «не показано»
   pts.forEach(p => sn.push(p.lat, p.lng, p.z));
@@ -6745,7 +6770,7 @@ function calCheck() {
   // допуск — полметра или удвоенная точность GPS, если места отмечали по GPS телефона (±3–5 м)
   const tol = Math.max(CAL_CHECK_M, 2 * Math.max(...c.pairs.map(p => p.acc || 0))), bad = Math.min(res[0], res[1]) > tol;
   c.result = calResultHtml(`Проверка 3-й точкой: расхождение ${mText(res[0], 2)} м (с растяжкой) и ${mText(res[1], 2)} м (1:1), допуск ${mText(tol, 2)} м.` +
-    (bad ? ' <b>Больше допуска</b> — похоже, одна из точек отмечена не там (или чертёж зеркальный). Лучше «Заново».' : ' Чертёж лёг хорошо.'), true, !(res[1] > res[0] * 1.5 && res[0] <= tol), true, bad);
+    (bad ? ' <b>Больше допуска</b> — похоже, одна из точек отмечена не там (или чертёж зеркальный). Лучше «Заново».' : ' Чертёж лёг хорошо.'), true, !(res[0] <= tol && (res[1] > tol || res[1] > res[0] * 1.5)), true, bad);
   c.pairs.length = 2; c.step = 4;                                       // третья пара — только для проверки
   calBar(c.result);
 }
@@ -7055,7 +7080,7 @@ function setCrs(id) {
 // «36.5», «36,5» или «36°30'» → градусы
 function parseDeg(s) {
   const m = String(s).trim().replace(',', '.').match(/^(-?\d+(?:\.\d+)?)(?:\s*[°º\s]\s*(\d+(?:\.\d+)?)?\s*['′]?\s*(\d+(?:\.\d+)?)?\s*["″]?)?$/);
-  if (!m) return NaN;
+  if (!m || Number(m[2]) >= 60 || Number(m[3]) >= 60) return NaN;      // 36°75′ — опечатка
   const d = Number(m[1]), sign = m[1].startsWith('-') ? -1 : 1;   // −0°30′: у нуля градусов знака нет
   return d + sign * ((Number(m[2]) || 0) / 60 + (Number(m[3]) || 0) / 3600);
 }
@@ -7117,7 +7142,7 @@ const photoDb = new Promise(resolve => {
 async function photoTx(mode, fn) {
   const db = await photoDb;
   if (!db) throw new Error('память для фото недоступна');
-  return new Promise((ok, bad) => { const tx = db.transaction('photos', mode), r = fn(tx.objectStore('photos')); tx.oncomplete = () => ok(r && r.result); tx.onerror = () => bad(tx.error); });
+  return new Promise((ok, bad) => { const tx = db.transaction('photos', mode), r = fn(tx.objectStore('photos')); tx.oncomplete = () => ok(r && r.result); tx.onerror = tx.onabort = () => bad(tx.error || new Error('запись прервана')); });
 }
 const photoGet = id => photoTx('readonly', st => st.get(id));
 const photoPut = rec => photoTx('readwrite', st => st.put(rec));
@@ -7165,7 +7190,7 @@ async function photoUrl(id) {
   if (photoUrls.has(id)) return photoUrls.get(id);
   const rec = await photoGet(id).catch(() => null);
   const url = rec ? URL.createObjectURL(rec.blob) : null;
-  photoUrls.set(id, url);
+  if (url) photoUrls.set(id, url);                                   // «нет» не запоминаем — в другой раз может прочитаться
   return url;
 }
 function fillThumbs(kind, obj) {
@@ -7183,7 +7208,7 @@ async function showPhoto(kind, obj, id) {
   const when = new Date(rec.at), c = sk42(rec.lat, rec.lng);
   showSheet(`<div class="sh-head"><b>Фото ${obj.photos.indexOf(id) + 1} из ${obj.photos.length}</b><button class="x" data-close>×</button></div>
     <img src="${url}" class="photo-big" alt="">
-    <div class="hint" style="margin:6px 0 10px;color:var(--muted)">${when.toLocaleString('ru-RU')}${rec.heading != null ? ` · съёмка на ${rec.heading}°` : ''} · X ${f2(c.x)} Y ${f2(c.y)}</div>
+    <div class="hint" style="margin:6px 0 10px;color:var(--muted)">${when.toLocaleString('ru-RU')}${rec.heading != null && isFinite(rec.heading) ? ` · съёмка на ${Math.round(Number(rec.heading))}°` : ''} · X ${f2(c.x)} Y ${f2(c.y)}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><button class="btn danger" id="photoDel">Открепить фото</button><button class="btn primary" data-close>Готово</button></div>`);
   $('photoDel').onclick = () => {                                     // само фото остаётся в памяти — «Вернуть» прикрепит его обратно
     obj.photos = obj.photos.filter(x => x !== id);
@@ -7333,7 +7358,9 @@ function dxfLayerOfPoint(p) { const g = POINT_GROUPS.find(x => x.items.some(i =>
 function dxfColorOfLayer(name, kind) { if (kind && DXF_COLOR[kind]) return DXF_COLOR[kind]; return /ДЕФЕКТ/i.test(name) ? 1 : /РЕЛЬЕФ/.test(name) ? 34 : /РАСТИТ|ДЕРЕВ/.test(name) ? 3 : 7; }
 // кодировка Windows-1251 для кириллицы в DXF R12, каталоге и MIF; dxf — символы вне 1251 кодом \U+XXXX (AutoCAD его понимает), иначе «?»
 function cp1251(str, dxf) {
-  const extra = { 0x401: 0xA8, 0x451: 0xB8, 0x2116: 0xB9, 0x2013: 0x96, 0x2014: 0x97, 0x2026: 0x85, 0xAB: 0xAB, 0xBB: 0xBB, 0xB0: 0xB0, 0xB1: 0xB1 };
+  const extra = { 0x401: 0xA8, 0x451: 0xB8, 0x2116: 0xB9, 0x2013: 0x96, 0x2014: 0x97, 0x2026: 0x85, 0xAB: 0xAB, 0xBB: 0xBB, 0xB0: 0xB0, 0xB1: 0xB1,
+    0x201C: 0x93, 0x201D: 0x94, 0x2018: 0x91, 0x2019: 0x92, 0x201E: 0x84, 0xA0: 0xA0, 0xA7: 0xA7, 0xB7: 0xB7, 0x20AC: 0x88,
+    0x404: 0xAA, 0x454: 0xBA, 0x406: 0xB2, 0x456: 0xB3, 0x407: 0xAF, 0x457: 0xBF, 0x490: 0xA5, 0x491: 0xB4, 0x40E: 0xA1, 0x45E: 0xA2 };
   const out = [];
   for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i);
     const b = c < 128 ? c : c >= 0x410 && c <= 0x44F ? c - 0x350 : extra[c];
@@ -7443,7 +7470,7 @@ function toDxf() {
   const layers = new Map();
   const useLayer = (name, kind) => { if (!layers.has(name)) layers.set(name, dxfColorOfLayer(name, kind)); return name; };
   // сущности — сначала, чтобы знать слои и блоки
-  const E = [], ent = (...kv) => { for (let i = 0; i < kv.length; i += 2) E.push(String(kv[i]), String(kv[i + 1])); };
+  const E = [], ent = (...kv) => { for (let i = 0; i < kv.length; i += 2) E.push(String(kv[i]), String(kv[i + 1]).replace(/[\r\n]+/g, ' ')); };   // перевод строки в значении сломал бы файл
   const blocks = new Set(), ltypes = new Map();
   const ATTRS = [['НОМЕР', 0], ['ОТМ', 0], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]
   for (const p of data.points) {
@@ -7684,7 +7711,7 @@ function checkPlan() {
   const pt = p => ({ kind: 'point', obj: p }), ln = l => ({ kind: 'line', obj: l });
   const gnssH = P.some(p => p.hSrc === 'gnss') || data.lines.some(l => (l.hs || []).some(z => z && z.src === 'gnss'));
   add('warn', 'Нет названия объекта и паспорта', !objectName(), 'Меню → «Паспорт объекта»: попадёт в имена файлов и шапки ведомостей');
-  add('bad', 'Высота антенны 0, а отметки сняты по ГНСС', gnssH && !antH, 'Меню → «Отметки»: укажите высоту вехи и пересчитайте отметки');
+  add('warn', 'Высота антенны 0, а отметки сняты по ГНСС', gnssH && !antH, 'Если приёмник сам не учитывает веху — Меню → «Отметки»: укажите высоту вехи и пересчитайте отметки');
   add('warn', 'Отметки не привязаны к реперу', gnssH && !hgt.ref && !hgt.dh, 'Ошибка модели геоида — до дециметров. Меню → «Отметки» → привязка');
   const nos = new Map(); P.forEach(p => { if (p.no) nos.set(p.no, [...(nos.get(p.no) || []), p]); });
   add('bad', 'Одинаковые номера точек', [...nos.values()].filter(a => a.length > 1).flat().map(pt));
@@ -7823,6 +7850,8 @@ async function restoreBackup(b, photos) {
     closeSheet();
     const n = await putPhotos(add, photos);
     data = { ...plan, points: add.points, lines: add.lines, meta: plan.meta || data.meta }; prefsBack();
+    const hs = data.meta && data.meta.heights;                          // высота антенны и репер — те, что в копии
+    if (hs) { if (hs.hgt) hgt = hs.hgt; if (hs.antH != null) antH = Number(hs.antH) || 0; setPref('hgt', hgt); setPref('antH', antH); antChipText(); }
     save(); hideCard(); MENU.fit();
     toast(`План восстановлен: знаков ${add.points.length}, линий ${add.lines.length}` + (n ? `, фото ${n}` : ''));
   };
@@ -7890,7 +7919,7 @@ function toKml(photoDir) {
     const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
     return `<Placemark><name>${xml(l.caption || s.name)}</name>${desc(l)}${ext({ tk_id: l.id, tk_photos: l.photos ? JSON.stringify(l.photos) : '', tk_no: l.no, tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '', tk_color: l.color })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
-      `<LineString><tessellate>1</tessellate>${l.hs && l.hs.every(z => z && hasH(z.h)) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map((a, i) => { const z = l.hs && l.hs[s.closed ? i % l.latlngs.length : i]; return a[1] + ',' + a[0] + ',' + (z && hasH(z.h) ? Number(z.h) : 0); }).join(' ')}</coordinates></LineString></Placemark>`;
+      `<LineString><tessellate>1</tessellate>${l.hs && l.latlngs.every((_, i) => l.hs[i] && hasH(l.hs[i].h)) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map((a, i) => { const z = l.hs && l.hs[s.closed ? i % l.latlngs.length : i]; return a[1] + ',' + a[0] + ',' + (z && hasH(z.h) ? Number(z.h) : 0); }).join(' ')}</coordinates></LineString></Placemark>`;
   });
   return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${xml(objectName() || 'Полевой план')} ${today()}</name><description>${xml(passportLines().join('\n'))}</description>\n${pts.concat(lns).join('\n')}\n</Document></kml>`;
 }
@@ -7980,7 +8009,7 @@ function netEnds(l) {
   return ends.map(c => {
     let best = null, bd = NET_END_M;
     for (const p of data.points) { const q = sk42(p.lat, p.lng), d = Math.hypot(q.x - c.x, q.y - c.y); if (d <= bd) { bd = d; best = p; } }
-    return best ? pointRef(best) : '';
+    return best ? pointRef(best) : `X ${f2(c.x)}, Y ${f2(c.y)}`;        // рядом нет колодца и точки — координаты конца
   });
 }
 // Ведомость арматуры: вид, номер, диаметр, положение, колодец, на какой сети, координаты
@@ -8098,7 +8127,7 @@ function showOutage(from) {
       : r.closed.length ? '<div class="hint" style="margin:4px 0"><b>Закрывать больше нечего</b> — все задвижки участка на плане уже закрыты.</div>' : '<div class="hint" style="margin:4px 0"><b>Задвижек на плане нет</b> — участок не отсечь по снятым данным.</div>'}
     ${r.closed.length ? `<div class="hint" style="margin:8px 0 4px">Уже закрыты: ${r.closed.map(p => esc(valveText(p))).join('; ')}</div>` : ''}
     ${r.ends.length ? `<div class="hint" style="margin:8px 0 4px;color:${OUT_COLOR}"><b>Сеть уходит за план (${r.ends.length}):</b> там могут быть ещё задвижки или потребители — проверьте по схеме владельца.</div>${r.ends.map((x, i) => row(esc(x.well ? 'у колодца ' + pointRef(x.well) : 'конец L' + (x.line.no || '')), i, 'e')).join('')}` : ''}
-    <div class="hint" style="margin:8px 0 4px">Отключается: ${r.lines.map(l => 'L' + (l.no || '')).join(', ')} — ${r.len.toFixed(0)} м сети${r.wells.length ? '; колодцы ' + r.wells.map(w => esc(pointRef(w))).join(', ') : ''}.</div></div>
+    <div class="hint" style="margin:8px 0 4px">Отключается: ${r.lines.map(l => 'L' + esc(l.no || '')).join(', ')} — ${r.len.toFixed(0)} м сети${r.wells.length ? '; колодцы ' + r.wells.map(w => esc(pointRef(w))).join(', ') : ''}.</div></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px"><button class="btn" id="outCsv">Ведомость (CSV)</button><button class="btn" id="outClear">Убрать с карты</button></div>
     <div class="hint" style="margin-top:6px;color:var(--muted)">Считается только по тому, что снято на плане: задвижка должна стоять на трубе (до 3 м), отводы — касаться трубы концом.</div>`);
   $('outList').onclick = e => { const b = e.target.closest('[data-go]'); if (!b) return;
@@ -8138,7 +8167,7 @@ function toDefectSheet() {
 function pipeLine(p) {
   const c = sk42(p.lat, p.lng);
   let best = null, bd = PIPE_SNAP_M;
-  for (const l of data.lines) { if (!isNetLine(l)) continue;
+  for (const l of data.lines) { if (!isNetLine(l) || l.type === 'sleeve') continue;   // футляр совпадает с трубой — задвижка стоит на трубе
     const v = l.latlngs.map(a => sk42(a[0], a[1]));
     for (let i = 1; i < v.length; i++) { const a = v[i - 1], b = v[i], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / L2));
       const d = Math.hypot(a.x + t * dx - c.x, a.y + t * dy - c.y); if (d < bd) { bd = d; best = l; } } }
@@ -8330,7 +8359,7 @@ function catalogMenu() {
       В КРЕДО: «Импорт точек по шаблону», разделитель «;», символы комментария «//».</div>
     <button class="btn primary" id="catCoded" style="width:100%">С кодами линий — КРЕДО соберёт линии сам</button>
     <div class="hint" style="margin:4px 0 10px;color:var(--muted)">У вершин: «код-номер линии» и команда p — начать, e — закончить, o — замкнуть (как в полевом кодировании КРЕДО).</div>
-    <button class="btn" id="catPlain" style="width:100%">Простой — только точки</button>
+    <button class="btn" id="catPlain" style="width:100%">Простой — точки и вершины, без сборки линий</button>
     <button class="btn" id="catCodes" style="width:100%;margin-top:12px">Коды знаков под ваш классификатор${own ? ` (своих: ${own})` : ''}</button>`);
   $('catCoded').onclick = () => { closeSheet(); download(`catalog_kody_${today()}.txt`, new Blob([toCatalog(true)], { type: 'text/plain' }), 'text/plain'); };
   $('catPlain').onclick = () => { closeSheet(); download(`catalog_${today()}.txt`, new Blob([toCatalog()], { type: 'text/plain' }), 'text/plain'); };
@@ -8572,7 +8601,7 @@ const GridLayer = L.Layer.extend({
     const fmt = v => String(Math.round(v));                             // слитно, как координаты сверху
     // как на планшетах: полная подпись — по одной линии X и Y (ближайшие к середине экрана), остальные — последние 5 цифр («…74700»)
     const mid = toGk(m.getSize().divideBy(2)), fullX = Math.round(mid.x / step) * step, fullY = Math.round(mid.y / step) * step;
-    const lbl = (v, full) => step >= 100000 || v === full ? fmt(v) : "…" + String(Math.round(v) % 100000).padStart(5, "0");
+    const lbl = (v, full) => step >= 100000 || v === full ? fmt(v) : "…" + (v < 0 ? "−" : "") + String(Math.abs(Math.round(v)) % 100000).padStart(5, "0");
     const ll = (x, y) => { const p = fromSk42(x, y, zone); return [p.lat, p.lng]; };
     const x0 = Math.floor(minX / step) * step, y0 = Math.floor(minY / step) * step;
     const x1 = Math.ceil(maxX / step) * step, y1 = Math.ceil(maxY / step) * step;
@@ -8670,7 +8699,7 @@ async function rasterStore(mode, fn) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('rasters', mode), req = fn(tx.objectStore('rasters'));
     tx.oncomplete = () => resolve(req && req.result);
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = tx.onabort = () => reject(tx.error || new Error('запись прервана'));
   });
 }
 const rasterLayers = {};
