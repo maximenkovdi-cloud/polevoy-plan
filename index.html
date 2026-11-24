@@ -1914,7 +1914,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 89;
+const APP_BUILD = 90;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3377,7 +3377,7 @@ function showCard(kind, obj) {
     ll = [obj.lat, obj.lng];
   } else {
     const s = LINES[obj.type] || LINES.plain;
-    icon = linePreview(s, 40, 34, safeColor(obj.color) || undefined); name = s.name + (obj.count > 1 ? ` · прокладок ${obj.count}` : '');
+    icon = linePreview(s, 40, 34, obj.color ? objColor(obj, 'line') : undefined); name = s.name + (obj.count > 1 ? ` · прокладок ${obj.count}` : '');
     sub = [s.tag, obj.caption].filter(Boolean).map(esc).join(' ') || 'без подписи';
     const withH = (obj.hs || []).filter(Boolean).length;
     const lenP = lineLength(obj);
@@ -3934,7 +3934,7 @@ function updateStake() {
     const m = gkScale(midLL(L.latLng(gps.lat, gps.lng), stake.ll)), dx = (t.x - me.x) / m, dy = (t.y - me.y) / m, d = Math.hypot(dx, dy);   // сколько идти — на местности
     const here = d <= Math.max(STAKE_OK_M, gps.acc);
     body = `<div class="row"><svg width="56" height="56" viewBox="-28 -28 56 56" style="flex:none;transform:rotate(${az}deg)"><path d="M0 -24L10 8L0 2L-10 8Z" fill="${here ? '#2e7d32' : '#e65100'}"/></svg>
-      <div><div class="big ${here ? 'ok' : ''}">${here ? 'На месте' : cmText(d)}</div>
+      <div><div class="big ${here ? 'ok' : ''}">${here ? (d <= STAKE_OK_M ? 'На месте' : 'На месте ±' + cmText(gps.acc)) : cmText(d)}</div>
       <div>${dx >= 0 ? 'на север' : 'на юг'} ${cmText(Math.abs(dx))} · ${dy >= 0 ? 'на восток' : 'на запад'} ${cmText(Math.abs(dy))}</div>
       <div style="color:var(--muted);font-size:.85em">${angText(az, L.latLng(gps.lat, gps.lng))} · GPS ±${cmText(gps.acc)}</div></div></div>`;
   }
@@ -4455,7 +4455,7 @@ const pkText = s => { const c = Math.round(Math.max(0, s) * 100), k = Math.floor
 function soSheet() {
   const L0 = soList(), t = soTol(), done = L0.filter(p => p.done), bad = done.filter(p => !p.done.ok);
   const row = (p, i) => `<div class="meas-row" data-so="${i}" style="cursor:pointer"><span style="flex:1;min-width:0"><b>${esc(p.no)}</b>${p.code ? ' · ' + esc(p.code) : ''}${p.h != null ? ` · H ${mText(p.h, 2)}` : ''}
-    <br><small style="color:${!p.done ? 'var(--muted)' : p.done.ok ? '#2e7d32' : '#c62828'}">${!p.done ? 'не вынесена' : `${p.done.ok ? 'в допуске' : 'вне допуска'}: ${cmText(p.done.dl)}${p.done.dh != null ? `, по высоте ${p.done.dh >= 0 ? '+' : '−'}${cmText(Math.abs(p.done.dh))}` : ''}`}</small></span><span style="flex:none;color:var(--muted)">◎</span></div>`;
+    <br><small style="color:${!p.done ? 'var(--muted)' : p.done.ok ? '#2e7d32' : '#c62828'}">${!p.done ? 'не вынесена' : `${p.done.ok ? 'в допуске' : 'вне допуска'}: ${cmText(p.done.dl)}${p.done.dh != null ? `, по высоте ${p.done.dh >= 0 ? '+' : '−'}${cmText(Math.abs(p.done.dh))}` : p.done.hSkip ? ', высота не проверена' : ''}`}</small></span><span style="flex:none;color:var(--muted)">◎</span></div>`;
   showSheet(`<div class="sh-head"><b>Разбивка: ${done.length} из ${L0.length}${bad.length ? ` · вне допуска ${bad.length}` : ''}</b><button class="x" data-close>×</button></div>
     <div class="form" style="margin:4px 0 8px"><div class="row2"><div><label for="soTp">Допуск в плане, м</label><input id="soTp" inputmode="decimal" value="${t.plan}"></div><div><label for="soTh">Допуск по высоте, м</label><input id="soTh" inputmode="decimal" value="${t.h}"></div></div></div>
     <div id="soRows" style="max-height:42vh;overflow:auto">${L0.map(row).join('') || '<div class="hint">Задание пустое.</div>'}</div>
@@ -4503,12 +4503,12 @@ function soRecord(ref) {
     const c = sk42(ll.lat, ll.lng), q = { ...c }, t = soTol();
     if (crs().zoned && c.zone !== p.zone) { const [y, x] = proj4('WGS84', gkDef(p.zone), [ll.lng, ll.lat]); q.x = x; q.y = y; }   // в зоне проекта
     const H = normalHeight(ll.lat, ll.lng, meas.hEll), dx = q.x - p.x, dy = q.y - p.y, dl = Math.hypot(dx, dy), dh = p.h != null && H != null ? H - p.h : null;
-    const ok = dl <= t.plan && (dh == null || Math.abs(dh) <= t.h);
+    const ok = dl <= t.plan && (dh == null || Math.abs(dh) <= t.h), hSkip = p.h != null && H == null;   // проектная отметка есть, а высоту не получили
     p.done = { x: +q.x.toFixed(3), y: +q.y.toFixed(3), h: H == null ? null : +H.toFixed(3), dx: +dx.toFixed(3), dy: +dy.toFixed(3), dl: +dl.toFixed(3), dh: dh == null ? null : +dh.toFixed(3),
-      ok, tol: t, acc: meas.m, fix: fixKind(meas.acc), at: meas.at, ...(spoofNear(Date.now()) ? { spoofNear: spoofNear(Date.now()) } : {}), ref: hgt.ref ? hgt.ref.name || 'репер' : hgt.dh ? 'поправка' : '' };
+      ok, ...(hSkip ? { hSkip: true } : {}), tol: t, acc: meas.m, fix: fixKind(meas.acc), at: meas.at, ...(spoofNear(Date.now()) ? { spoofNear: spoofNear(Date.now()) } : {}), ref: hgt.ref ? hgt.ref.name || 'репер' : hgt.dh ? 'поправка' : '' };
     save(); drawSo(); cue(ok ? 'ok' : 'bad');
-    say(`Точка ${p.no}: ${ok ? 'в допуске' : 'вне допуска'}, ${cmSpeech(dl)}${dh != null ? `, по высоте ${cmSpeech(Math.abs(dh))}` : ''}`);
-    toast(`${p.no}: ${ok ? 'в допуске' : 'ВНЕ ДОПУСКА'} — ${cmText(dl)}${dh != null ? `, H ${dh >= 0 ? '+' : '−'}${cmText(Math.abs(dh))}` : ''}`);
+    say(`Точка ${p.no}: ${ok ? 'в допуске' : 'вне допуска'}, ${cmSpeech(dl)}${dh != null ? `, по высоте ${cmSpeech(Math.abs(dh))}` : hSkip ? ', высота не проверена' : ''}`);
+    toast(`${p.no}: ${ok ? 'в допуске' : 'ВНЕ ДОПУСКА'} — ${cmText(dl)}${dh != null ? `, H ${dh >= 0 ? '+' : '−'}${cmText(Math.abs(dh))}` : hSkip ? ', высота не проверена' : ''}`);
     if (ok) soNext(p); else updateStake();                               // брак — остаёмся на точке: поправить и записать заново
   });
 }
@@ -4517,7 +4517,7 @@ function toSoSheet() {
   for (const p of soList()) { const d = p.done;
     rows.push([p.no, p.code || '', f3(p.x), f3(p.y), p.h == null ? '' : Number(p.h).toFixed(3), d ? f3(d.x) : '', d ? f3(d.y) : '', d && d.h != null ? Number(d.h).toFixed(3) : '',
       d ? d.dx.toFixed(3) : '', d ? d.dy.toFixed(3) : '', d ? d.dl.toFixed(3) : '', d && d.dh != null ? d.dh.toFixed(3) : '', d ? `${d.tol.plan} / ${d.tol.h}` : '',
-      !d ? 'не вынесена' : d.ok ? 'в допуске' : 'вне допуска', d && d.acc != null ? f3(d.acc) : '', d ? fixText(d.fix) : '', d ? d.ref || 'модель геоида' : '', d ? d.at || '' : '', p.crs || planeName()]); }
+      !d ? 'не вынесена' : (d.ok ? 'в допуске' : 'вне допуска') + (d.hSkip ? ', высота не проверена' : ''), d && d.acc != null ? f3(d.acc) : '', d ? fixText(d.fix) : '', d ? d.ref || 'модель геоида' : '', d ? d.at || '' : '', p.crs || planeName()]); }
   return sheetJoin(rows);
 }
 
@@ -4548,7 +4548,7 @@ function updateAxis() {
     const m = gkScale(L.latLng(gps.lat, gps.lng)), w = { ...w0, off: w0.off / m, s: w0.s / m, len: w0.len / m };   // шаги и пикеты — на местности
     const pk0 = line.pk0 != null ? line.pk0 * 100 : 0, here = Math.abs(w.off) <= Math.max(STAKE_OK_M, gps.acc);
     const H = w.h != null ? normalHeight(gps.lat, gps.lng, gps.alt) : null, dH = H != null ? H - w.h : null;
-    body = `<div class="big ${here ? 'ok' : ''}">${here ? 'На оси' : (w.off > 0 ? 'влево ' : 'вправо ') + cmText(Math.abs(w.off))}</div>
+    body = `<div class="big ${here ? 'ok' : ''}">${here ? (Math.abs(w.off) <= STAKE_OK_M ? 'На оси' : 'На оси ±' + cmText(gps.acc)) : (w.off > 0 ? 'влево ' : 'вправо ') + cmText(Math.abs(w.off))}</div>
       <div>${pkText(pk0 + (line.pkDir === -1 ? -w.s : w.s))} · до конца ${mText(Math.max(0, w.len - w.s), 2)} м${w.out ? ' · <b style="color:#c62828">за концом линии</b>' : ''}</div>
       ${dH != null ? `<div style="margin-top:2px"><b>${Math.abs(dH) <= soTol().h ? 'По высоте — в допуске' : dH > 0 ? 'Срезать ' + cmText(dH) : 'Подсыпать ' + cmText(-dH)}</b> <span style="color:var(--muted);font-size:.85em">проект ${mText(w.h, 2)}</span></div>` : ''}
       <div style="color:var(--muted);font-size:.85em">«влево/вправо» — куда шагнуть, глядя по ходу линии (от 1-й вершины) · GPS ±${cmText(gps.acc)}</div>`;
@@ -5707,10 +5707,9 @@ const GENERIC = { point: 'mark', line: 'plain' };
 const PROJECT_RED = '#d32f2f';
 const COLORS = [['', 'по ГКИНП'], [VIS_COLOR, 'малиновый — виден везде'], ['#ff3b00', 'оранжево-красный'], ['#ffd400', 'жёлтый'], ['#00e5ff', 'голубой'],
   ['#00c853', 'зелёный'], ['#2962ff', 'синий'], ['#000000', 'чёрный'], ['#ffffff', 'белый']];
-// свой цвет — только вида #rrggbb: из чужого файла в карточку не должна попасть разметка вместо цвета
-const safeColor = c => /^#[0-9a-f]{3,8}$/i.test(String(c || '')) ? c : '';
 function objColor(obj, kind) {
-  if (safeColor(obj.color)) return obj.color;
+  // свой цвет — только #rrggbb или слово (red): из чужого файла в разметку не должна попасть вставка вместо цвета
+  if (/^(?:#[0-9a-f]{3,8}|[a-z]{3,20})$/i.test(String(obj.color || ''))) return obj.color;
   if (kind === 'line' && obj.state === 'project') return PROJECT_RED;   // проектируемое — красным, как на проектных планах: в поле не спутать со снятым
   if (kind === 'line') { const s = LINES[obj.type] || LINES.plain; return netColor(obj.type, s.color || 'var(--sym)'); }
   const s = POINTS[obj.type] || POINTS.mark; if (s.defect) return (obj.attr || {}).fixed ? DEF_DONE : s.color;
@@ -7057,7 +7056,7 @@ function setCrs(id) {
 function parseDeg(s) {
   const m = String(s).trim().replace(',', '.').match(/^(-?\d+(?:\.\d+)?)(?:\s*[°º\s]\s*(\d+(?:\.\d+)?)?\s*['′]?\s*(\d+(?:\.\d+)?)?\s*["″]?)?$/);
   if (!m) return NaN;
-  const d = Number(m[1]), sign = d < 0 ? -1 : 1;
+  const d = Number(m[1]), sign = m[1].startsWith('-') ? -1 : 1;   // −0°30′: у нуля градусов знака нет
   return d + sign * ((Number(m[2]) || 0) / 60 + (Number(m[3]) || 0) / 3600);
 }
 function editMsk() {
@@ -8096,7 +8095,7 @@ function showOutage(from) {
   showSheet(`<div class="sh-head"><b>Отключение: ${esc(net)}</b><button class="x" data-close>×</button></div>
     <div id="outList" style="max-height:52vh;overflow:auto">
     ${r.close.length ? `<div class="hint" style="margin:4px 0"><b style="color:#c62828">Закрыть (${r.close.length}):</b></div>${r.close.map((p, i) => row(esc(valveText(p)), i, 'c')).join('')}`
-      : '<div class="hint" style="margin:4px 0"><b>Задвижек на плане нет</b> — участок не отсечь по снятым данным.</div>'}
+      : r.closed.length ? '<div class="hint" style="margin:4px 0"><b>Закрывать больше нечего</b> — все задвижки участка на плане уже закрыты.</div>' : '<div class="hint" style="margin:4px 0"><b>Задвижек на плане нет</b> — участок не отсечь по снятым данным.</div>'}
     ${r.closed.length ? `<div class="hint" style="margin:8px 0 4px">Уже закрыты: ${r.closed.map(p => esc(valveText(p))).join('; ')}</div>` : ''}
     ${r.ends.length ? `<div class="hint" style="margin:8px 0 4px;color:${OUT_COLOR}"><b>Сеть уходит за план (${r.ends.length}):</b> там могут быть ещё задвижки или потребители — проверьте по схеме владельца.</div>${r.ends.map((x, i) => row(esc(x.well ? 'у колодца ' + pointRef(x.well) : 'конец L' + (x.line.no || '')), i, 'e')).join('')}` : ''}
     <div class="hint" style="margin:8px 0 4px">Отключается: ${r.lines.map(l => 'L' + (l.no || '')).join(', ')} — ${r.len.toFixed(0)} м сети${r.wells.length ? '; колодцы ' + r.wells.map(w => esc(pointRef(w))).join(', ') : ''}.</div></div>
