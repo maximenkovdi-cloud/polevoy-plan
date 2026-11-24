@@ -1581,7 +1581,7 @@ function heightsMenu() {
     </details></div>`);
   $('hgtSrc').onclick = e => {
     const b = e.target.closest('button[data-v]');
-    if (!b) return;
+    if (!b || b.dataset.v === hgt.src) return;                          // уже выбран — привязку не трогаем
     hgt = { ...hgt, src: b.dataset.v, dh: 0, ref: null };          // поправка от другого источника высот не годится
     setPref('hgt', hgt); heightsMenu();
   };
@@ -1914,7 +1914,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 88;
+const APP_BUILD = 89;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -1936,8 +1936,9 @@ async function checkUpdate(manual) {
       if (!U || !U.install) { if (U) U.open({ url: v.apk }); else window.open(v.apk, '_blank'); return; }   // старая сборка — через браузер
       if (trackRec && !(await ask('Идёт запись трека. Установка обновления закроет приложение и остановит запись (записанный путь сохранится). Обновить сейчас?', 'Обновить'))) return;
       busy = true; btn.disabled = true; btn.textContent = 'Скачиваю…';
-      const sub = await U.addListener('progress', p => { btn.textContent = p.percent >= 0 ? `Скачиваю ${p.percent}%` : 'Скачиваю…'; });
+      let sub = null;
       try {
+        sub = await U.addListener('progress', p => { btn.textContent = p.percent >= 0 ? `Скачиваю ${p.percent}%` : 'Скачиваю…'; });
         const r = await U.install({ url: v.apk });
         if (r && r.needPermission) toast('Включите «Разрешить установку» для «Полевого плана», вернитесь и нажмите «Обновить» ещё раз');
         else btn.textContent = 'Установите в окне Android';
@@ -2992,7 +2993,7 @@ const DRAW = {
       el('polygon', { points: `${p.x},${p.y} ${q.x},${q.y} ${r.x},${r.y}`, fill: fill ? 'currentColor' : 'var(--symBg)', stroke: 'currentColor', 'stroke-width': fill ? 0 : thin }, g); };
     const mark = (s, str, dy) => placeText(g, path, s, str, { dy: -dy * MM * sg, size: 2.5 * MM }) || placeText(g, path, s, str, { dy: dy * MM * sg, size: 2.5 * MM });
     if (spec.style === 'contour') {
-      const lab = a.h !== undefined && a.h !== '' ? String(a.h) : '';
+      const lab = a.h != null && a.h !== '' ? String(a.h) : '';
       if (lab && total > 30 * MM) {                                   // подпись — в разрыве горизонтали (зн. 329.7)
         const s0 = total * 0.45, gap = tw(lab, 2.4 * MM, true) + 1.6 * MM;
         segment(g, path, 0, s0 - gap / 2, w, 0, dash);
@@ -3020,7 +3021,7 @@ const DRAW = {
       if (spec.style === 'wallWood') each(4, 2, s => wedge(s, 0.5, 0.9, false));
       else if (spec.incl) { segment(g, path, 0, total, thin, 4.5 * sg); each(4, 2, s => wedge(s, 0.6, 4.4, true)); }
       else each(4, 2, s => wedge(s, 0.5, 0.8, true));                // зубцы 0,8 мм через 4 мм (зн. 280.1)
-      const t = a.top !== undefined && a.top !== '' ? planNum(a.top, 2) : '', b = a.bot !== undefined && a.bot !== '' ? planNum(a.bot, 2) : '';
+      const t = a.top != null && a.top !== '' ? planNum(a.top, 2) : '', b = a.bot != null && a.bot !== '' ? planNum(a.bot, 2) : '';
       if (t || b) mark(total * 0.55, `${t}/${b}`, 3);                   // отметки верха и основания стенки (п. 389)
       return;
     }
@@ -3349,13 +3350,13 @@ function showCard(kind, obj) {
     if (s.svgFor) name = s.name.replace(/ \(.*\)$/, '') + ' — ' + esc(((COVERS.find(c => c[0] === (obj.attr || {}).cover) || COVERS[0])[1]));
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
-    if (obj.no) kv.unshift(['№', String(obj.no)]);
+    if (obj.no) kv.unshift(['№', esc(obj.no)]);
     if (s.cad) { const mt = cadMt(obj), cat = landCat(); kv.push(['Mt', mt == null ? 'нет — поставлена касанием' : `${mText(mt, 2)} м${cat ? (mt <= cat.mt ? ' — в допуске' : ' — <b style="color:#c62828">хуже допуска ' + mText(cat.mt, 2) + '</b>') : ''}`], ['Закрепление', esc((obj.attr || {}).fix || CAD_FIX[0])]); }
     if (/^w_/.test(obj.type) && obj.attr) {
       const a = obj.attr, bot = wellBottom(obj);
       (a.lot || []).forEach((l, i) => kv.push([`Лоток ${i + 1}`, `${hasH(l.h) ? mText(Number(l.h), 2) + ' м' : '—'}${l.dir ? ' · ' + esc(l.dir) : ''}`]));
       if (bot != null && hasH(obj.h)) kv.push(['Глубина', mText(Number(obj.h) - bot, 2) + ' м']);
-      if (a.wd || a.wm) kv.push(['Колодец', [a.wm, a.wd ? 'Ø ' + a.wd + ' мм' : ''].filter(Boolean).join(', ')]);
+      if (a.wd || a.wm) kv.push(['Колодец', esc([a.wm, a.wd ? 'Ø ' + a.wd + ' мм' : ''].filter(Boolean).join(', '))]);
     }
     if (obj.q) kv.push(['Точность', `±${cmText(obj.q.acc)} в плане · ${fixText(obj.q.fix)}${obj.q.src === 'measure' ? ' · усреднено' : ''}<br><span style="color:var(--muted)">${new Date(obj.q.at).toLocaleString('ru-RU')}</span>`]);
     else if (obj.approx != null) kv.push(['Точность', `<b style="color:#ef6c00">приближённо ±${mText(obj.approx, 2)} м</b>`]);
@@ -3370,25 +3371,25 @@ function showCard(kind, obj) {
     kv.push(['Отметка', (obj.h != null && obj.h !== '' ? `<b>${mText(Number(obj.h), 2)} м</b><br>` : '') + `<span style="color:var(--muted)">${esc(heightNote(obj.h, obj.hSrc, hInfo))}</span>`]);
     if (obj.meas) {
       const m = obj.meas, mark = { ok: '✓ годится', mid: '≈ на пределе', bad: '✗ не годится' }[m.ok] || '';
-      kv.push(['Измерение', `±${cmText(m.m)} за ${m.sec} с, отсчётов ${m.n}${m.hdop != null ? ', HDOP ' + m.hdop : ''}<br>${mark} для 1:${m.scale} (допуск ${cmText(m.tol)})`]);
+      kv.push(['Измерение', `±${cmText(m.m)} за ${esc(m.sec)} с, отсчётов ${esc(m.n)}${m.hdop != null ? ', HDOP ' + esc(m.hdop) : ''}<br>${mark} для 1:${esc(m.scale)} (допуск ${cmText(m.tol)})`]);
     }
     if (obj.ctrl && obj.ctrl.length) kv.push(['Контроль', ctrlText(obj)]);
     ll = [obj.lat, obj.lng];
   } else {
     const s = LINES[obj.type] || LINES.plain;
-    icon = linePreview(s, 40, 34, obj.color); name = s.name + (obj.count > 1 ? ` · прокладок ${obj.count}` : '');
+    icon = linePreview(s, 40, 34, safeColor(obj.color) || undefined); name = s.name + (obj.count > 1 ? ` · прокладок ${obj.count}` : '');
     sub = [s.tag, obj.caption].filter(Boolean).map(esc).join(' ') || 'без подписи';
     const withH = (obj.hs || []).filter(Boolean).length;
     const lenP = lineLength(obj);
-    kv = [...(obj.no ? [['№', 'L' + obj.no]] : []), ['Длина', mText(lenP, 2) + ' м' + groundNote(lenP, obj.latlngs)], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
+    kv = [...(obj.no ? [['№', 'L' + esc(obj.no)]] : []), ['Длина', mText(lenP, 2) + ' м' + groundNote(lenP, obj.latlngs)], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
     const ci = obj.attr && obj.attr.circle;
     if (ci) { const cs = sk42(ci.lat, ci.lng); kv.push(['Окружность', `R ${mText(ci.r, 2)} м на местности · центр X ${f2(cs.x)} Y ${f2(cs.y)}`]); }
     if (s.kind === 'building') {
       const a = obj.attr || {}, lab = buildingLabel(s, obj);
       name = s.name; sub = [lab, a.houseNo ? '№ ' + a.houseNo : ''].filter(Boolean).map(esc).join(' · ') || 'контур';
       kv = [['Периметр', mText(lenP, 2) + ' м' + groundNote(lenP, obj.latlngs)], ['Площадь', mText(polyArea(obj), 1) + ' м²'], ['Углов', obj.latlngs.length]];
-      if (a.hFloor !== undefined && a.hFloor !== '') kv.push(['Пол 1 эт.', mText(Number(a.hFloor), 2) + ' м']);
-      if (a.hBlind !== undefined && a.hBlind !== '') kv.push(['Отмостка', mText(Number(a.hBlind), 2) + ' м']);
+      if (a.hFloor != null && a.hFloor !== '') kv.push(['Пол 1 эт.', mText(Number(a.hFloor), 2) + ' м']);
+      if (a.hBlind != null && a.hBlind !== '') kv.push(['Отмостка', mText(Number(a.hBlind), 2) + ' м']);
     }
     if (obj.vol) kv.push(['Объём', `насыпь ${m3(obj.vol.fill)} м³, выемка ${m3(obj.vol.cut)} м³ (на ${esc(dayMonth(obj.vol.at))})${obj.vol.sig !== volSig(obj) ? ' — <b style="color:#c62828">устарел, пересчитайте</b>' : ''}`]);
     if (s.kind === 'fence') {
@@ -3396,16 +3397,16 @@ function showCard(kind, obj) {
       sub = obj.caption ? esc(obj.caption) : 'ограждение';
       kv.push(['Засечки', a.flip ? 'справа по ходу' : 'слева по ходу'], ['Концы', a.gates ? 'упоры ворот' : 'обычные']);
     }
-    if (obj.state) kv.push(['Состояние', STATE_NAME[obj.state] || obj.state]);
+    if (obj.state) kv.push(['Состояние', STATE_NAME[obj.state] || esc(obj.state)]);
     if (NET_LINE_KINDS.has(s.kind) && obj.attr) { const a = obj.attr;
-      const parts = [[netCaption({ attr: a, type: obj.type }), ''], [a.depth !== '' && a.depth != null ? 'глубина ' + mText(Number(a.depth), 2) + ' м' : '', ''], [a.year ? a.year + ' г.' : '', ''], [a.owner ? esc(a.owner) : '', '']].map(x => x[0]).filter(Boolean);
+      const parts = [[esc(netCaption({ attr: a, type: obj.type })), ''], [a.depth !== '' && a.depth != null ? 'глубина ' + mText(Number(a.depth), 2) + ' м' : '', ''], [a.year ? esc(a.year) + ' г.' : '', ''], [a.owner ? esc(a.owner) : '', '']].map(x => x[0]).filter(Boolean);
       if (parts.length) kv.push(['Сеть', parts.join(' · ')]); }
-    if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${obj.pk0}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
+    if (s.kind === 'route' && obj.pk0 != null) kv.push(['Пикеты', `от ПК ${esc(obj.pk0)}, ${obj.pkDir === -1 ? 'по убыванию' : 'по возрастанию'}`]);
   }
   kv.splice(obj.no ? 1 : 0, 0, ['От меня', '<span id="fromMe"></span>']);   // расстояние и азимут — сразу видно, далеко ли
   card.innerHTML = `<div class="t">${icon}<div><div class="name">${name}</div><div class="sub">${sub}</div></div><button class="x trash-h" data-act="del" aria-label="Удалить" title="Удалить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button><button class="x" data-act="close">×</button></div>
     <div class="kv">${kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}</div>
-    ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${id}"></button>`).join('')}</div>
+    ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${esc(id)}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <details class="sw-wrap"><summary>Цвет: ${esc((COLORS.find(c => c[0] === (obj.color || '')) || COLORS[0])[1])} ▾</summary><div class="swatches">${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div></details>
     <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts" style="grid-column:span 2">Вершины</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button><button class="btn" data-act="go" style="grid-column:1/-1">➤ Отправить координаты (куда ехать)</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
@@ -5706,8 +5707,10 @@ const GENERIC = { point: 'mark', line: 'plain' };
 const PROJECT_RED = '#d32f2f';
 const COLORS = [['', 'по ГКИНП'], [VIS_COLOR, 'малиновый — виден везде'], ['#ff3b00', 'оранжево-красный'], ['#ffd400', 'жёлтый'], ['#00e5ff', 'голубой'],
   ['#00c853', 'зелёный'], ['#2962ff', 'синий'], ['#000000', 'чёрный'], ['#ffffff', 'белый']];
+// свой цвет — только вида #rrggbb: из чужого файла в карточку не должна попасть разметка вместо цвета
+const safeColor = c => /^#[0-9a-f]{3,8}$/i.test(String(c || '')) ? c : '';
 function objColor(obj, kind) {
-  if (obj.color) return obj.color;
+  if (safeColor(obj.color)) return obj.color;
   if (kind === 'line' && obj.state === 'project') return PROJECT_RED;   // проектируемое — красным, как на проектных планах: в поле не спутать со снятым
   if (kind === 'line') { const s = LINES[obj.type] || LINES.plain; return netColor(obj.type, s.color || 'var(--sym)'); }
   const s = POINTS[obj.type] || POINTS.mark; if (s.defect) return (obj.attr || {}).fixed ? DEF_DONE : s.color;
@@ -7075,7 +7078,7 @@ function editMsk() {
     msk = r; setPref('msk', r); setCrs('msk');
   }, 'Сохранить');
 }
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };   // местная дата
 // text — строка или Blob. В Android-приложении файл пишется в «Загрузки/Полевой план» и предлагается «Поделиться»
 const FILES = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Files) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Files')));
 async function download(name, text, type) {
@@ -7494,7 +7497,7 @@ function toDxf() {
     put(0, 'ENDBLK', 8, '0');
   }
   put(0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES');
-  L.push(...E);
+  for (const x of E) L.push(x);                                      // L.push(...E) падает на большом плане
   put(0, 'ENDSEC', 0, 'EOF');
   return cp1251(L.join('\r\n') + '\r\n', true);
 }
@@ -7767,9 +7770,13 @@ function guardExport(go) {
 
 // настройки в копию (кроме ключа Яндекса и самого плана) — чтобы на новом телефоне вернулись коды, МСК, допуски
 const PREF_SKIP = /^tk\.(plan\.|ai$|yandexKey$|yandexJsKey$|projects?$|tracks$|trackLive$)/;   // треки — не в копии плана: они большие и к объекту не относятся
+// приёмник и сервер поправок переезжают с копией, а логин и пароль NTRIP — нет: копию пересылают, пароль не должен уйти с ней
+function rxPrefNoLogin(raw) {
+  try { return JSON.stringify({ ...(JSON.parse(raw) || {}), user: '', pass: '' }); } catch (e) { return JSON.stringify({}); }
+}
 function backupJson() {
   const prefs = {};
-  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('tk.') && !PREF_SKIP.test(k)) prefs[k] = localStorage.getItem(k); } } catch (e) { /* без настроек */ }
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('tk.') && !PREF_SKIP.test(k)) prefs[k] = k === 'tk.rx' ? rxPrefNoLogin(localStorage.getItem(k)) : localStorage.getItem(k); } } catch (e) { /* без настроек */ }
   return JSON.stringify({ app: 'Полевой план', kind: 'копия плана', ver: 1, at: new Date().toISOString(), plan: data, prefs });
 }
 const stamp = () => { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${today()}_${z(d.getHours())}-${z(d.getMinutes())}`; };
@@ -8277,7 +8284,8 @@ function toGeoJson() {
 function toMifMid() {
   const objs = data.points.map(p => ({ o: p, kind: 'point', pts: [sk42(p.lat, p.lng)] })).concat(data.lines.map(l => ({ o: l, kind: 'line', pts: l.latlngs.map(a => sk42(a[0], a[1])) })));
   const all = objs.flatMap(x => x.pts);
-  const b = all.length ? [Math.min(...all.map(p => p.y)) - 100, Math.min(...all.map(p => p.x)) - 100, Math.max(...all.map(p => p.y)) + 100, Math.max(...all.map(p => p.x)) + 100] : [0, 0, 1, 1];
+  const ext = all.reduce((e, p) => [Math.min(e[0], p.y), Math.min(e[1], p.x), Math.max(e[2], p.y), Math.max(e[3], p.x)], [Infinity, Infinity, -Infinity, -Infinity]);   // без Math.min(...): на большом плане падает
+  const b = all.length ? [ext[0] - 100, ext[1] - 100, ext[2] + 100, ext[3] + 100] : [0, 0, 1, 1];
   const mif = ['Version 300', 'Charset "WindowsCyrillic"', 'Delimiter ";"', `CoordSys NonEarth Units "m" Bounds (${f3(b[0])}, ${f3(b[1])}) (${f3(b[2])}, ${f3(b[3])})`,
     'Columns 14', '  NO Char(20)', '  CODE Char(40)', '  NAME Char(100)', '  H Float', '  LABEL Char(120)', '  STATE Char(30)', '  NOTE Char(200)',
     '  MAT Char(60)', '  DIAM Char(20)', '  DEPTH Char(10)', '  YEAR Char(10)', '  OWNER Char(100)', '  ACC Char(10)', '  FIX Char(20)', 'Data'];
