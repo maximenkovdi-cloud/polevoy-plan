@@ -1,7 +1,8 @@
 // Фоновый помощник «Полевого плана»: хранит само приложение в телефоне, чтобы оно открывалось без интернета.
 // Куски карты хранит не он, а сама страница (IndexedDB «tk-tiles»).
-const SHELL = 'polevoy-shell-v2';
-const FILES = ['./', './index.html', './lib/leaflet.min.css', './lib/leaflet.min.js', './lib/proj4.js', './lib/geoid-ru.bin'];
+const SHELL = 'polevoy-shell-v3';
+const FILES = ['./', './index.html', './lib/leaflet.min.css', './lib/leaflet.min.js', './lib/proj4.js', './lib/geoid-ru.bin',
+  './lib/rc-normal-cyrillic.woff2', './lib/rc-normal-latin.woff2', './lib/rc-italic-cyrillic.woff2', './lib/rc-italic-latin.woff2'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
