@@ -7,11 +7,14 @@
 <title>Полевой план</title>
 <!-- библиотеки лежат рядом (lib/), чтобы приложение открывалось без интернета: Leaflet 1.9.4 (BSD-2), proj4 2.11.0 (MIT) -->
 <link rel="stylesheet" href="lib/leaflet.min.css">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:ital,wght@0,400;0,500;1,400;1,500&display=swap">
 <script src="lib/leaflet.min.js"></script>
 <script src="lib/proj4.js"></script>
 <style>
+  /* Roboto Condensed © The Roboto Condensed Project Authors, SIL Open Font License 1.1 (https://openfontlicense.org), с Google Fonts; лежит в lib — запуск без интернета не ждёт шрифт */
+  @font-face { font-family:'Roboto Condensed'; font-style:normal; font-weight:400 500; font-display:swap; src:url(lib/rc-normal-cyrillic.woff2) format('woff2'); unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+  @font-face { font-family:'Roboto Condensed'; font-style:normal; font-weight:400 500; font-display:swap; src:url(lib/rc-normal-latin.woff2) format('woff2'); unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+  @font-face { font-family:'Roboto Condensed'; font-style:italic; font-weight:400 500; font-display:swap; src:url(lib/rc-italic-cyrillic.woff2) format('woff2'); unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+  @font-face { font-family:'Roboto Condensed'; font-style:italic; font-weight:400 500; font-display:swap; src:url(lib/rc-italic-latin.woff2) format('woff2'); unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
   /* ── темы: день / солнце / ночь ── */
   body.day   { --bg:#f4f1e8; --panel:#ffffff; --ink:#151515; --muted:#5d5d5d; --line:#d9d6cc; --accent:#1f5fbf; --accentInk:#fff; --red:#c62828; --sym:#111111; --symBg:#ffffff; --halo:#ffffff; --shadow:0 1px 6px rgba(0,0,0,.18); --fs:14px; }
   body.sun   { --bg:#ffffff; --panel:#ffffff; --ink:#000000; --muted:#222222; --line:#000000; --accent:#0039a6; --accentInk:#fff; --red:#b00000; --sym:#000000; --symBg:#ffffff; --halo:#ffffff; --shadow:0 0 0 2px #000; --fs:15.5px; }
@@ -174,6 +177,7 @@
   #bar button { border:0; background:none; display:flex; flex-direction:column; align-items:center; gap:3px; color:var(--muted); font-size:12.5px; width:72px; padding:0; }
   #bar .ic { width:56px; height:36px; border-radius:18px; display:flex; align-items:center; justify-content:center; }
   #bar svg { width:26px; height:26px; }
+  body.day #bar button:not(.on) { color:#424242; }   /* на солнце серое бледнеет — темнее, чем остальной вспомогательный текст */
   #bar button.on { color:var(--ink); font-weight:700; }
   #bar button.on .ic { background:color-mix(in srgb, var(--accent) 22%, transparent); color:var(--accent); }
 
@@ -327,6 +331,7 @@
   .leaflet-top.leaflet-left { top:var(--topH, 92px); }
   .leaflet-top.leaflet-left .leaflet-control { margin-top:0; }          /* отступ уже учтён в --topH */
   .leaflet-control-zoom a { width:40px !important; height:40px !important; line-height:40px !important; font-size:20px !important; background:var(--panel) !important; color:var(--ink) !important; border-color:var(--line) !important; }
+  body.glove .leaflet-control-zoom a { width:52px !important; height:52px !important; line-height:52px !important; font-size:26px !important; }   /* перчатки: столбик 104 px — выше компаса (+112) */
   .leaflet-bottom { bottom:var(--barH, 70px); }
   body.yjs .leaflet-bottom { bottom:calc(var(--barH, 70px) + 34px); }
   .yjs-box, .yjs-inner { position:absolute; left:0; top:0; }
@@ -1923,7 +1928,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 94;
+const APP_BUILD = 95;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2657,7 +2662,19 @@ function pipeAngle(ll) {
   }
   return best && best.d * mpp <= PIPE_SNAP_M ? { rot: Math.round(best.ang * 180 / Math.PI * 10) / 10, line: best.line } : null;
 }
-let pointMarkers = [];
+let pointMarkers = [], pointsAt = null;                               // pointsAt — где нарисованы знаки (для сдвига карты)
+function pointsReusable() {
+  const d = pointsAt; if (!d || d.zoom !== map.getZoom()) return false;
+  // по широте/долготе угла, а не по точке слоя: setView без анимации обнуляет начало слоя, и сдвиг по нему не виден
+  const sz = map.getSize(), o = map.latLngToContainerPoint(d.ll), P = Math.max(d.size.x, d.size.y);
+  return sz.x === d.size.x && sz.y === d.size.y && Math.abs(o.x) < P * 0.6 && Math.abs(o.y) < P * 0.6;   // тот же порог, что у линий (netReusable)
+}
+// знаки только что нарисованы для этого же вида (redrawAll: drawPoints, затем frame) — второй раз не нужно
+function pointsFresh() {
+  const d = pointsAt; if (!d || d.zoom !== map.getZoom()) return false;
+  const sz = map.getSize(), o = map.latLngToContainerPoint(d.ll);
+  return sz.x === d.size.x && sz.y === d.size.y && Math.abs(o.x) < 1 && Math.abs(o.y) < 1;
+}
 // Мельче 1:3000 мелкие подробности 1:500 (крыльца, буквы покрытий, отметки, засечки оград, надписи зданий) не рисуются — иначе каша;
 // сети, здания, геодезические пункты остаются
 let GEN_DENOM = 6 * planScale;
@@ -2683,7 +2700,12 @@ function drawPoints() {
   pointLayer.clearLayers();
   pointMarkers = [];
   generalized = planDenom() > GEN_DENOM;
+  // та же область, что у слоя линий: экран и запас P = большая сторона экрана со всех сторон; сдвиг в пределах запаса знаки не пересоздаёт
+  let inArea = null;
+  try { const sz = map.getSize(), P = Math.max(sz.x, sz.y); pointsAt = { zoom: map.getZoom(), ll: map.containerPointToLatLng([0, 0]), size: sz };
+    inArea = p => { const c = map.latLngToContainerPoint([p.lat, p.lng]); return c.x >= -P && c.x <= sz.x + P && c.y >= -P && c.y <= sz.y + P; }; } catch (e) { pointsAt = null; }
   for (const p of data.points) {
+    if (inArea && !inArea(p) && !(selected && selected.obj === p)) continue;
     if (generalized && MINOR_POINTS.has(p.type) && !(selected && selected.obj === p)) continue;
     if (SYM_PX < PLAN_HIDE_PX && !(selected && selected.obj === p)) continue;   // на мелком масштабе знак меньше точки — не виден, как на бумаге
     const s = POINTS[p.type] || POINTS.mark, lbl = LBL_PX < LBL_HIDE_PX ? '' : pointLabel(p), sel = selected && selected.obj === p;
@@ -2726,6 +2748,8 @@ function placePointLabels() {
 }
 // Кадр отрисовки: сначала занимаем места знаками и линиями, потом расставляем надписи
 function frame(mayReuse) {                                            // mayReuse — простой сдвиг карты: линии не перерисовывать, если хватает запаса
+  const reuse = mayReuse === true && netReusable() && pointsReusable();   // знаки и линии обновляются вместе — одна область, без двойных опор и подписей поверх знаков
+  if (!reuse && !pointsFresh()) drawPoints();
   occReset();
   for (const { p } of pointMarkers) { const c = map.latLngToContainerPoint([p.lat, p.lng]); reserve({ x: c.x - SYM_R, y: c.y - SYM_R, w: 2 * SYM_R, h: 2 * SYM_R }, p.id); }
   for (const line of data.lines) {                                    // сама линия — препятствие для чужих надписей
@@ -2736,7 +2760,7 @@ function frame(mayReuse) {                                            // mayReus
     }
   }
   placePointLabels();
-  if (mayReuse === true && netReusable()) {                              // линии не перерисованы — их подписи всё равно занимают место (для сетки)
+  if (reuse) {                              // линии не перерисованы — их подписи всё равно занимают место (для сетки)
     const o = map.containerPointToLayerPoint([0, 0]), dx = drawnAt.origin.x - o.x, dy = drawnAt.origin.y - o.y;
     for (const b of drawnAt.txt || []) reserve({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }, b.owner);
   } else { netTxt = []; try { drawLines(); } finally { if (drawnAt) drawnAt.txt = netTxt; netTxt = null; } }
@@ -2757,6 +2781,23 @@ function el(tag, attrs, parent) {
   for (const k in attrs) e.setAttribute(k, attrs[k]);
   if (parent) parent.appendChild(e);
   return e;
+}
+// Ломаная для знаков: те же вершины (округлённые до 0,1 px, как в атрибуте d), что у SVG-пути, и те же ответы getTotalLength/getPointAtLength —
+// но точка ищется делением пополам по накопленным длинам, без обхода пути с начала на каждый вызов
+function polyMeasure(pts) {
+  const xs = pts.map(p => +(+p.x).toFixed(1)), ys = pts.map(p => +(+p.y).toFixed(1)), cum = [0];
+  for (let i = 1; i < xs.length; i++) cum.push(cum[i - 1] + Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]));
+  const total = cum[cum.length - 1] || 0;
+  return {
+    getTotalLength: () => total,
+    getPointAtLength(d) {
+      d = Math.max(0, Math.min(Number(d) || 0, total));
+      let lo = 0, hi = cum.length - 1;
+      while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= d) lo = m; else hi = m; }
+      const len = cum[hi] - cum[lo], t = len > 0 ? (d - cum[lo]) / len : 0;
+      return { x: xs[lo] + (xs[hi] - xs[lo]) * t, y: ys[lo] + (ys[hi] - ys[lo]) * t };
+    }
+  };
 }
 function at(path, s) {
   const total = path.getTotalLength();
@@ -2838,6 +2879,9 @@ function text(g, path, s, str, o) {
 let occupied = [], curOwner = null;
 let labelsAll = pref('labelsAll', false);                              // «Подписи: все» — ставить и с наложением (меню)
 const measureCtx = document.createElement('canvas').getContext('2d');
+// шрифт чертежа (lib/rc-*.woff2) грузится, когда понадобится: подписи, разложенные по ширине запасного шрифта, раскладываем заново, когда он пришёл
+if (document.fonts && document.fonts.load) Promise.all(['', 'italic '].map(st => document.fonts.load(st + '10px "Roboto Condensed"', 'Жж Zz 0')))
+  .then(() => { if (typeof ready !== 'undefined' && ready) redrawAll(); }).catch(() => {});
 // ширина надписи, размер которой задан в «мм» знака (переводится в экранный размер надписи)
 function tw(str, size, italic) { return textWidth(str, size * TEXT_K, italic); }
 function textWidth(str, px, italic) {
@@ -3136,6 +3180,7 @@ function drawLines() {
   for (const line of data.lines) {
     const spec = LINES[line.type] || LINES.plain;
     const all = screenPts(line);
+    if (all.length && (Math.max(...all.map(q => q.x)) < -P || Math.min(...all.map(q => q.x)) > size.x + P || Math.max(...all.map(q => q.y)) < -P || Math.min(...all.map(q => q.y)) > size.y + P)) continue;   // вся линия за запасом — не видна
     // далеко за краем запаса линию не рисуем (на крупном масштабе узор вдоль длинных линий дорог для телефона); замкнутые — целиком, ради заливки
     for (const pts of !CLIP_KINDS.has(spec.kind) || spec.closed || all.length < 2 ? [all] : clipPieces(all, clipBox)) {   // режем только простые линии: у трассы пикеты, у опор и стрелок — вершины
     if (pts.length < 2) continue;
@@ -3143,7 +3188,7 @@ function drawLines() {
     const isSel = selected && selected.obj === line;
     g.style.color = isSel && !line.color ? 'var(--accent)' : objColor(line, 'line');   // свой цвет виден и у выбранной линии — выбор показывает толщина
     if (isSel) el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 12, opacity: 0.22, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);   // подсветка выбранной линии
-    const path = el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'none' }, g);
+    const path = polyMeasure(pts);   // невидимый SVG-путь больше не нужен — только мерить длину
     if (path.getTotalLength() < 6) { el('line', { x1: pts[0].x, y1: pts[0].y, x2: pts[pts.length - 1].x, y2: pts[pts.length - 1].y, stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round' }, g); continue; }
     curOwner = line.id;                                                // надписи своей линии не мешают ей самой
     const w = Math.max(0.6, spec.w * MM) * (isSel ? 1.8 : 1), thin = Math.max(0.6, 0.15 * MM) * (isSel ? 1.8 : 1), total = path.getTotalLength();
@@ -6853,6 +6898,9 @@ dxfStore('readonly', s => s.getAllKeys()).then(keys => {
 
 // Меню: короткий главный список; выгрузки и настройки — в своих подменю (2 касания до любой выгрузки)
 $('btnMenu').onclick = () => openList('Меню', [
+  { header: 'Поле' },
+  { id: 'glove', icon: '✋', text: 'Крупные кнопки (перчатки)', on: gloveOn, check: true },
+  { id: 'rain', icon: '☂', text: 'Дождь: касание карты не ставит точку', on: rainOn, check: true },
   { header: 'Объект' },
   { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || ((projectList().find(p => p.id === projectId) || {}).name) || 'без названия') + ' — сменить, новый' },
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
@@ -6867,9 +6915,6 @@ $('btnMenu').onclick = () => openList('Меню', [
   { header: 'Сдать работу' },
   { id: 'export', icon: '⇩', text: 'Выгрузки: архив для отчёта, DXF, КРЕДО, ведомости, ГИС →' },
   { id: 'backup', icon: '⟲', text: 'Копии плана: автокопия, полная копия с фото, восстановление' },
-  { header: 'Поле' },
-  { id: 'glove', icon: '✋', text: 'Крупные кнопки (перчатки)', on: gloveOn, check: true },
-  { id: 'rain', icon: '☂', text: 'Дождь: касание карты не ставит точку', on: rainOn, check: true },
   { header: 'Карта' },
   { id: 'crs', icon: '⌖', text: 'Система координат: ' + planeName() },
   { id: 'planscale', icon: '⊡', text: `Масштаб плана: 1:${planScale} (размер знаков, DXF)` },
