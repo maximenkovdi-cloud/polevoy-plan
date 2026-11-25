@@ -1950,7 +1950,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 98;
+const APP_BUILD = 99;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2136,8 +2136,9 @@ if (NATIVE && GNSS && GNSS.spoofInfo) setInterval(() => { if (gnssOn) spoofPoll(
 // RX:NMEA-START
 const RX_FIX_M = 0.02, RX_FLOAT_M = 0.3, RX_HDOP_M = 2.5;   // если приёмник не прислал GST: оценка точности по виду решения
 const nmeaDeg = (v, dir) => {
-  const n = Number(v); if (!v || !String(v).trim() || !isFinite(n)) return null;
+  const n = Number(v); if (!v || !String(v).trim() || !isFinite(n) || n < 0) return null;
   const d = Math.floor(n / 100), deg = d + (n - d * 100) / 60;
+  if (deg > (dir === 'N' || dir === 'S' ? 90 : 180)) return null;      // вне Земли — испорченная строка
   return dir === 'S' || dir === 'W' ? -deg : deg;
 };
 /** Разбор строки NMEA: GGA и GST любого talker; неверная контрольная сумма — null. */
@@ -2146,16 +2147,18 @@ function nmeaParse(line) {
   let sum = 0; for (let i = 0; i < m[1].length; i++) sum ^= m[1].charCodeAt(i);
   if (sum !== parseInt(m[2], 16)) return null;
   const p = m[1].split(','), kind = p[0].slice(-3);
+  const num = s => s == null || String(s).trim() === '' || !isFinite(Number(s)) ? null : Number(s);   // мусор в поле — как пустое
+  const sd = s => { const v = num(s); return v != null && v >= 0 ? v : null; };
   if (kind === 'GGA') {
-    const lat = nmeaDeg(p[2], p[3]), lng = nmeaDeg(p[4], p[5]), alt = p[9] === '' ? null : Number(p[9]), sep = p[11] === '' ? 0 : Number(p[11]);
-    return { kind, q: Number(p[6]) || 0, lat, lng, sats: Number(p[7]) || 0, hdop: p[8] === '' ? null : Number(p[8]), hEll: alt == null ? null : alt + sep };
+    const lat = nmeaDeg(p[2], p[3]), lng = nmeaDeg(p[4], p[5]), alt = num(p[9]), sep = num(p[11]) || 0;
+    return { kind, q: Number(p[6]) || 0, lat, lng, sats: Number(p[7]) || 0, hdop: sd(p[8]), hEll: alt == null ? null : alt + sep };
   }
-  if (kind === 'GST') return { kind, sLat: p[6] === '' ? null : Number(p[6]), sLon: p[7] === '' ? null : Number(p[7]), sAlt: p[8] === '' ? null : Number(p[8]) };
+  if (kind === 'GST') return { kind, sLat: sd(p[6]), sLon: sd(p[7]), sAlt: sd(p[8]) };
   return null;
 }
 /** Точность по виду решения: FIX и FLOAT определяет сам приёмник, а не оценка в метрах. */
 function rxAccuracy(q, hdop, g) {
-  const sig = g && g.sLat != null && g.sLon != null ? Math.hypot(g.sLat, g.sLon) : null;
+  const sig = g && g.sLat != null && g.sLon != null && isFinite(g.sLat) && isFinite(g.sLon) ? Math.hypot(g.sLat, g.sLon) : null;   // отрицательные СКО отсекает уже разбор GST
   if (q === 4) return Math.min(sig != null ? sig : RX_FIX_M, RTK_FIX_M);
   if (q === 5) return Math.min(Math.max(sig != null ? sig : RX_FLOAT_M, RTK_FIX_M + 0.01), 0.99);
   return Math.max(sig != null ? sig : (hdop || 2) * RX_HDOP_M, 1);
@@ -5820,7 +5823,7 @@ function extendXY(P, T, tClosed) {
       const q = lineCross(a, b, c, d);
       if (!q || q.t <= 1e-9 || q.u < -1e-9 || q.u > 1 + 1e-9) continue;
       const move = Math.hypot(q.x - b.x, q.y - b.y);
-      if (move > EXTEND_MAX_M) continue;
+      if (!(move <= EXTEND_MAX_M)) continue;                               // дальше 300 м или испорченные координаты (NaN)
       if (!best || move < best.move) best = { end, x: q.x, y: q.y, move, trim: q.t < 1 };
     }
   }
@@ -6029,9 +6032,11 @@ function moveForm(kind, obj) {
     const ll2 = obj.latlngs.map(shift);
     if (v.act === 'copy') {
       const cp = lineLike(obj, ll2, true); cp.built = 'copy';
+      if (obj.attr && obj.attr.circle) { const c = shift([obj.attr.circle.lat, obj.attr.circle.lng]); cp.attr = { ...(cp.attr || {}), circle: { ...obj.attr.circle, lat: c[0], lng: c[1] } }; }   // копия окружности — тоже окружность
       data.lines.push(cp); save(); redrawAll(); showCard('line', cp); toast(`Копия L${cp.no} в ${what} — ↶ вернёт`);
     } else {
-      obj.latlngs = ll2; delete obj.vol; delete obj.hs;                  // отметки были у старых мест if (obj.attr && obj.attr.circle) { const c = shift([obj.attr.circle.lat, obj.attr.circle.lng]); obj.attr.circle.lat = c[0]; obj.attr.circle.lng = c[1]; }
+      obj.latlngs = ll2; delete obj.vol; delete obj.hs;                  // отметки были у старых мест
+      if (obj.attr && obj.attr.circle) { const c = shift([obj.attr.circle.lat, obj.attr.circle.lng]); obj.attr.circle.lat = c[0]; obj.attr.circle.lng = c[1]; }
       save(); redrawAll(); showCard('line', obj); toast(`L${obj.no || ''} сдвинута на ${what} — ↶ вернёт`);
     }
   }, 'Готово');
@@ -6677,8 +6682,8 @@ const TiffLayer = L.Layer.extend({
       const r = await MAPS.render({ id: m.id, x0, y0, x1, y1, w, h, s16: m.s16 });
       if (seq !== this.seq || !this._img || !r || !r.data) return;
       const img = this._img;
-      await new Promise(res => { img.onload = img.onerror = res; img.src = `data:image/${r.fmt};base64,${r.data}`; });
-      if (seq !== this.seq || !this._img) return;
+      const ok = await new Promise(res => { img.onload = () => res(true); img.onerror = () => res(false); img.src = `data:image/${r.fmt};base64,${r.data}`; });
+      if (seq !== this.seq || !this._img || !ok) return;                // не загрузилась — при следующем сдвиге попробуем снова
       img.width = w; img.height = h; this.shown = { x0, y0, x1, y1, w, h }; this._place();
     } catch (e) { if (seq === this.seq) toast('Снимок «' + m.name + '»: ' + ((e && e.message) || 'не прочитался')); }
     finally { this.busy = false; if (this.again && this._map) { this.again = false; this._update(); } }
@@ -7723,7 +7728,8 @@ function editMsk() {
       hint: 'По умолчанию — как для СК-42 (эллипсоид Красовского). Параметры МСК выдаёт Росреестр — вводите из своих документов.' }
   ], v => {
     const r = { name: v.name || 'МСК', lon0: parseDeg(v.lon0), lat0: parseDeg(v.lat0 || '0'), k: parseNum(v.k || '1'), x0: parseNum(v.x0 || '0'), y0: parseNum(v.y0 || '0'), towgs84: v.towgs84.replace(/\s/g, '') };
-    if ([r.lon0, r.lat0, r.k, r.x0, r.y0].some(isNaN)) { toast('Проверьте числа: меридиан, широта, масштаб и сдвиги'); return false; }
+    if ([r.lon0, r.lat0, r.k, r.x0, r.y0].some(x => !isFinite(x))) { toast('Проверьте числа: меридиан, широта, масштаб и сдвиги'); return false; }
+    if (Math.abs(r.lon0) > 180 || Math.abs(r.lat0) > 90 || !(r.k > 0.9 && r.k < 1.1)) { toast('Меридиан — от −180° до 180°, широта — от −90° до 90°, масштаб — около 1 (0,9…1,1)'); return false; }
     if (r.towgs84.split(',').length !== 7 || r.towgs84.split(',').some(x => isNaN(Number(x)))) { toast('Параметры перехода — ровно 7 чисел через запятую'); return false; }
     msk = r; setPref('msk', r); setCrs('msk');
   }, 'Сохранить');
@@ -7856,7 +7862,12 @@ async function aiPost(messages, maxTokens) {
   const headers = { 'Content-Type': 'application/json', Authorization: 'Api-Key ' + aiCfg.key, 'OpenAI-Project': aiCfg.folder };
   let status, text;
   if (NET && NET.post) ({ status, text } = await NET.post({ url: AI_URL, headers, body, timeout: AI_TIMEOUT_MS }));
-  else { const r = await fetch(AI_URL, { method: 'POST', headers, body }); status = r.status; text = await r.text(); }
+  else {
+    const ac = typeof AbortController === 'function' ? new AbortController() : null, tm = ac && setTimeout(() => ac.abort(), AI_TIMEOUT_MS);
+    try { const r = await fetch(AI_URL, { method: 'POST', headers, body, ...(ac ? { signal: ac.signal } : {}) }); status = r.status; text = await r.text(); }
+    catch (e) { if (e && e.name === 'AbortError') throw new Error('сервер не ответил за ' + AI_TIMEOUT_MS / 1000 + ' с'); throw e; }
+    finally { if (tm) clearTimeout(tm); }
+  }
   if (status === 401 || status === 403) throw new Error('ключ или каталог не подходят — проверьте их в «Подсказка знака по фото»');
   if (status === 429) throw new Error('слишком часто или закончились средства на счёте Яндекс Облака');
   if (status >= 400) throw new Error(`сервер ответил ${status}: ${String(text).slice(0, 160)}`);
@@ -7918,7 +7929,7 @@ ${signCatalog(kind)}
   let parsed = null;
   try { parsed = JSON.parse(answer.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, '$1')); } catch (e) { parsed = null; }
   const all = kind === 'point' ? POINTS : LINES;
-  return { text: (parsed && parsed.text) || '', cands: ((parsed && parsed.candidates) || []).filter(c => c && all[c.id]).slice(0, 3), at: new Date().toISOString() };
+  return { text: (parsed && parsed.text) || '', cands: (parsed && Array.isArray(parsed.candidates) ? parsed.candidates : []).filter(c => c && all[c.id]).slice(0, 3), at: new Date().toISOString() };
 }
 async function suggestSign(kind, obj) {
   if (!aiReady()) { aiSettings(); return; }
@@ -7989,6 +8000,7 @@ function cp1251(str, dxf) {
     0x404: 0xAA, 0x454: 0xBA, 0x406: 0xB2, 0x456: 0xB3, 0x407: 0xAF, 0x457: 0xBF, 0x490: 0xA5, 0x491: 0xB4, 0x40E: 0xA1, 0x45E: 0xA2 };
   const out = [];
   for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i);
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length && str.charCodeAt(i + 1) >= 0xDC00 && str.charCodeAt(i + 1) <= 0xDFFF) { out.push(0x3F); i++; continue; }   // эмодзи и т. п.: в DXF их не записать
     const b = c < 128 ? c : c >= 0x410 && c <= 0x44F ? c - 0x350 : extra[c];
     if (b != null) out.push(b);
     else if (dxf) for (const ch of '\\U+' + c.toString(16).toUpperCase().padStart(4, '0')) out.push(ch.charCodeAt(0));
