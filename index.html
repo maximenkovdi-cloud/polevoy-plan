@@ -1928,7 +1928,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 95;
+const APP_BUILD = 96;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2419,7 +2419,7 @@ function rxRegionCheck() {
   if (!w) {
     rxRegSeen = { code: null, n: 0 };
     // «уже спрашивал» забываем, только когда действительно вернулись в свой регион — не из-за пропажи GPS или границы
-    if (gps && !spoof && rxCfg.reg) { const h = rxNearestRegion(L.latLng(gps.lat, gps.lng)); if (h && h.code === rxCfg.reg) rxRegAskedFor = null; }
+    if (gps && !spoof && rxCfg.reg) { const h = rxNearestRegion(L.latLng(gps.lat, gps.lng)); if (h && (h.code === rxCfg.reg || RX_SAME_REG[h.code] === rxCfg.reg || RX_SAME_REG[rxCfg.reg] === h.code)) rxRegAskedFor = null; }
     return;
   }
   rxRegSeen = w.near.code === rxRegSeen.code ? { code: w.near.code, n: rxRegSeen.n + 1 } : { code: w.near.code, n: 1 };
@@ -3110,7 +3110,7 @@ const DRAW = {
     let n = 0;
     for (let y = Math.min(...ys) + step / 2, r = 0; y < Math.max(...ys); y += step * 0.866, r++)
       for (let x = Math.min(...xs) + step / 2 + (r % 2) * step / 2; x < Math.max(...xs); x += step) {
-        if (!inPoly(x, y, poly) || n > 400) continue;                    // значки — только внутри контура, не больше 400 на экран
+        if (!inPoly(x, y, poly) || n >= 400) continue;                    // значки — только внутри контура, не больше 400 на экран
         if (labelBox && Math.abs(x - labelBox.x) < labelBox.w && Math.abs(y - labelBox.y) < labelBox.h) continue;   // не под надписью
         if (poly.some((p, i) => { const q = poly[(i + 1) % poly.length], dx = q.x - p.x, dy = q.y - p.y, t = Math.max(0, Math.min(1, ((x - p.x) * dx + (y - p.y) * dy) / (dx * dx + dy * dy || 1)));
           return Math.hypot(p.x + t * dx - x, p.y + t * dy - y) < 1.2 * MM; })) continue;   // не на самой границе
@@ -3706,7 +3706,7 @@ function editPoint(p) {
     { key: 'note', label: 'Примечание', value: p.note, placeholder: 'необязательно' }
   ], v => {
     const r = v.rot === '' ? 0 : parseNum(v.rot);
-    if (isNaN(r)) { toast('Поворот — число градусов, например 90'); return false; }
+    if (!isFinite(r)) { toast('Поворот — число градусов, например 90'); return false; }
     p.rot = ((r % 360) + 360) % 360; p.note = v.note;
     save(); drawPoints(); frame(); showCard('point', p);
   });
@@ -3942,6 +3942,7 @@ function editLine(line, isNew) {
   openForm(spec.name, fields, v => {
     const pk0 = 'pk0' in v && v.pk0 !== '' ? parseNum(v.pk0) : null;
     if (pk0 != null && isNaN(pk0)) { toast('ПК — это число'); return false; }
+    if (pk0 != null && !Number.isInteger(pk0) && pk0 !== Number(line.pk0)) { toast('Начальный ПК — целый номер пикета, например 39'); return false; }
     const nx = NET_LINE_KINDS.has(spec.kind) ? readNetFields(v, line.attr || {}) : null;
     if (NET_LINE_KINDS.has(spec.kind) && !nx) { toast('Диаметр, глубина, год и частота — числа'); return false; }   // при ошибке линия не меняется
     if ('pk0' in v) { line.pk0 = pk0; line.pkDir = Number(v.pkDir) || 1; }
@@ -4143,6 +4144,8 @@ function placeCandidates(txt) {
   if (xy) out.push(...planeCands(parseNum(xy[1]), parseNum(xy[2])));
   // полушарие — только латинская заглавная буква сразу после числа (русские предлоги «с», «в», «з» не путаем со сторонами света)
   const dms = [...t.matchAll(/(\d+(?:[.,]\d+)?)\s*°\s*(?:(\d+(?:[.,]\d+)?)\s*'\s*)?(?:(\d+(?:[.,]\d+)?)\s*")?\s*([NSEW](?![A-Za-zА-Яа-я]))?/g)];
+  const badDms = dms.length >= 2 && dms.slice(0, 2).some(m => parseNum(m[2] || '0') >= 60 || parseNum(m[3] || '0') >= 60);
+  if (!out.length && badDms) return out;                                // «52°90′» — запись в градусах, но минут не бывает 60 и больше: не угадываем
   if (!out.length && dms.length >= 2) {
     const v = dms.slice(0, 2).map(m => { const d = parseNum(m[1]) + (m[2] ? parseNum(m[2]) / 60 : 0) + (m[3] ? parseNum(m[3]) / 3600 : 0); return /[SW]/.test(m[4] || '') ? -d : d; });
     out.push(...degCands(v[0], v[1]));
@@ -5506,7 +5509,7 @@ function addAt(ll, meas, src) {
     data.points.push(pt); lastPlacedId = pt.id;
     save(); drawPoints();
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
-      (hz ? `, H ${mText(hz.h, 2)}` : src === 'tap' || src === 'center' ? ' без отметки' : ', приёмник не дал высоту'));
+      (hz ? (hz.h != null ? `, H ${mText(hz.h, 2)}` : geoidGrid ? ', отметки нет — точка вне модели геоида' : ', отметка — когда загрузится модель геоида') : src === 'tap' || src === 'center' ? ' без отметки' : ', приёмник не дал высоту'));
     const ps = POINTS[pt.type] || {};
     if (ps.frac || ps.svgFor || ps.arm || ps.defect || /^w_/.test(pt.type)) editPoint(pt);   // у надписи покрытия, отметок и колодца (лотки) — сразу спросить значения
     return pt;
@@ -7099,15 +7102,18 @@ async function saveArea() {
   const layer = bases[baseName], o = layer.options;
   if (!o.cache || !o.prefetch) { alert(`«${baseName}» по условиям поставщика нельзя сохранять в телефон.\nВыберите в слоях схему OSM, рельеф или Sentinel-2.`); return; }
   const b = map.getBounds(), zMax = o.prefetch, zMin = Math.max(8, Math.min(zMax, Math.floor(map.getZoom()) - 3)), jobs = [];
-  for (let z = zMin; z <= zMax; z++) { const r = tileRange(b, z); for (let x = r.x0; x <= r.x1; x++) for (let y = r.y0; y <= r.y1; y++) jobs.push({ z, x, y }); }
-  if (jobs.length > PREFETCH_MAX_TILES) { alert(`Район слишком большой: ${jobs.length} кусков карты (можно до ${PREFETCH_MAX_TILES}).\nПриблизьте карту к своему участку и повторите.`); return; }
+  let total = 0;
+  for (let z = zMin; z <= zMax; z++) { const r = tileRange(b, z); total += (r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1); }
+  if (total <= PREFETCH_MAX_TILES) for (let z = zMin; z <= zMax; z++) { const r = tileRange(b, z); for (let x = r.x0; x <= r.x1; x++) for (let y = r.y0; y <= r.y1; y++) jobs.push({ z, x, y }); }
+  if (total > PREFETCH_MAX_TILES) { alert(`Район слишком большой: ${total} кусков карты (можно до ${PREFETCH_MAX_TILES}).\nПриблизьте карту к своему участку и повторите.`); return; }
   if (!confirm(`Сохранить видимый участок для работы без интернета?\n\nПодложка: ${baseName}\nКусков карты: ${jobs.length}, примерно ${Math.max(1, Math.round(jobs.length * TILE_KB / 1024))} МБ\n\nЗаранее сохраняется до масштаба около 1:8000 (так требуют правила OpenStreetMap). Крупнее — карта сохраняется сама, когда вы просматриваете участок при интернете.`)) return;
   prefetching = true;
   let done = 0, failed = 0;
   const next = async () => {
     while (jobs.length) {
       const j = jobs.shift(), key = `${o.cacheId}/${j.z}/${j.x}/${j.y}`;
-      if (!(await tileStore('readonly', s => s.count(key)))) {
+      let have = 0; try { have = await tileStore('readonly', s => s.count(key)); } catch (e) { have = 0; }   // база не ответила — просто качаем заново
+      if (!have) {
         try {
           const r = await fetch(tileUrl(layer, j.z, j.x, j.y), { mode: 'cors' });
           if (!r.ok) throw new Error(r.status);
@@ -7119,8 +7125,7 @@ async function saveArea() {
       if (++done % 40 === 0) toast(`Сохраняю карту: ${done} из ${done + jobs.length}`);
     }
   };
-  await Promise.all(Array.from({ length: PREFETCH_PARALLEL }, next));
-  prefetching = false;
+  try { await Promise.all(Array.from({ length: PREFETCH_PARALLEL }, next)); } finally { prefetching = false; }
   toast(failed ? `Сохранено, но ${failed} кусков не скачались — проверьте интернет и повторите` : 'Участок сохранён — можно работать без интернета');
 }
 async function offlineInfo() {
@@ -8019,7 +8024,7 @@ function toCsv() {
     rows.push([p.no || '', p.type, (POINTS[p.type] || POINTS.mark).name, p.name || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(2),
       H == null ? '' : H_SRC[p.hSrc] || 'вручную', q.acc != null ? f3(q.acc) : p.approx != null ? f3(p.approx) : '', (p.approx != null || p.rough) && q.acc == null ? 'приближённо' : fixText(q.fix), q.at ? new Date(q.at).toLocaleString('ru-RU') : '',
       f8(p.lat), f8(p.lng), c.zone, pointNote(p), (p.photos || []).map(photoFile).join(' '),
-      ...(m ? [m.m.toFixed(3), m.sec, m.n, m.hdop == null ? '' : m.hdop, m.tol.toFixed(2), '1:' + m.scale] : ['', '', '', '', '', '']),
+      ...(m ? [isFinite(m.m) ? Number(m.m).toFixed(3) : '', m.sec, m.n, m.hdop == null ? '' : m.hdop, isFinite(m.tol) ? Number(m.tol).toFixed(2) : '', m.scale ? '1:' + m.scale : ''] : ['', '', '', '', '', '']),
       ...hInfoCols(p.hInfo), ...ctrlCols(p.ctrl && p.ctrl[p.ctrl.length - 1]), ...polarCols(p.polar)]);
   }
   return csvJoin(rows, new Set([0, 1, 2, 3, 14, 15]));                // №, код, знак, подпись, примечание, фото — как есть (подпись «3.10» не число)
@@ -8213,8 +8218,8 @@ function showOutage(from) {
 function toOutageSheet(r) {
   const rows = [['Что', 'Объект', 'Сейчас', 'В колодце', 'X ' + planeName(), 'Y ' + planeName()]];
   const xy = ll => { const c = sk42(ll[0], ll[1]); return [f3(c.x), f3(c.y)]; };
-  r.close.forEach(p => rows.push(['закрыть', `${POINTS[p.type].name} ${pointLabel(p)}`, (p.attr || {}).state === 'откр.' ? 'открыта' : 'не указано', (p.attr || {}).well || '', ...xy([p.lat, p.lng])]));
-  r.closed.forEach(p => rows.push(['уже закрыта', `${POINTS[p.type].name} ${pointLabel(p)}`, 'закрыта', (p.attr || {}).well || '', ...xy([p.lat, p.lng])]));
+  r.close.forEach(p => rows.push(['закрыть', `${(POINTS[p.type] || POINTS.mark).name} ${pointLabel(p)}`, (p.attr || {}).state === 'откр.' ? 'открыта' : 'не указано', (p.attr || {}).well || '', ...xy([p.lat, p.lng])]));
+  r.closed.forEach(p => rows.push(['уже закрыта', `${(POINTS[p.type] || POINTS.mark).name} ${pointLabel(p)}`, 'закрыта', (p.attr || {}).well || '', ...xy([p.lat, p.lng])]));
   r.ends.forEach(x => rows.push(['сеть уходит за план', x.well ? pointRef(x.well) : 'конец L' + (x.line.no || ''), '', '', ...xy(x.at)]));
   rows.push([], ['Отключается', r.lines.map(l => `L${l.no || ''} ${(LINES[l.type] || {}).name}`).join('; '), r.len.toFixed(1) + ' м', r.wells.map(pointRef).join(', ')]);
   if (r.from.from) rows.push(['Место', pointLabel(r.from.from) || (POINTS[r.from.from.type] || {}).name || '']);
@@ -8511,7 +8516,7 @@ function parseKml(text) {
     for (const d of pm.getElementsByTagName('Data')) ext[d.getAttribute('name')] = (d.getElementsByTagName('value')[0] || {}).textContent;
     const name = (pm.getElementsByTagName('name')[0] || {}).textContent || '';
     const pt = pm.getElementsByTagName('Point')[0], ls = pm.getElementsByTagName('LineString')[0];
-    const coords = el => (el.getElementsByTagName('coordinates')[0] || {}).textContent.trim().split(/\s+/).map(c => c.split(',').map(Number)).filter(c => c.length >= 2 && !isNaN(c[0]));
+    const coords = el => (el.getElementsByTagName('coordinates')[0] || {}).textContent.trim().split(/\s+/).map(c => c.split(',').map(Number)).filter(c => c.length >= 2 && Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90);   // NaN не проходит сравнение
     if (pt) {
       const c0 = coords(pt)[0];
       if (!c0) throw new Error('нет координат');
@@ -8558,7 +8563,7 @@ async function readZip(u8) {
     for (const v of parts) { res.set(v, at); at += v.length; }
     return res;
   };
-  const out = {}, count = dv.getUint16(eocd + 10, true);
+  const out = Object.create(null), count = dv.getUint16(eocd + 10, true);   // без прототипа: запись «__proto__» в архиве — просто имя файла
   let p = dv.getUint32(eocd + 16, true);
   for (let k = 0; k < count; k++) {
     // смещение за концом файла — DataView бросит RangeError; показываем понятное «архив повреждён»
@@ -8569,7 +8574,9 @@ async function readZip(u8) {
     p += 46 + nlen + xlen + clen;
     if (name.endsWith('/')) continue;
     if (lho + 30 > u8.length) throw new Error('архив повреждён');
-    const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true), raw = u8.subarray(start, start + csize);
+    const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
+    if (start + csize > u8.length) throw new Error('архив повреждён');   // данные записи за концом файла — не отдаём обрезанный кусок
+    const raw = u8.subarray(start, start + csize);
     if (method === 0) out[name] = raw;
     else if (method === 8) out[name] = await inflate(raw);
   }
@@ -8580,8 +8587,8 @@ const objSig = o => o.latlngs ? o.type + '|' + o.latlngs.map(a => Number(a[0]).t
 // номер совпадающего объекта на плане или -1 (указатели строятся один раз — быстро и на тысячах объектов)
 function sameFinder(key) {
   const ids = new Map(), sigs = new Map();
-  data[key].forEach((x, i) => { ids.set(x.id, i); sigs.set(objSig(x), i); });
-  return o => ids.has(o.id) ? ids.get(o.id) : sigs.has(objSig(o)) ? sigs.get(objSig(o)) : -1;
+  data[key].forEach((x, i) => { if (x.id != null) ids.set(x.id, i); sigs.set(objSig(x), i); });
+  return o => o.id != null && ids.has(o.id) ? ids.get(o.id) : sigs.has(objSig(o)) ? sigs.get(objSig(o)) : -1;
 }
 const countDups = add => ['points', 'lines'].reduce((n, key) => { const find = sameFinder(key); return n + add[key].filter(o => find(o) >= 0).length; }, 0);
 // mode: 'new' — только новые, 'replace' — совпадающие заменить, 'all' — всё, совпадающие копиями
@@ -8629,7 +8636,7 @@ async function putPhotos(add, photos) {
 // фото в архиве: …/photo_<id>.jpg → { files: { id → байты }, meta }
 function zipPhotos(files) {
   const out = {};
-  for (const [name, bytes] of Object.entries(files)) { const m = /(?:^|\/)photo_([\w-]+)\.jpe?g$/i.exec(name); if (m) out[m[1]] = bytes; }
+  for (const [name, bytes] of Object.entries(files)) { const m = /(?:^|\/)photo_([\w-]+)\.jpe?g$/i.exec(name); if (m && m[1] !== '__proto__') out[m[1]] = bytes; }   // «__proto__» в имени не подменит прототип
   let meta = null;
   try { meta = files['photos.json'] ? JSON.parse(new TextDecoder().decode(files['photos.json'])) : null; } catch (e) { /* без подробностей о снимках */ }
   return { files: out, meta };
