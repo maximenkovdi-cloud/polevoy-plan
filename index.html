@@ -140,6 +140,9 @@
   #fabUndo { position:absolute; left:10px; top:calc(var(--topH, 92px) + 160px); z-index:1000; }   /* «Вернуть» — слева, под компасом: правый столбец короче */
   body.glove #fabUndo { top:calc(var(--topH, 92px) + 186px); }
   /* низкий экран (телефон боком): «Вернуть» — рядом с компасом, а не под ним, чтобы не наезжать на масштаб внизу */
+  #fabRedo { position:absolute; left:10px; top:calc(var(--topH, 92px) + 222px); z-index:1000; }   /* «Повторить» — под «Вернуть» */
+  body.glove #fabRedo { top:calc(var(--topH, 92px) + 258px); }
+  @media (max-height:520px) { #fabRedo, body.glove #fabRedo { top:calc(var(--topH, 92px) + 96px); left:134px; } body.glove #fabRedo { left:158px; } }
   @media (max-height:520px) { #fabUndo, body.glove #fabUndo { top:calc(var(--topH, 92px) + 96px); left:72px; } body.glove #fabUndo { left:84px; } }
   /* ночью светлый крестик — с тёмным ободком (белый ободок сливается со светлым крестиком) */
   body.night #cross path:first-child { stroke:#000; stroke-opacity:.75; }
@@ -375,6 +378,7 @@
 
 <svg id="ring" viewBox="-100 -100 200 200"></svg>
 <button class="fab" id="fabUndo" aria-label="Вернуть" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+<button class="fab" id="fabRedo" aria-label="Повторить" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
 <button class="fab" id="fabCompass" aria-label="Круг-компас"><svg viewBox="0 0 24 24"><path d="M12 2.5 16.2 12H7.8z" fill="#c62828"/><path d="M12 21.5 7.8 12h8.4z" fill="currentColor" opacity=".5"/><circle cx="12" cy="12" r="1.5" fill="var(--panel)"/></svg></button>
 <button id="fabPlus" aria-label="Поставить в крестик"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg></button>
 
@@ -831,7 +835,7 @@ async function planTx(mode, fn) {
   return new Promise((ok, bad) => { const tx = db.transaction('plan', mode), r = fn(tx.objectStore('plan')); tx.oncomplete = () => ok(r && r.result); tx.onerror = tx.onabort = () => bad(tx.error || new Error('запись прервана')); });
 }
 // История для «Вернуть»: перед каждым сохранением запоминаем прежнее состояние (до 50 шагов и не больше ~40 млн знаков — иначе большой план переполнит память)
-const UNDO_MAX = 50, UNDO_CHARS = 40e6, undoStack = [];
+const UNDO_MAX = 50, UNDO_CHARS = 40e6, undoStack = [], redoStack = [];   // redoStack — отменённое «Вернуть», для «Повторить»
 let lastSaved = JSON.stringify(data), undoChars = 0, lsFull = false, touched = false;
 // автокопия в «Загрузки» (только в приложении): не чаще раза в 3 минуты после изменений и сразу при сворачивании
 const AUTO_EVERY_MS = 3 * 60 * 1000, AUTO_KEEP = 20;
@@ -858,19 +862,35 @@ let outage = null;                                                      // по�
 function save() {
   const now = JSON.stringify(data);
   if (now !== lastSaved && outage) clearOutage();                     // план изменился — подсветка отключения устарела
-  if (now !== lastSaved) { pushUndo(lastSaved); lastSaved = now; }
+  if (now !== lastSaved) { pushUndo(lastSaved); lastSaved = now; redoStack.length = 0; }   // новая правка — повторять больше нечего
   persist(now);
   showUndo();
 }
-function showUndo() { const b = document.getElementById('fabUndo'); if (b) b.style.display = undoStack.length ? 'flex' : 'none'; }
+function showUndo() {
+  const b = document.getElementById('fabUndo'), r = document.getElementById('fabRedo');
+  if (b) b.style.display = undoStack.length ? 'flex' : 'none';
+  if (r) r.style.display = redoStack.length ? 'flex' : 'none';
+}
 function undo() {
   if (!undoStack.length) return;
+  redoStack.push(lastSaved); if (redoStack.length > UNDO_MAX) redoStack.shift();
   lastSaved = undoStack.pop(); undoChars -= lastSaved.length;
   data = JSON.parse(lastSaved);
   if (outage) clearOutage();                                         // подсветка отключения относилась к другому плану
   persist(lastSaved);
   showUndo(); hideCard();
   toast(undoStack.length ? `Возвращено. Можно вернуть ещё ${undoStack.length}` : 'Возвращено');
+}
+// «Повторить» — снова сделать то, что отменили «Вернуть» (до первой новой правки)
+function redo() {
+  if (!redoStack.length) return;
+  pushUndo(lastSaved);
+  lastSaved = redoStack.pop();
+  data = JSON.parse(lastSaved);
+  if (outage) clearOutage();
+  persist(lastSaved);
+  showUndo(); hideCard();
+  toast(redoStack.length ? `Повторено. Можно повторить ещё ${redoStack.length}` : 'Повторено');
 }
 // при запуске: если в базе план свежее (localStorage переполнился или очищен) — берём его; старый план переносим в базу
 planTx('readonly', st => st.get('current')).then(rec => {
@@ -1928,7 +1948,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 96;
+const APP_BUILD = 97;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -3468,11 +3488,13 @@ function showCard(kind, obj) {
     const lenP = lineLength(obj);
     kv = [...(obj.no ? [['№', 'L' + esc(obj.no)]] : []), ['Длина', mText(lenP, 2) + ' м' + groundNote(lenP, obj.latlngs)], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
     const ci = obj.attr && obj.attr.circle;
+    if (obj.built === 'tape') kv.push(['Построено', 'по промерам рулеткой — стороны не сняты по GPS']);
     if (ci) { const cs = sk42(ci.lat, ci.lng); kv.push(['Окружность', `R ${mText(ci.r, 2)} м на местности · центр X ${f2(cs.x)} Y ${f2(cs.y)}`]); }
     if (s.kind === 'building') {
       const a = obj.attr || {}, lab = buildingLabel(s, obj);
       name = s.name; sub = [lab, a.houseNo ? '№ ' + a.houseNo : ''].filter(Boolean).map(esc).join(' · ') || 'контур';
       kv = [['Периметр', mText(lenP, 2) + ' м' + groundNote(lenP, obj.latlngs)], ['Площадь', mText(polyArea(obj), 1) + ' м²'], ['Углов', obj.latlngs.length]];
+      if (obj.built === 'tape') kv.push(['Построено', 'по промерам рулеткой — стороны не сняты по GPS']);
       if (a.hFloor != null && a.hFloor !== '') kv.push(['Пол 1 эт.', mText(Number(a.hFloor), 2) + ' м']);
       if (a.hBlind != null && a.hBlind !== '') kv.push(['Отмостка', mText(Number(a.hBlind), 2) + ' м']);
     }
@@ -3494,7 +3516,7 @@ function showCard(kind, obj) {
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${esc(id)}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <details class="sw-wrap"><summary>Цвет: ${esc((COLORS.find(c => c[0] === (obj.color || '')) || COLORS[0])[1])} ▾</summary><div class="swatches">${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div></details>
-    <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts" style="grid-column:span 2">Вершины</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button><button class="btn" data-act="go" style="grid-column:1/-1">➤ Отправить координаты (куда ехать)</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
+    <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts">Вершины</button><button class="btn primary" data-act="reshape" title="Сдвинуть, вписать или удалить вершины">✎ Править</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button><button class="btn" data-act="go" style="grid-column:1/-1">➤ Отправить координаты (куда ехать)</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -3512,6 +3534,7 @@ function showCard(kind, obj) {
     if (act === 'go') shareGo(kind, obj);
     if (act === 'gpson') { startGps(); toast('Ищу спутники — расстояние появится само'); }
     if (act === 'verts') showVertices(obj);
+    if (act === 'reshape') startReshape(obj);
     if (act === 'stake') startStake(kind === 'point' ? [obj.lat, obj.lng] : obj.latlngs[0], kind === 'point' ? (pointLabel(obj) || (POINTS[obj.type] || POINTS.mark).name) : 'L' + (obj.no || '') + '.1');
     if (act === 'photo') addPhoto(kind, obj);
     if (act === 'ctrl') controlPoint(obj);
@@ -5349,7 +5372,7 @@ function tapeShow(A, B, AB) {
 let mode = null;          // { kind: 'point'|'line', type, latlngs, temp }
 // действие панели съёмки по его имени (из «⋯» и крестика) — тем же путём, что и кнопки
 function modeAct(act) { const b = document.createElement('button'); b.dataset.act = act; b.hidden = true; $('modeBtns').appendChild(b); b.click(); b.remove(); }
-$('modeMore').onclick = () => { if (!mode) return; openList('Ещё', mode.more.map(([a, t, c]) => ({ id: a, icon: '', text: t, ...(a === 'snap' ? { on: snapOn, check: true } : {}) })), act => modeAct(act)); };
+$('modeMore').onclick = () => { if (!mode) return; openList('Ещё', mode.more.map(([a, t, c]) => ({ id: a, icon: '', text: t, ...(a === 'snap' ? { on: snapOn, check: true } : a === 'ortho' ? { on: orthoOn, check: true } : {}) })), act => modeAct(act)); };
 $('modeX').onclick = () => { if (!mode) return; if (mode.kind === 'line') modeAct('cancel'); else setMode(null); };
 function setBarState() {
   $('btnMap').classList.toggle('on', !mode);
@@ -5370,18 +5393,18 @@ function setMode(m) {
   if (selected) hideCard();
   box.style.display = 'block';
   const isPt = mode.kind === 'point', spec = isPt ? POINTS[mode.type] : LINES[mode.type];
-  $('modeTitle').innerHTML = (isPt ? symbolSvg(spec.svg, 26, spec.color) : linePreview(spec, 30, 24)) + (isPt ? '' : `<span><b class="cnt">${mode.latlngs.length}</b> т.</span>`);
+  $('modeTitle').innerHTML = (isPt ? symbolSvg(spec.svg, 26, spec.color) : linePreview(spec, 30, 24)) + (isPt ? '' : `<span>${mode.editId ? '✎ ' : ''}<b class="cnt">${mode.latlngs.length}</b> т.</span>`);
   $('modeTitle').title = spec.name;
   const snapBtn = ['snap', snapOn ? 'Привязка: вкл' : 'Привязка: выкл', snapOn ? 'on' : ''];
   const noGps = !!spoof || gpsNoSat(), gpsBtns = [['gps', noGps ? 'GPS ✕' : 'По GPS', noGps ? 'off' : ''], ['measure', noGps ? 'Измерить ✕' : 'Измерить', noGps ? 'off' : '']];
   const btns = isPt
     ? [...gpsBtns, ['photo', '📷 Фото'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']]
-    : [...gpsBtns, ['undo', '↶ Убрать'], ['sign', 'Знак…'], ['done', 'Готово', 'primary']];   // «В перекрестье» — теперь круглая кнопка «+» справа
-  mode.more = [['resect', '📐 Засечка: два промера рулеткой от известных точек'], ['axisline', '⟂ Створ: от А в сторону Б и вправо/влево'], ['tape', '📏 Рулетка: расстояние между точками'], ['offset', '↗ Идти к цели: расстояние и угол от крестика, меня или последней точки'], ['circle', '◯ Окружность: радиус вокруг крестика (разбивка, охранная зона)'], snapBtn];
+    : [...gpsBtns, ['undo', mode.editId ? '↶ Шаг назад' : '↶ Убрать'], mode.editId ? ['promer', '📏 Промеры'] : ['sign', 'Знак…'], ['done', mode.editId ? 'Сохранить' : 'Готово', 'primary']];   // «В перекрестье» — теперь круглая кнопка «+» справа
+  mode.more = [...(isPt ? [] : [['promer', '📏 Промеры: длина и поворот (дом по рулетке, забор)'], ['ortho', '∟ Под прямым углом к первой стороне']]), ['resect', '📐 Засечка: два промера рулеткой от известных точек'], ['axisline', '⟂ Створ: от А в сторону Б и вправо/влево'], ['tape', '📏 Рулетка: расстояние между точками'], ['offset', '↗ Идти к цели: расстояние и угол от крестика, меня или последней точки'], ['circle', '◯ Окружность: радиус вокруг крестика (разбивка, охранная зона)'], snapBtn];
   if (pickTool) box.style.display = 'none';                           // идёт выбор точек инструмента — панель инструмента вместо панели съёмки
   // «Знак…» — выбрать условный знак заранее; без него ставится простая точка или линия, знак выбирается потом в карточке
   // ряд «последних» знаков: смена знака одним касанием, без списка
-  const recent = pref('recent.' + mode.kind, []).filter(id => (isPt ? POINTS : LINES)[id]).slice(0, 6);
+  const recent = mode.editId ? [] : pref('recent.' + mode.kind, []).filter(id => (isPt ? POINTS : LINES)[id]).slice(0, 6);   // в правке знак не меняют (это в карточке)
   $('modeQuick').innerHTML = recent.map(id => { const sp = (isPt ? POINTS : LINES)[id];
     return `<button data-quick="${id}" class="${id === mode.type ? 'on' : ''}">${isPt ? symbolSvg(sp.svg, 20, netColor(id, sp.color)) : linePreview(sp, 28, 20)}<span>${esc(sp.name)}</span></button>`; }).join('');
   $('modeQuick').style.display = recent.length ? 'flex' : 'none';
@@ -5474,6 +5497,9 @@ $('modeBtns').addEventListener('click', e => {
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode !== m) return; const pt = addAt(ll, meas);
     if (pt && pt.type === GENERIC.point) openPicker('point', id => changeType('point', pt, id), 'Закройте — останется простой точкой'); }); }
   if (act === 'undo') undoVertex();
+  if (act === 'promer') promerSheet();
+  if (act === 'ortho') { orthoOn = !orthoOn; setPref('ortho', orthoOn); setMode(mode); updateRubber(); toast(orthoOn ? 'Под прямым углом: новая сторона идёт вдоль или поперёк первой стороны. Привязка к точке — важнее' : 'Под прямым углом — выключено'); }
+  if (act === 'cancel' && mode.editId) { const m = mode; if (!(m.hist || []).length) setMode(null); else ask('Выйти из правки? Изменения линии не сохранятся', 'Выйти', true).then(ok => { if (ok && mode === m) setMode(null); }); return; }
   if (act === 'cancel') { const m = mode; if (m.latlngs.length < 2) setMode(null); else ask(`Бросить линию из ${m.latlngs.length} точек?`, 'Бросить', true).then(ok => { if (ok && mode === m) setMode(null); }); }
   if (act === 'done') finishMode();
 });
@@ -5488,9 +5514,12 @@ map.on('click', e => {
 // src: 'tap' (касание), 'center' (перекрестье), 'gps', 'measure'. Касание и перекрестье привязываются к соседним объектам
 function addAt(ll, meas, src) {
   src = meas ? 'measure' : src || 'tap';
+  if (mode.editId && src === 'tap') { toast('В правке: наведите крестик и коснитесь вершины. Новая вершина — кружок на отрезке или «+»'); return; }
   const snap = snapOn && (src === 'tap' || src === 'center') ? snapTarget(ll) : null;
+  if (snap && mode.editId && mode.latlngs.some(a => L.latLng(a).equals(snap.ll))) { toast('Крестик на вершине этой линии — коснитесь её, чтобы перенести или удалить'); return; }
   if (snap && mode.kind === 'line' && (LINES[mode.type] || {}).closed && mode.latlngs.length >= 3 && L.latLng(mode.latlngs[0]).equals(snap.ll)) { finishMode(); return; }   // контур замкнут
   if (snap) { ll = snap.ll; toast('Привязано ' + snap.what); }
+  if (!snap && mode.kind === 'line' && orthoOn && (src === 'tap' || src === 'center')) ll = orthoLL(ll);
   const hz = heightFor(ll, meas, src, snap);
   if (mode.kind === 'point') {
     const pt = { id: uid(), no: nextNo(data.points), type: mode.type, lat: ll.lat, lng: ll.lng, name: '', how: src, made: new Date().toISOString() };
@@ -5514,7 +5543,10 @@ function addAt(ll, meas, src) {
     if (ps.frac || ps.svgFor || ps.arm || ps.defect || /^w_/.test(pt.type)) editPoint(pt);   // у надписи покрытия, отметок и колодца (лотки) — сразу спросить значения
     return pt;
   } else {
+    editSnap();
+    mode.promerTo = null;                                              // вершина не по промеру — цепочка промеров закончилась
     mode.latlngs.push([ll.lat, ll.lng]); mode.lastIns = null;           // «↶ Убрать» снимет её (последнюю)
+    if (mode.tdep) mode.tdep.push('');
     if (spoof && (src === 'tap' || src === 'center')) mode.wait = true;   // вершина на глаз при подмене
     (mode.hs = mode.hs || []).push(hz);                               // отметка вершины полилинии — или null
     refreshTemp(); setMode(mode);
@@ -5523,7 +5555,7 @@ function addAt(ll, meas, src) {
 // Привязки, как в «Тактической карте»: сначала к точкам и вершинам линий (с их отметкой), потом — на ближнюю линию
 // на телефоне палец толще — радиус привязки больше
 const TOUCH = matchMedia('(pointer: coarse)').matches, SNAP_PX = TOUCH ? 26 : 16, SNAP_EDGE_PX = TOUCH ? 16 : 10;
-let snapOn = pref('snap', true);
+let snapOn = pref('snap', true), orthoOn = pref('ortho', false);
 function snapTarget(ll) {
   const c = map.latLngToContainerPoint(ll), dist = a => { const q = map.latLngToContainerPoint(a); return Math.hypot(q.x - c.x, q.y - c.y); };
   const last = mode.latlngs && mode.latlngs[mode.latlngs.length - 1];   // к только что поставленной вершине не липнем
@@ -5531,7 +5563,7 @@ function snapTarget(ll) {
   const take = (a, h, what) => { if (a === last) return; const d = dist(a); if (d < bd) { bd = d; best = { ll: L.latLng(a[0], a[1]), h, what }; } };
   const hText = h => h != null && h !== '' ? ', H ' + mText(Number(h), 2) : '';
   for (const p of data.points) take([p.lat, p.lng], p.h, 'к точке' + hText(p.h));
-  for (const line of data.lines) line.latlngs.forEach((a, i) => { const z = line.hs && line.hs[i]; take(a, z ? z.h : null, 'к вершине' + hText(z && z.h)); });
+  for (const line of data.lines) if (!mode.editId || line.id !== mode.editId) line.latlngs.forEach((a, i) => { const z = line.hs && line.hs[i]; take(a, z ? z.h : null, 'к вершине' + hText(z && z.h)); });
   (mode.latlngs || []).forEach((a, i) => { const z = mode.hs && mode.hs[i]; take(a, z ? z.h : null, 'к вершине этой линии' + hText(z && z.h)); });
   // чертежи DXF — только если рядом нет своих точек и вершин: свежая съёмка важнее архивного чертежа
   const win = best ? null : dxfSnapWindow(ll, c);
@@ -5544,6 +5576,7 @@ function snapTarget(ll) {
     if (d < ed) { ed = d; best = { ll: map.containerPointToLatLng([px, py]), h: null, what }; }
   };
   for (const line of data.lines) {
+    if (mode.editId && line.id === mode.editId) continue;
     const pts = screenPts(line);
     for (let i = 1; i < pts.length; i++) seg(pts[i - 1], pts[i], 'на линию');
   }
@@ -5583,7 +5616,11 @@ function refreshTemp() {
   mode.temp = L.layerGroup([
     L.polyline((LINES[mode.type] || {}).closed && mode.latlngs.length > 2 ? mode.latlngs.concat([mode.latlngs[0]]) : mode.latlngs,
       { color: '#1e88e5', weight: 3, dashArray: '6 6', interactive: false }),
-    ...mode.latlngs.map(a => L.circleMarker(a, { radius: 6, color: '#1e88e5', fillColor: '#fff', fillOpacity: 1, weight: 2, interactive: false })),
+    ...mode.latlngs.map((a, i) => {
+      const m = L.circleMarker(a, { radius: mode.editId ? (TOUCH ? 11 : 8) : 6, color: '#1e88e5', fillColor: '#fff', fillOpacity: 1, weight: 2, interactive: !!mode.editId, bubblingMouseEvents: false });
+      if (mode.editId) m.on('click', e => { L.DomEvent.stop(e); if (pickTool) pickTap(L.latLng(a)); else vertexMenu(i); });
+      return m;
+    }),
     ...midHandles()
   ]).addTo(map);
   updateRubber();
@@ -5608,9 +5645,16 @@ function midHandles() {
 }
 // «↶ Убрать»: если последним действием была вставка кружком — убрать вставленную вершину, иначе — последнюю
 function undoVertex() {
-  if (!mode || mode.kind !== 'line' || !mode.latlngs.length) return;
+  if (!mode || mode.kind !== 'line') return;
+  if (mode.editId) {                                                   // правка готовой линии — вернуть шаг
+    const h = (mode.hist || []).pop();
+    if (!h) { toast('Правок ещё не было'); return; }
+    Object.assign(mode, h); refreshTemp(); setMode(mode); toast('Шаг отменён'); return;
+  }
+  if (!mode.latlngs.length) return;
   const k = mode.lastIns != null && mode.lastIns < mode.latlngs.length ? mode.lastIns : mode.latlngs.length - 1;
-  mode.latlngs.splice(k, 1); if (mode.hs) mode.hs.splice(k, 1);
+  mode.latlngs.splice(k, 1); if (mode.hs) mode.hs.splice(k, 1); if (mode.tdep) mode.tdep.splice(k, 1);
+  if (mode.built && mode.promerFrom != null && mode.latlngs.length <= mode.promerFrom + 1) mode.built = false;   // стороны промеров все сняты
   mode.lastIns = null;
   refreshTemp(); setMode(mode);
 }
@@ -5622,7 +5666,10 @@ function insertVertexAt(i) {
   if (snap && nb.some(a => a.equals(snap.ll))) snap = null;             // к соседним вершинам не липнем — получился бы отрезок нулевой длины
   if (snap) ll = snap.ll;
   const hz = heightFor(ll, null, 'center', snap);
+  editSnap();
+  mode.promerTo = null;
   mode.latlngs.splice(i, 0, [ll.lat, ll.lng]);
+  if (mode.tdep) mode.tdep.splice(i, 0, '');
   mode.hs = mode.hs || []; while (mode.hs.length < mode.latlngs.length - 1) mode.hs.push(null);
   mode.hs.splice(i, 0, hz);
   if (spoof) mode.wait = true;
@@ -5646,7 +5693,7 @@ function drawRubber() {
     L.circleMarker(snap.ll, { radius: 14, color: '#00c853', weight: 3, fill: false, interactive: false }).addTo(rubber);
   }
   if (!mode || mode.kind !== 'line' || !mode.latlngs.length) return;
-  const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = snap ? snap.ll : map.getCenter(), d = groundDist(a, b);   // отрезок — на местности, как в строке вверху
+  const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = snap ? snap.ll : orthoOn ? orthoLL(map.getCenter()) : map.getCenter(), d = groundDist(a, b);   // отрезок — на местности, как в строке вверху
   if (d < 0.01) return;
   L.polyline([a, b], { color: '#1e88e5', weight: 1.5, opacity: 0.55, dashArray: '3 5', interactive: false }).addTo(rubber);
   const pa = map.latLngToContainerPoint(a), pb = map.latLngToContainerPoint(b);
@@ -5680,7 +5727,7 @@ function updateAim(snap) {
   if (drawing && snap === undefined) return;
   let html = '', draw = false;
   if (drawing) {
-    const s = drawStats(snap ? snap.ll : map.getCenter());
+    const s = drawStats(snap ? snap.ll : orthoOn ? orthoLL(map.getCenter()) : map.getCenter());
     draw = true;
     html = `<span class="nw">Длина <b>${distText(s.len)}</b></span> · <span class="nw">отр. ${distText(s.segLen)}${s.dir != null ? ` ${angText(s.dir, map.getCenter())}` : ''}</span>${s.area > 0.01 ? ` · <span class="nw">S <b>${areaText(s.area)}</b></span>` : ''}`;
   } else if (gps) {
@@ -5694,14 +5741,205 @@ function updateAim(snap) {
   if ($('top').offsetHeight !== topH) layout();                         // строка появилась, пропала или перенеслась — высота верхней панели другая
 }
 setInterval(() => { if (!mode) updateAim(); }, AIM_STALE_MS / 3);      // «GPS устарел» появится и без движения карты
+/* ───────────── Правка готовой линии, «под прямым углом», промеры рулеткой ───────────── */
+// шаг правки — чтобы «↶ Шаг назад» вернул его (только в правке готовой линии; при рисовании «↶» снимает последнюю вершину)
+const EDIT_HIST_MAX = 100;
+function editSnap() {
+  if (!mode || !mode.editId) return;
+  const h = (mode.hist = mode.hist || []);
+  h.push({ latlngs: mode.latlngs.map(a => a.slice()), hs: (mode.hs || []).slice(), tdep: mode.tdep ? mode.tdep.slice() : null, lastIns: null, promerTo: mode.promerTo, promerFrom: mode.promerFrom, promerLog: mode.promerLog, built: !!mode.built });
+  if (h.length > EDIT_HIST_MAX) h.shift();
+}
+// карточка линии → «✎ Править»: та же панель, что при рисовании, но вершины нажимаются; «Сохранить» — в ту же линию
+function startReshape(line) {
+  hideCard();
+  setMode({ kind: 'line', type: line.type, editId: line.id, hist: [],
+    latlngs: line.latlngs.map(a => a.slice()),
+    hs: line.latlngs.map((_, i) => (line.hs && line.hs[i]) || null),
+    tdep: line.tdep ? line.latlngs.map((_, i) => hasH(line.tdep[i]) ? line.tdep[i] : '') : null });
+  refreshTemp();
+  const b = L.latLngBounds(line.latlngs);
+  if (!map.getBounds().contains(b)) map.fitBounds(b, { padding: [40, 40], maxZoom: Math.max(map.getZoom(), 18) });
+  toast(`Правка L${line.no || ''}: наведите крестик, куда нужно, и коснитесь вершины. Кружок на отрезке — вставить вершину. «Сохранить» — записать`);
+}
+function finishReshape() {
+  const m = mode, line = data.lines.find(l => l.id === m.editId);
+  setMode(null);
+  if (!line) { toast('Этой линии уже нет — правка не записана'); return; }
+  if (!(m.hist || []).length) { showCard('line', line); toast('Ничего не изменилось'); return; }
+  line.latlngs = m.latlngs.map(a => a.slice());
+  if (m.hs && m.hs.some(Boolean)) line.hs = m.hs.slice(0, line.latlngs.length); else delete line.hs;
+  if (m.tdep) { if (m.tdep.some(hasH)) line.tdep = m.tdep.slice(0, line.latlngs.length); else delete line.tdep; }
+  if (m.wait && !line.wait) line.wait = new Date().toISOString();
+  if (m.built) line.built = 'tape';
+  if (line.attr && line.attr.circle) delete line.attr.circle;            // вершины двигали — это уже не окружность
+  save(); redrawAll(); showCard('line', line);
+  toast(`L${line.no || ''} исправлена — кнопка ↶ слева вернёт, как было`);
+}
+// нажали вершину в правке: перенести в крестик, вписать координаты, удалить
+function vertexMenu(i) {
+  if (!mode || !mode.editId || !mode.latlngs[i]) return;
+  const V = mode.latlngs, closed = !!(LINES[mode.type] || {}).closed, s = sk42(V[i][0], V[i][1]), z = mode.hs && mode.hs[i];
+  const away = groundDist(V[i], map.getCenter());
+  showSheet(`<div class="sh-head"><b>Вершина ${i + 1} из ${V.length}</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin-bottom:10px">X ${f2(s.x)} · Y ${f2(s.y)}${z && hasH(z.h) ? ' · H ' + planNum(z.h, 2) : ' · без отметки'}<br>Крестик — в ${distText(away)} от неё</div>
+    <div style="display:grid;gap:8px">
+      <button class="btn primary" id="vxMove"${away < 0.005 ? ' disabled' : ''}>⊕ Перенести в крестик</button>
+      <button class="btn" id="vxType">✎ Вписать X, Y, H</button>
+      ${V.length > (closed ? 3 : 2) ? '<button class="btn danger" id="vxDel">✕ Удалить вершину</button>' : ''}
+      <button class="btn" data-close>Отмена</button></div>`);
+  $('vxMove').onclick = () => { closeSheet(); vertexMove(i); };
+  $('vxType').onclick = () => vertexType(i);
+  if ($('vxDel')) $('vxDel').onclick = () => {
+    closeSheet(); editSnap(); mode.promerTo = null;
+    V.splice(i, 1); if (mode.hs) mode.hs.splice(i, 1); if (mode.tdep) mode.tdep.splice(i, 1);
+    refreshTemp(); setMode(mode); toast(`Вершина ${i + 1} удалена — «↶ Шаг назад» вернёт`);
+  };
+}
+function vertexMove(i) {
+  const V = mode.latlngs;
+  let ll = map.getCenter(), snap = snapOn ? snapTarget(ll) : null;
+  const own = [V[i], V[i - 1], V[(i + 1) % V.length]].filter(Boolean).map(a => L.latLng(a));
+  if (snap && own.some(a => a.equals(snap.ll))) snap = null;            // к себе и соседям не липнем
+  if (snap) ll = snap.ll;
+  editSnap();
+  V[i] = [ll.lat, ll.lng];
+  mode.hs = mode.hs || []; while (mode.hs.length < V.length) mode.hs.push(null);
+  mode.hs[i] = heightFor(ll, null, 'center', snap);                    // старая отметка была у старого места
+  if (spoof) mode.wait = true;
+  cue('tick'); refreshTemp(); setMode(mode);
+  toast(`Вершина ${i + 1} перенесена${snap ? ', привязано ' + snap.what : ''} — «↶ Шаг назад» вернёт`);
+}
+const VERT_MAX_JUMP_M = 50000;                                          // дальше — почти наверняка опечатка (Y без номера зоны)
+function vertexType(i) {
+  const V = mode.latlngs, s = sk42(V[i][0], V[i][1]), z = mode.hs && mode.hs[i];
+  openForm(`Вершина ${i + 1}: координаты`, [
+    { key: 'x', label: 'X, м', type: 'number', value: s.x.toFixed(2), half: true },
+    { key: 'y', label: 'Y, м', type: 'number', value: s.y.toFixed(2), half: true },
+    { key: 'h', label: 'H, м (пусто — без отметки)', type: 'number', value: z && hasH(z.h) ? z.h : '', hint: `Система — ${planeName()}. Y — полностью, как показано.` }
+  ], v => {
+    const x = v.x === s.x.toFixed(2) ? s.x : parseNum(v.x), y = v.y === s.y.toFixed(2) ? s.y : parseNum(v.y), h = v.h === '' ? null : parseNum(v.h);   // поле не трогали — точное прежнее значение
+    if (v.x === '' || v.y === '' || !isFinite(x) || !isFinite(y)) { toast('X и Y — числа, например 6181590,47'); return false; }
+    if (h != null && (!isFinite(h) || Math.abs(h) > 9000)) { toast('H — число в метрах или пусто'); return false; }
+    let ll = null; try { ll = fromSk42(x, y, s.zone); } catch (e) { ll = null; }
+    if (!ll || !isFinite(ll.lat) || !isFinite(ll.lng) || groundDist(V[i], ll) > VERT_MAX_JUMP_M) { toast('Точка уходит дальше 50 км — проверьте цифры'); return false; }
+    const moved = Math.abs(x - s.x) >= 0.005 || Math.abs(y - s.y) >= 0.005, sameH = z && hasH(z.h) && h != null && Math.abs(h - z.h) < 0.005;
+    if (!moved && (sameH || (h == null && !(z && hasH(z.h))))) return;   // ничего не поменяли
+    editSnap();
+    if (moved) V[i] = [ll.lat, ll.lng];
+    mode.hs = mode.hs || []; while (mode.hs.length < V.length) mode.hs.push(null);
+    mode.hs[i] = h == null ? null : sameH && !moved ? z : { h: +h.toFixed(3), src: 'hand', from: 'hand' };
+    refreshTemp(); setMode(mode); toast(`Вершина ${i + 1}: координаты вписаны — «↶ Шаг назад» вернёт`);
+  }, 'Применить');
+}
+// «Под прямым углом» (как ОРТО в AutoCAD): новая сторона — вдоль или поперёк первой стороны линии, к чему ближе
+function orthoXY(p0, p1, last, t) {
+  const th = Math.atan2(p1.y - p0.y, p1.x - p0.x), ux = Math.cos(th), uy = Math.sin(th), vx = t.x - last.x, vy = t.y - last.y;
+  const a = vx * ux + vy * uy, b = -vx * uy + vy * ux;
+  return Math.abs(a) >= Math.abs(b) ? { x: last.x + a * ux, y: last.y + a * uy } : { x: last.x - b * uy, y: last.y + b * ux };
+}
+function orthoLL(ll) {
+  const V = mode && mode.kind === 'line' ? mode.latlngs : [];
+  if (V.length < 2) return ll;
+  const zone = zoneOf(V[0][1]), P = [V[0], V[1], V[V.length - 1]].map(a => planeXY(L.latLng(a), zone));
+  if (Math.hypot(P[1].x - P[0].x, P[1].y - P[0].y) < 0.01) return ll;
+  const q = orthoXY(P[0], P[1], P[2], planeXY(L.latLng(ll), zone));
+  return fromSk42(q.x, q.y, zone);
+}
+// поворот на углу b (с a→b на b→c): + вправо, − влево, градусы
+function turnAt(a, b, c) { return angDiff(planeInverse(b, c).dir, planeInverse(a, b).dir); }
+// невязка: последняя точка цепочки должна совпасть с первой точкой контура — сдвигаем точки цепочки пропорционально пройденной длине
+function promerSpread(P, from) {
+  const n = P.length, fx = P[0].x - P[n - 1].x, fy = P[0].y - P[n - 1].y, cum = [0];
+  let tot = 0;
+  for (let k = from + 1; k < n; k++) { tot += Math.hypot(P[k].x - P[k - 1].x, P[k].y - P[k - 1].y); cum.push(tot); }
+  return P.map((p, k) => k <= from ? p : { x: p.x + fx * cum[k - from] / (tot || 1), y: p.y + fy * cum[k - from] / (tot || 1) });
+}
+// «Промеры» (обход по сторонам, как в полевых программах): от последней вершины — длина на местности и поворот.
+// Дом по рулетке: два угла («По GPS», «Измерить», привязка) → дальше только длины, поворот 90° вправо или влево
+const PROMER_AUTO_M = 0.10, PROMER_MAX_F_M = 1.0, PROMER_MAX_LEN_M = 1000;   // до 10 см невязка раскидывается сама; больше 1 м — это незамкнутый контур, а не невязка
+function promerSheet() {
+  if (!mode || mode.kind !== 'line') return;
+  const V = mode.latlngs, n = V.length, closed = !!(LINES[mode.type] || {}).closed;
+  if (!n) { toast('Сначала поставьте первый угол: «+», «По GPS» или «Измерить»'); return; }
+  if (mode.promerTo > n && n > mode.promerFrom) { mode.promerTo = n; mode.promerLog = (mode.promerLog || []).slice(0, n - mode.promerFrom - 1); }   // «↶» сняло последнюю сторону
+  const log = mode.promerTo === n ? (mode.promerLog || []) : [];
+  const prevG = n >= 2 ? groundDist(V[n - 2], V[n - 1]) : 0;
+  showSheet(`<div class="sh-head"><b>Промеры · сторона ${n}</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin-bottom:6px">${n < 2 ? 'Первая сторона: наведите крестик примерно вдоль стены, впишите длину по рулетке и нажмите «В сторону крестика».' : `Последняя сторона ${mText(prevG, 2)} м. Впишите следующую длину и куда повернуть на углу ${n}.`}</div>
+    ${log.length ? `<div class="hint" style="margin-bottom:6px;color:var(--ink)">${log.map(esc).join(' · ')}</div>` : ''}
+    <div class="form"><div class="row2"><div><label for="prD">Длина на местности, м</label><input id="prD" inputmode="decimal" autocomplete="off" placeholder="12.40"></div>
+    <div><label for="prT">Поворот, если не 90°</label><input id="prT" inputmode="decimal" autocomplete="off" placeholder="90"></div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px">
+      ${n >= 2 ? '<button class="btn primary" data-pr="left">↰ Влево</button><button class="btn" data-pr="straight">↑ Прямо</button><button class="btn primary" data-pr="right">↱ Вправо</button>' : ''}
+      <button class="btn${n < 2 ? ' primary' : ''}" data-pr="cross" style="grid-column:1/-1">➚ В сторону крестика</button>
+      ${closed && n >= 3 ? '<button class="btn primary" data-pr="close" style="grid-column:span 2">⌂ Замкнуть контур</button>' : !closed && n >= 2 ? '<button class="btn primary" data-pr="finish" style="grid-column:span 2">✓ Линия готова</button>' : ''}
+      <button class="btn" data-close style="grid-column:${n >= 2 || (closed && n >= 3) ? 'span 1' : '1/-1'}">Скрыть</button>
+    </div>`);
+  document.querySelectorAll('#sheetPanel [data-pr]').forEach(b => { b.onclick = () => promerAct(b.dataset.pr); });
+  const d = $('prD'); if (d && !TOUCH) d.focus();
+}
+function promerAct(act) {
+  if (!mode || mode.kind !== 'line') { closeSheet(); return; }
+  if (act === 'close') { promerClose(); return; }
+  if (act === 'finish') { closeSheet(); finishMode(); return; }
+  const V = mode.latlngs, n = V.length, dt = $('prD').value.trim(), t = $('prT').value.trim(), d = parseNum(dt);
+  if (dt === '' || !(d > 0) || d > PROMER_MAX_LEN_M) { toast('Длина — число в метрах, например 12,40'); return; }
+  let ang = 90;
+  if (t !== '') { ang = parseAz(t); if (ang == null || ang > 180) { toast('Поворот — градусы от 0 до 180, например 90 или 87°30′'); return; } }
+  const last = L.latLng(V[n - 1]);
+  let dir;
+  if (act === 'cross') {
+    const c = map.getCenter();
+    if (groundDist(last, c) < 0.05) { toast('Крестик стоит на самой вершине — сдвиньте карту в сторону стены'); return; }
+    dir = planeInverse(last, c).dir;
+  } else {
+    if (n < 2) return;
+    dir = planeInverse(L.latLng(V[n - 2]), last).dir + (act === 'right' ? ang : act === 'left' ? -ang : 0);
+  }
+  const ll = planeForward(last, d * gkScale(last), ((dir % 360) + 360) % 360);   // промер на местности → на плане
+  if (mode.promerTo !== n) { mode.promerFrom = n - 1; mode.promerLog = []; }   // новая цепочка промеров — от последней вершины
+  editSnap();
+  V.push([ll.lat, ll.lng]);
+  mode.hs = mode.hs || []; while (mode.hs.length < n) mode.hs.push(null); mode.hs.push(null);   // промер отметку не даёт
+  if (mode.tdep) mode.tdep.push('');
+  mode.lastIns = null; mode.promerTo = V.length; mode.built = true;
+  const turnTxt = act === 'cross' ? '' : act === 'straight' ? '↑ ' : (act === 'right' ? '↱' : '↰') + (ang !== 90 ? degMin(ang) : '') + ' ';
+  mode.promerLog = (mode.promerLog || []).concat(turnTxt + mText(d, 2));
+  if (!map.getBounds().contains(ll)) map.panTo(ll, { animate: false });
+  cue('tick'); refreshTemp(); setMode(mode); promerSheet();
+}
+function promerClose() {
+  const m = mode, V = m.latlngs, n = V.length;
+  if (n < 3) { toast('Для замыкания нужно хотя бы три угла'); return; }
+  const fG = groundDist(V[n - 1], V[0]), chain = m.promerTo === n && m.promerFrom != null && m.promerFrom < n - 1 ? m.promerFrom : null;
+  if (fG <= PROMER_MAX_F_M && chain != null && n >= 4) {               // последней стороной вернулись в первый угол — расхождение и есть невязка
+    let per = 0; for (let k = chain + 1; k < n; k++) per += groundDist(V[k - 1], V[k]);
+    const go = () => { promerAdjust(chain); finishMode(); toast(`Невязка ${cmText(fG)} раскидана по сторонам`); };
+    if (fG <= PROMER_AUTO_M) { closeSheet(); go(); return; }
+    ask(`Контур не сходится на <b>${mText(fG, 2)} м</b> (1:${Math.round(per / fG)} от длины промеров). Раскидать по сторонам или проверить промеры?`, 'Раскидать').then(ok => { if (mode !== m) return; if (ok) go(); else promerSheet(); });
+    return;
+  }
+  // последнюю сторону не вписывали — замыкающую показываем, чтобы сверить с рулеткой
+  const a = L.latLng(V[n - 2]), b = L.latLng(V[n - 1]), c = L.latLng(V[0]), d2 = L.latLng(V[1]);
+  const t1 = turnAt(a, b, c), t2 = turnAt(b, c, d2), tt = t => `${t >= 0 ? 'вправо' : 'влево'} ${degMin(Math.abs(t))}`;
+  ask(`Замыкающая сторона <b>${mText(fG, 2)} м</b>, поворот на углу ${n} — ${tt(t1)}, на углу 1 — ${tt(t2)}. Сходится с рулеткой — замкнуть?`, 'Замкнуть').then(ok => { if (mode !== m) return; if (ok) finishMode(); else promerSheet(); });
+}
+function promerAdjust(from) {
+  const V = mode.latlngs, zone = zoneOf(V[0][1]), Q = promerSpread(V.map(a => planeXY(L.latLng(a), zone)), from);
+  for (let k = from + 1; k < V.length - 1; k++) { const ll = fromSk42(Q[k].x, Q[k].y, zone); V[k] = [ll.lat, ll.lng]; }
+  V.pop(); if (mode.hs) mode.hs.length = Math.min(mode.hs.length, V.length); if (mode.tdep) mode.tdep.length = Math.min(mode.tdep.length, V.length);   // последняя точка совпала с первой
+}
 function finishMode() {
   if (mode.kind === 'line') {
     const closed = (LINES[mode.type] || {}).closed;
     if (mode.latlngs.length < (closed ? 3 : 2)) { toast(closed ? 'Контур строения — хотя бы три угла' : 'Нужно хотя бы две точки'); return; }
+    if (mode.editId) { finishReshape(); return; }
     const line = { id: uid(), no: nextNo(data.lines), type: mode.type, latlngs: mode.latlngs.slice(), caption: '', count: (LINES[mode.type] || {}).defCount || 1, state: '' };
     if (line.type === GENERIC.line) line.color = pref('color', VIS_COLOR);
     if (mode.hs && mode.hs.some(Boolean)) line.hs = mode.hs.slice();
     if (mode.wait) line.wait = new Date().toISOString();
+    if (mode.built) line.built = 'tape';
     const prev = NET_LINE_KINDS.has((LINES[line.type] || {}).kind) ? carryFrom(data.lines, line, CARRY.net) : null;   // материал, диаметр, владелец — как у прошлого участка этой сети
     if (prev) toast(`Свойства — как у L${prev.no || ''}; поправьте, если не так`);
     setMode(null);
@@ -5841,6 +6079,7 @@ function changeType(kind, obj, id) {
   editLine(obj);
 }
 $('fabUndo').onclick = undo;
+$('fabRedo').onclick = redo;
 $('btnMap').onclick = () => {
   if (mode && mode.kind === 'line' && mode.latlngs.length) { const m = mode; ask('Бросить рисование линии?', 'Бросить', true).then(ok => { if (ok && mode === m) setMode(null); }); return; }
   setMode(null); closeSheet();
@@ -7734,7 +7973,7 @@ async function switchProject(id, fresh) {
   hgt = hs && hs.hgt ? hs.hgt : { src: hgt.src, dh: 0, ref: null }; antH = hs && hs.antH != null ? Number(hs.antH) || 0 : antH;
   setPref('hgt', hgt); setPref('antH', antH); antChipText();
   lastSaved = JSON.stringify(data);
-  undoStack.length = 0; undoChars = 0;                                  // «Вернуть» не должен вернуть чужой объект
+  undoStack.length = 0; undoChars = 0; redoStack.length = 0;                                 // «Вернуть» не должен вернуть чужой объект
   persist(lastSaved); showUndo(); hideCard();
   setPref('projects', list.some(p => p.id === id) ? list : [...list, { id, name: objectName() || 'Новый объект' }]);
   syncProject(); MENU.fit();
