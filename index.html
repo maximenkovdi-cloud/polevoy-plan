@@ -1961,7 +1961,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 101;
+const APP_BUILD = 102;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -2023,7 +2023,7 @@ function showSats(st) {
    у GPS, ГЛОНАСС, Galileo, BeiDou разные шкалы времени, поэтому по столбцу «часов» на каждую систему в решении. */
 const DOP_GRADES = [[1, 'отлично', 'ok'], [2, 'хорошо', 'ok'], [5, 'удовлетворительно', 'mid'], [Infinity, 'плохо — подождите', 'bad']];
 function computeDop(list) {
-  const used = list.filter(s => s.used && s.el >= 0);
+  const used = list.filter(s => s.used && s.el >= 0 && isFinite(Number(s.az)) && isFinite(Number(s.el)));
   const systems = [...new Set(used.map(s => s.sys))];
   const n = 3 + systems.length;
   if (used.length < n) return null;                                     // неизвестных больше, чем спутников
@@ -2081,7 +2081,7 @@ function skyPlot(list, size) {
 }
 function satSheetBody() {
   const d = sats.dop, g = d && dopGrade(d.h);
-  const rows = (sats.systems || []).map(s => `<tr><td>${SYS_COLOR[s.name] ? `<span style="color:${SYS_COLOR[s.name]}">●</span> ` : ''}${esc(s.name)}</td><td>${s.seen}</td><td>${s.used}</td><td>${s.snr}</td></tr>`).join('');
+  const rows = (sats.systems || []).map(s => `<tr><td>${SYS_COLOR[s.name] ? `<span style="color:${SYS_COLOR[s.name]}">●</span> ` : ''}${esc(s.name)}</td><td>${esc(String(s.seen))}</td><td>${esc(String(s.used))}</td><td>${esc(String(s.snr))}</td></tr>`).join('');
   const dopLine = d
     ? `<div class="dop"><span class="dot ${g[2]}"></span><b>HDOP ${d.h.toFixed(1)}</b> — ${g[1]} · PDOP ${d.p.toFixed(1)} · VDOP ${d.v.toFixed(1)}</div>`
     : `<div class="dop"><span class="dot bad"></span>DOP: мало спутников в решении</div>`;
@@ -2090,10 +2090,10 @@ function satSheetBody() {
   const track = sats.fullTracking
     ? '<div class="dop"><span class="dot ok"></span>Полное слежение включено — телефон не притормаживает спутниковый чип</div>'
     : '<div class="dop"><span class="dot mid"></span>Полное слежение недоступно (нужен Android 12+) — включите его в настройках телефона, см. ниже</div>';
-  const freq = bands.length ? `<div class="dop"><span class="dot ${dual ? 'ok' : 'mid'}"></span>Частоты: <b>${bands.join(', ')}</b> — ${dual ? 'телефон двухчастотный' : 'только одна частота'}</div>` : '';
+  const freq = bands.length ? `<div class="dop"><span class="dot ${dual ? 'ok' : 'mid'}"></span>Частоты: <b>${esc(bands.join(', '))}</b> — ${dual ? 'телефон двухчастотный' : 'только одна частота'}</div>` : '';
   return dopLine + track + freq + (sats.sats ? skyPlot(sats.sats, 240) : '') +
     `<table class="sat-tab"><tr><th>Система</th><th>Видно</th><th>В решении</th><th>Сигнал, дБ·Гц</th></tr>${rows}
-    <tr class="sum"><td>Всего</td><td>${sats.total}</td><td>${sats.used}</td><td></td></tr></table>
+    <tr class="sum"><td>Всего</td><td>${esc(String(sats.total))}</td><td>${esc(String(sats.used))}</td><td></td></tr></table>
     <div class="hint" style="margin-top:10px;color:var(--muted);font-size:12.5px">HDOP — во сколько раз геометрия спутников ухудшает точность в плане: до 2 — хорошо, больше 5 — снимать не стоит.
     <details class="more"><summary>Как ещё помочь приёму</summary><div class="hint" style="line-height:1.5">
       1. <b>Батарея без ограничений:</b> Настройки → Приложения → «Полевой план» → Батарея → «Без ограничений».<br>
@@ -2153,6 +2153,7 @@ const RX_FIX_M = 0.02, RX_FLOAT_M = 0.3, RX_HDOP_M = 2.5;   // если приё
 const nmeaDeg = (v, dir) => {
   const n = Number(v); if (!v || !String(v).trim() || !isFinite(n) || n < 0) return null;
   const d = Math.floor(n / 100), deg = d + (n - d * 100) / 60;
+  if (n - d * 100 >= 60) return null;                                   // «5575.0» — минут 75 не бывает
   if (deg > (dir === 'N' || dir === 'S' ? 90 : 180)) return null;      // вне Земли — испорченная строка
   return dir === 'S' || dir === 'W' ? -deg : deg;
 };
@@ -3845,7 +3846,7 @@ function editWell(p, s) {
   openForm(s.name, fields, v => {
     const num = k => v[k] === '' ? '' : parseNum(v[k]);
     const h = num('h'), lots = [0, 1, 2].map(i => ({ h: num('l' + i), dir: v['d' + i] || '' })).filter(x => x.h !== '' || x.dir);
-    if ((h !== '' && isNaN(h)) || lots.some(x => x.h !== '' && isNaN(x.h)) || (v.wd !== '' && !(num('wd') > 0))) { toast('Отметки — числа, диаметр — больше нуля, например 142.10 и 1000'); return false; }
+    if ((h !== '' && !isFinite(h)) || lots.some(x => x.h !== '' && !isFinite(x.h)) || (v.wd !== '' && !(num('wd') > 0 && isFinite(num('wd'))))) { toast('Отметки — числа, диаметр — больше нуля, например 142.10 и 1000'); return false; }
     const hv = h === '' ? null : h;
     if (hv !== p.h) { delete p.hSrc; delete p.hInfo; }
     p.name = v.name || ''; p.note = v.note; p.h = hv;
@@ -3883,7 +3884,7 @@ function editArm(p, s) {
     { key: 'note', label: 'Примечание', value: p.note, placeholder: 'марка, тип привода, число оборотов', hint: 'Знак сам лёг вдоль ближней сети (до 3 м). Повернуть вручную — поставьте знак ближе к линии.' });
   openForm(s.name, fields, v => {
     const d = v.d === '' ? '' : parseNum(v.d), h = v.h === '' ? null : parseNum(v.h);
-    if ((d !== '' && !(d > 0)) || (h != null && isNaN(h))) { toast('Диаметр — больше нуля, отметка — число'); return false; }
+    if ((d !== '' && !(d > 0 && isFinite(d))) || (h != null && !isFinite(h))) { toast('Диаметр — больше нуля, отметка — число'); return false; }
     const rev = v.flow === '1', pa = pipeAngle(L.latLng(p.lat, p.lng));
     if (pa) p.rot = pa.rot + (s.flow && rev ? 180 : 0); else delete p.rot;   // угол — всегда от трубы; «наоборот» — разворот на 180°
     if (h !== p.h) { delete p.hSrc; delete p.hInfo; }
@@ -4114,7 +4115,7 @@ function readNetFields(v, a) {
   const next = { ...a };
   for (const k of ['mat', 'mark', 'volt', 'owner', 'sleeveD', 'hKind', 'tMethod', 'tDev']) if (k in v) next[k] = v[k];
   if ('trench' in v) { next.trench = v.trench === '1'; next.trenchAt = next.trench ? a.trenchAt || today() : ''; }
-  for (const k of ['d', 'depth', 'year', 'tFreq']) if (k in v) { const n = v[k] === '' ? '' : parseNum(v[k]); if (n !== '' && isNaN(n)) return null; next[k] = n; }
+  for (const k of ['d', 'depth', 'year', 'tFreq']) if (k in v) { const n = v[k] === '' ? '' : parseNum(v[k]); if (n !== '' && !isFinite(n)) return null; next[k] = n; }
   if ('sleeve' in v) next.sleeve = v.sleeve === '1';
   if ('tMethod' in v) { if (!next.tMethod) { next.tDev = ''; next.tFreq = ''; } next.tAt = next.tMethod ? a.tAt || today() : ''; }
   return next;
@@ -4420,7 +4421,7 @@ let tracks = (() => { try { const v = JSON.parse(localStorage.getItem(TRACK_KEY)
 let trackRec = null, trackSavedAt = 0, tracksShown = pref('tracksShown', true);
 const trackLayer = L.layerGroup().addTo(map);
 for (const t of tracks) delete t.native;
-for (const t of tracks) if (!t.end) { const sec = t.pts.length ? Number(t.pts[t.pts.length - 1][2]) : NaN; t.end = isFinite(sec) ? new Date(sec * 1000).toISOString() : t.start; }   // запись прервалась с закрытием приложения
+for (const t of tracks) if (!t.end) { const sec = t.pts.length ? Number(t.pts[t.pts.length - 1][2]) : NaN; t.end = isFinite(new Date(sec * 1000).getTime()) ? new Date(sec * 1000).toISOString() : t.start; }   // запись прервалась с закрытием приложения
 let trackFullWarned = false, trackBusy = false;                         // trackBusy — идёт запуск или остановка: повторное нажатие не учитываем
 const trackLiveLayer = L.layerGroup().addTo(map);                      // записываемый трек — отдельно: новая точка не перерисовывает все старые
 function saveTracks() {
@@ -4611,7 +4612,7 @@ if (TRACK_N) TRACK_N.points({ from: 0 }).then(r => {
     const t = tracks.find(x => x.id === liveId);
     if (t && r && r.total > srvFrom(t)) {
       const added = addSrvPoints(t, (r.pts || []).slice(srvFrom(t))); t.srvN = r.total;
-      if (t.pts.length) { const sec = Number(t.pts[t.pts.length - 1][2]); if (isFinite(sec)) t.end = new Date(sec * 1000).toISOString(); }   // испорченное время от службы — конец не трогаем
+      if (t.pts.length) { const sec = Number(t.pts[t.pts.length - 1][2]); if (isFinite(new Date(sec * 1000).getTime())) t.end = new Date(sec * 1000).toISOString(); }   // испорченное время от службы — конец не трогаем
       saveTracks(); drawTracks();
       if (added) toast(`Запись трека прервалась (приложение закрывалось) — путь сохранён до ${new Date(Date.parse(t.end)).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`);
     }
@@ -6346,7 +6347,7 @@ function vertexMenu(i) {
 function vertexMove(i) {
   const V = mode.latlngs;
   let ll = map.getCenter(), snap = snapOn ? snapTarget(ll) : null;
-  const own = [V[i], V[i - 1], V[(i + 1) % V.length]].filter(Boolean).map(a => L.latLng(a));
+  const cl = !!(LINES[mode.type] || {}).closed, own = [V[i], i > 0 ? V[i - 1] : cl ? V[V.length - 1] : null, i + 1 < V.length ? V[i + 1] : cl ? V[0] : null].filter(Boolean).map(a => L.latLng(a));
   if (snap && own.some(a => a.equals(snap.ll))) snap = null;            // к себе и соседям не липнем
   if (snap) ll = snap.ll;
   editSnap();
@@ -7359,7 +7360,7 @@ function dxfCss(c) {
 const DXF_DASH_MIN_PX = 8, DXF_LINE_W = 1.3, DXF_DOT_PX = DXF_LINE_W;
 const dxfMpp = () => { const c = map.getCenter(); return 40075016.686 * Math.cos(c.lat * Math.PI / 180) / (256 * Math.pow(2, map.getZoom())); };
 function dxfDash(pat, mpp) {
-  if (pat && pat.every(v => v < 0)) return 'none';
+  if (pat && pat.length && pat.every(v => v < 0)) return 'none';
   if (!pat || pat.reduce((s, v) => s + Math.abs(v), 0) / mpp < DXF_DASH_MIN_PX) return null;
   const i0 = Math.max(0, pat.findIndex(v => v >= 0)), seq = [];           // узор — со штриха; чередование штрих–пробел, соседние одного знака — вместе
   for (const v of [...pat.slice(i0), ...pat.slice(0, i0)]) {
