@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#1f5fbf">
 <title>Полевой план</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231f5fbf'/%3E%3Cpath d='M8 3v10M3 8h10' stroke='white' stroke-width='1.6'/%3E%3Ccircle cx='8' cy='8' r='2.2' fill='none' stroke='white' stroke-width='1.2'/%3E%3C/svg%3E">
 <!-- библиотеки лежат рядом (lib/), чтобы приложение открывалось без интернета: Leaflet 1.9.4 (BSD-2), proj4 2.11.0 (MIT) -->
 <link rel="stylesheet" href="lib/leaflet.min.css">
 <script src="lib/leaflet.min.js"></script>
@@ -678,7 +679,8 @@ const LINE_GROUPS = [
     { id: 'r_dirt', name: 'Край грунтовой дороги', kind: 'road', w: 0.15 },
     { id: 'r_change', name: 'Граница смены покрытия', kind: 'road', w: 0.15, dots: true },
     { id: 'r_stairs', name: 'Непроезжая улица, ступени (по оси)', kind: 'road', w: 0.15, stairs: true },
-    { id: 'r_ramp', name: 'Въезд на второй этаж (к зданию)', kind: 'road', w: 0.15, ramp: true }
+    { id: 'r_ramp', name: 'Въезд на второй этаж (к зданию)', kind: 'road', w: 0.15, ramp: true },
+    { id: 'r_area', name: 'Площадка с покрытием (контур, буква в середине)', kind: 'road', w: 0.15, closed: true, area: true }
   ]},
   // Рельеф — ГКИНП, табл. 18, 61, 77–80 (зн. 84–85, 280–281, 329–351): коричневым; стенки — чёрным. Штрихи — на сторону понижения
   { id: 'relief', title: 'Рельеф', items: [
@@ -745,7 +747,8 @@ const NET_KIND = {
 const STATES = [['', 'действующая'], ['off', 'недействующая'], ['reserve', 'в резерве'], ['project', 'проектируемая'], ['build', 'строящаяся'], ['staked', 'вынесенная в натуру'], ['approx', 'по неуточнённым данным']];
 const STATE_NAME = Object.fromEntries(STATES);
 const NET_HEX = { water: '#1565c0', sewer: '#6d4c41', heat: '#8e24aa', gas: '#ef8f00', el: '#d32f2f', comm: '#2e7d32', own: '#7b1fa2' };   // для KML
-let netColors = false;           // читается из настроек ниже, когда готовы pref()
+let netColors = false;
+let areaFillOn = false;          // заливка площадей для вида — тоже из настроек ниже           // читается из настроек ниже, когда готовы pref()
 function netColor(type, fallback) {
   const k = netColors && NET_KIND[type];
   return k ? `var(--c-${k})` : fallback;
@@ -915,6 +918,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 function pref(key, def) { try { const v = localStorage.getItem('tk.' + key); return v == null ? def : JSON.parse(v); } catch (e) { return def; } }
 function setPref(key, v) { try { localStorage.setItem('tk.' + key, JSON.stringify(v)); } catch (e) { /* не критично */ } }
 netColors = pref('netColors', false);
+areaFillOn = !!pref('areaFill', false);
 
 /* ───────────── Оформление: тема, размеры панелей ───────────── */
 
@@ -1957,8 +1961,10 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 100;
+const APP_BUILD = 101;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
+const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
+const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
   if (!NATIVE) { if (manual) toast(`Сборка ${APP_BUILD}. Обновления проверяются в Android-приложении`); return; }
@@ -1976,6 +1982,7 @@ async function checkUpdate(manual) {
     let busy = false;
     btn.onclick = async () => {
       if (busy) return;
+      if (!apkOk(v.apk)) { toast('Ссылка на обновление не с сайта «Полевого плана» — не открываю'); return; }
       if (!U || !U.install) { if (U) U.open({ url: v.apk }); else window.open(v.apk, '_blank'); return; }   // старая сборка — через браузер
       if (trackRec && !(await ask('Идёт запись трека. Установка обновления закроет приложение и остановит запись (записанный путь сохранится). Обновить сейчас?', 'Обновить'))) return;
       busy = true; btn.disabled = true; btn.textContent = 'Скачиваю…';
@@ -2065,9 +2072,10 @@ function skyPlot(list, size) {
       <text x="${c + 3}" y="${c - rr(30) + 11}" text-anchor="start" font-size="9">30°</text><text x="${c + 3}" y="${c - rr(60) + 11}" text-anchor="start" font-size="9">60°</text></g>`;
   for (const s of list) {
     if (!(s.el >= 0)) continue;
-    const a = s.az * Math.PI / 180, r = rr(s.el), x = c + r * Math.sin(a), y = c - r * Math.cos(a), col = SYS_COLOR[s.sys] || '#757575';
+    const a = Number(s.az) * Math.PI / 180, r = rr(Number(s.el)), x = c + r * Math.sin(a), y = c - r * Math.cos(a), col = SYS_COLOR[s.sys] || '#757575';
+    if (!isFinite(x) || !isFinite(y)) continue;                          // сбойный отсчёт приёмника — не рисуем
     svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="${s.used ? col : 'var(--panel)'}" stroke="${col}" stroke-width="1.5" opacity="${s.el < SKY_MASK ? .55 : 1}"/>
-      <text x="${(x + 8).toFixed(1)}" y="${(y + 3).toFixed(1)}" font-size="9" fill="var(--ink)">${s.svid}</text>`;
+      <text x="${(x + 8).toFixed(1)}" y="${(y + 3).toFixed(1)}" font-size="9" fill="var(--ink)">${esc(String(s.svid))}</text>`;
   }
   return svg + '</svg>';
 }
@@ -3068,6 +3076,12 @@ const DRAW = {
   // Края улиц и дорог: сплошные или штриховые, двойная узкая дорожка, точки смены покрытия, ступени поперёк оси, въезд со стрелкой
   road(g, path, spec, line, w, pts) {
     const total = path.getTotalLength(), a = line.attr || {}, dash = spec.dash ? spec.dash.map(d => d * MM).join(' ') : null;
+    if (spec.area) {                                                   // площадка: тонкий контур, буква покрытия — в середине, как знак «Материал покрытия»
+      segment(g, path, 0, total, w);
+      const poly = pts.slice(0, -1);
+      if (poly.length >= 3 && !generalized) { const c = areaCentroid(poly); placeFree(g, poly, c.x, c.y, 0, coverOf(line), 2.5 * MM, { inside: true }); }
+      return;
+    }
     if (spec.dots) { for (let s = 0; s <= total; s += 1.3 * MM) { const p = path.getPointAtLength(s); el('circle', { cx: p.x, cy: p.y, r: 0.22 * MM, fill: 'currentColor' }, g); } return; }
     if (spec.twin) { segment(g, path, 0, total, w, -spec.twin, dash); segment(g, path, 0, total, w, spec.twin, dash);
       if (spec.cols) for (let s = 4 * MM; s < total; s += 8 * MM) { const q = at(path, s); el('circle', { cx: q.x, cy: q.y, r: 0.5 * MM, fill: 'var(--symBg)', stroke: 'currentColor', 'stroke-width': w }, g); }   // колонны
@@ -3246,6 +3260,7 @@ function drawLines() {
   netSvg.setAttribute('width', size.x + 2 * P); netSvg.setAttribute('height', size.y + 2 * P);
   netSvg.innerHTML = '';
   const netRoot = el('g', { transform: `translate(${P} ${P})` }, netSvg);
+  const fillRoot = el('g', {}, netRoot);                                // заливки площадей — под всеми линиями и знаками
   polesDrawn = [];
   const clipBox = L.bounds([-P, -P], [size.x + P, size.y + P]);
   for (const line of data.lines) {
@@ -3260,6 +3275,8 @@ function drawLines() {
     g.style.color = isSel && !line.color ? 'var(--accent)' : objColor(line, 'line');   // свой цвет виден и у выбранной линии — выбор показывает толщина
     if (isSel) el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L'), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 12, opacity: 0.22, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);   // подсветка выбранной линии
     const path = polyMeasure(pts);   // невидимый SVG-путь больше не нужен — только мерить длину
+    const fill = areaFillOn && pts.length >= 3 ? areaFill(spec, line) : null;
+    if (fill) el('path', { d: 'M' + pts.map(p => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' L') + ' Z', fill, 'fill-opacity': 0.45, stroke: 'none' }, fillRoot);   // под знаком, линии и надписи — поверх
     if (path.getTotalLength() < 6) { el('line', { x1: pts[0].x, y1: pts[0].y, x2: pts[pts.length - 1].x, y2: pts[pts.length - 1].y, stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round' }, g); continue; }
     curOwner = line.id;                                                // надписи своей линии не мешают ей самой
     const w = Math.max(0.6, spec.w * MM) * (isSel ? 1.8 : 1), thin = Math.max(0.6, 0.15 * MM) * (isSel ? 1.8 : 1), total = path.getTotalLength();
@@ -3273,7 +3290,7 @@ function drawLines() {
     if (NO_STATE.has(spec.kind)) { curOwner = null; if (spec.kind === 'fence' && spec.tag) { curOwner = line.id; captionAlong(g, path, pts, spec.tag); curOwner = null; } continue; }
     const tag = { build: 'стр.', approx: 'ориент.' }[line.state];
     const cap = [tag, spec.tag, netCaption(line)].filter(Boolean).join(' ');
-    if (cap) captionAlong(g, path, pts, cap, spec.sleeve || (line.attr || {}).sleeve ? 1.6 * MM : spec.double ? spec.double * MM : spec.double2 ? spec.double2 * MM : 0);
+    if (cap) captionAlong(g, path, pts, cap, Math.max(spec.sleeve || (line.attr || {}).sleeve ? 1.6 : 0, spec.double || 0, spec.double2 || 0) * MM);   // футляр на двойной — по большему
     curOwner = null;
     }
   }
@@ -3780,7 +3797,7 @@ function openForm(title, fields, onSave, saveText) {
   const first = document.querySelector('#sheetPanel input');
   if (first && !matchMedia('(pointer: coarse)').matches) first.focus();
 }
-const parseNum = s => Number(String(s).replace(/\s/g, '').replace(',', '.'));
+const parseNum = s => Number(String(s).replace(/\s/g, '').replace(/[−–]/g, '-').replace(',', '.'));
 
 function editPoint(p) {
   const s = POINTS[p.type] || POINTS.mark;
@@ -3828,7 +3845,7 @@ function editWell(p, s) {
   openForm(s.name, fields, v => {
     const num = k => v[k] === '' ? '' : parseNum(v[k]);
     const h = num('h'), lots = [0, 1, 2].map(i => ({ h: num('l' + i), dir: v['d' + i] || '' })).filter(x => x.h !== '' || x.dir);
-    if ((h !== '' && isNaN(h)) || lots.some(x => x.h !== '' && isNaN(x.h)) || (v.wd !== '' && isNaN(num('wd')))) { toast('Отметки и диаметр — числа, например 142.10'); return false; }
+    if ((h !== '' && isNaN(h)) || lots.some(x => x.h !== '' && isNaN(x.h)) || (v.wd !== '' && !(num('wd') > 0))) { toast('Отметки — числа, диаметр — больше нуля, например 142.10 и 1000'); return false; }
     const hv = h === '' ? null : h;
     if (hv !== p.h) { delete p.hSrc; delete p.hInfo; }
     p.name = v.name || ''; p.note = v.note; p.h = hv;
@@ -3866,7 +3883,7 @@ function editArm(p, s) {
     { key: 'note', label: 'Примечание', value: p.note, placeholder: 'марка, тип привода, число оборотов', hint: 'Знак сам лёг вдоль ближней сети (до 3 м). Повернуть вручную — поставьте знак ближе к линии.' });
   openForm(s.name, fields, v => {
     const d = v.d === '' ? '' : parseNum(v.d), h = v.h === '' ? null : parseNum(v.h);
-    if ((d !== '' && isNaN(d)) || (h != null && isNaN(h))) { toast('Диаметр и отметка — числа'); return false; }
+    if ((d !== '' && !(d > 0)) || (h != null && isNaN(h))) { toast('Диаметр — больше нуля, отметка — число'); return false; }
     const rev = v.flow === '1', pa = pipeAngle(L.latLng(p.lat, p.lng));
     if (pa) p.rot = pa.rot + (s.flow && rev ? 180 : 0); else delete p.rot;   // угол — всегда от трубы; «наоборот» — разворот на 180°
     if (h !== p.h) { delete p.hSrc; delete p.hInfo; }
@@ -3967,6 +3984,7 @@ function editVeg(line, isNew) {
 }
 function editRoad(line, isNew) {
   const spec = LINES[line.type], a = line.attr || {}, fields = [];
+  if (spec.area) fields.push({ key: 'cover', label: 'Покрытие площадки', type: 'select', value: coverOf(line), options: COVERS });
   if (spec.stairs) fields.push({ key: 'width', label: 'Ширина улицы, м', type: 'number', value: a.width || 6, hint: 'Рисуйте ось улицы — штрихи ступеней встанут поперёк через 2 мм.' });
   if (spec.ramp) fields.push({ key: 'hLow', label: 'Отметка внизу, м', type: 'number', value: a.hLow, placeholder: '10.21', half: true },
     { key: 'hHigh', label: 'Отметка вверху, м', type: 'number', value: a.hHigh, placeholder: '12.96', half: true });
@@ -3981,6 +3999,7 @@ function editRoad(line, isNew) {
       next[k] = n;
     }
     if (spec.stairs && !(next.width > 0)) { toast('Ширина — больше нуля, в метрах'); return false; }
+    if (spec.area) next.cover = COVERS.some(c => c[0] === v.cover) ? v.cover : 'А';
     line.attr = next; line.caption = v.caption || '';
     if (isNew) data.lines.push(line);
     save(); showCard('line', line);
@@ -4897,7 +4916,7 @@ function volumeShow(line, base, r) {
   if (r.spacing > VOL_STEP_M) warn.push(`Точки редкие: в среднем через ${mText(r.spacing, 0)} м. Для подсчёта объёма — не реже чем через ${VOL_STEP_M} м и на всех перегибах.`);
   if (r.area < r.polyA * 0.98) warn.push(`Треугольники покрыли ${Math.round(r.area / r.polyA * 100)}% контура — добавьте точек у краёв.`);
   if (!hgt.ref && !hgt.dh && base.kind === 'level') warn.push('Отметки не привязаны к реперу, а подошва задана отметкой — ошибка может быть дециметры.');
-  showSheet(`<div class="sh-head"><b>Объём: L${line.no || ''} ${esc((LINES[line.type] || {}).name || '')}</b><button class="x" data-close>×</button></div>
+  showSheet(`<div class="sh-head"><b>Объём: L${esc(String(line.no || ''))} ${esc((LINES[line.type] || {}).name || '')}</b><button class="x" data-close>×</button></div>
     <div class="kv" style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:6px 0">
       <span>Насыпь (выше подошвы)</span><b>${m3(r.fill)} м³</b>
       <span>Выемка (ниже подошвы)</span><b>${m3(r.cut)} м³</b>
@@ -4976,6 +4995,17 @@ function editCadPoint(p, s) {
 // участки: части границы (линии «Кадастр»), сомкнутые концами; общая граница соседних участков (раздел) — тоже.
 // Плоский граф: на каждом узле — следующая часть по часовой стрелке; каждая замкнутая грань — участок, внешняя грань — прочь
 const PARCEL_NAME_M = 5;                                                // своё обозначение участка ищется по его центру, до 5 м
+// буква покрытия площадки (А, Ц, Б…); неизвестная — «А»
+function coverOf(line) { const c = line && line.attr && line.attr.cover; return COVERS.some(x => x[0] === c) ? c : 'А'; }
+// заливка площадей «для вида»: газон и кустарник — зелёным, дом — охрой, площадка — по покрытию; в DXF не идёт
+const FILL_VEG = '#9fd47f', FILL_HOUSE = '#e9c98f', FILL_COVER = { А: '#9a9a9a', Бм: '#9a9a9a', Ц: '#c4c4c4', Б: '#c9b08a', Бр: '#c9b08a' }, FILL_OTHER = '#d6cfb8';
+function areaFill(spec, line) {
+  if (!spec || !spec.closed || line.state === 'project') return null;
+  if (spec.kind === 'veg') return FILL_VEG;
+  if (spec.kind === 'building') return FILL_HOUSE;
+  if (spec.area) return FILL_COVER[coverOf(line)] || FILL_OTHER;
+  return null;
+}
 function areaCentroid(V) {                                              // центр площади многоугольника (не среднее вершин — оно сдвигается от лишней вершины)
   let a = 0, x = 0, y = 0; const o = V[0];
   V.forEach((c, i) => { const q = V[(i + 1) % V.length], p0x = c.x - o.x, p0y = c.y - o.y, p1x = q.x - o.x, p1y = q.y - o.y, w = p0x * p1y - p1x * p0y; a += w; x += (p0x + p1x) * w; y += (p0y + p1y) * w; });
@@ -5905,6 +5935,30 @@ function extendXY(P, T, tClosed) {
   return best;
 }
 // выпрямить углы контура: стороны по очереди «вдоль» и «поперёк» главного направления; каждая вершина — на пересечении своих сторон
+// поворот на deg градусов по часовой (как азимут) вокруг c
+function rotateXY(P, c, deg) {
+  const t = deg * Math.PI / 180, cs = Math.cos(t), sn = Math.sin(t);
+  return P.map(p => { const dx = p.x - c.x, dy = p.y - c.y; return { x: c.x + dx * cs - dy * sn, y: c.y + dx * sn + dy * cs }; });
+}
+// зеркало относительно прямой через a и b; a = b — null
+function mirrorXY(P, a, b) {
+  const L0 = Math.hypot(b.x - a.x, b.y - a.y); if (!(L0 > 1e-9)) return null;
+  const ux = (b.x - a.x) / L0, uy = (b.y - a.y) / L0;
+  return P.map(p => { const dx = p.x - a.x, dy = p.y - a.y, d = dx * ux + dy * uy; return { x: a.x + 2 * d * ux - dx, y: a.y + 2 * d * uy - dy }; });
+}
+const centerXY = P => ({ x: P.reduce((s, p) => s + p.x, 0) / P.length, y: P.reduce((s, p) => s + p.y, 0) / P.length });
+// ближайший к q отрезок линии P: [a, b]
+function nearSegXY(P, q, closed) {
+  let best = null, bd = Infinity;
+  const n = P.length, m = closed ? n : n - 1;
+  for (let i = 0; i < m; i++) {
+    const a = P[i], b = P[(i + 1) % n], vx = b.x - a.x, vy = b.y - a.y, l2 = vx * vx + vy * vy;
+    const t = l2 ? Math.max(0, Math.min(1, ((q.x - a.x) * vx + (q.y - a.y) * vy) / l2)) : 0;
+    const d = Math.hypot(a.x + t * vx - q.x, a.y + t * vy - q.y);
+    if (d < bd) { bd = d; best = [a, b]; }
+  }
+  return best;
+}
 const SQUARE_MAX_DEG = 20;                                              // угол дальше 20° от прямого — не дом с прямыми углами, не трогаем
 function squareXY(P) {
   const n = P.length;
@@ -5940,12 +5994,17 @@ function chooseLine(text, cb) {
 function chooseEnd() { lineChoose = null; if (!pickTool) $('pick').style.display = 'none'; }
 function chooseTap(line, ll) { const cb = lineChoose; chooseEnd(); if (cb) cb(line, ll); }
 function buildMenu(kind, obj) {
+  if (kind === 'point' && GROUP_OF[obj.type] === 'wells') {
+    openList('Построения · колодец', [{ id: 'out', text: '⟶ Выпуски: трубы от колодца по направлению и длине' }, { id: 'move', text: '⇲ Сдвинуть или копировать' }], a => a === 'out' ? outletForm(obj) : moveForm('point', obj));
+    return;
+  }
   if (kind === 'point') { moveForm('point', obj); return; }
   const closed = !!(LINES[obj.type] || {}).closed;
   if (obj.latlngs.length < (closed ? 3 : 2)) { toast('У линии слишком мало вершин'); return; }
   const items = [{ id: 'par', text: '∥ Параллельная линия на расстоянии' },
     ...(closed ? [] : [{ id: 'ext', text: '⟷ Продлить или обрезать до другой линии' }, { id: 'split', text: '✂ Разрезать в крестике' }, { id: 'join', text: '⊕ Соединить с другой линией' }]),
     { id: 'rev', text: '⇄ Развернуть направление' }, { id: 'move', text: '⇲ Сдвинуть или копировать' },
+    { id: 'rot', text: '⟳ Повернуть на угол' }, { id: 'mir', text: '⇋ Зеркально отразить' },
     ...(closed && obj.latlngs.length >= 4 ? [{ id: 'square', text: '∟ Выпрямить углы (дом, снятый по GPS)' }] : [])];
   openList('Построения · L' + (obj.no || ''), items, a => {
     if (a === 'par') parallelForm(obj);
@@ -5954,11 +6013,13 @@ function buildMenu(kind, obj) {
     if (a === 'join') chooseLine('Коснитесь линии, которую присоединить к L' + (obj.no || ''), t => joinLines(obj, t));
     if (a === 'rev') reverseLine(obj);
     if (a === 'move') moveForm('line', obj);
+    if (a === 'rot') rotateForm(obj);
+    if (a === 'mir') mirrorForm(obj);
     if (a === 'square') squareLine(obj);
   });
 }
 const lineById = id => data.lines.find(l => l.id === id);
-const BUILT_TXT = { sketch: 'от руки, на глаз — не съёмка', tape: 'по промерам рулеткой — стороны не сняты по GPS', par: 'параллельно другой линии — не снято на местности', copy: 'копия — не снято на местности' };
+const BUILT_TXT = { outlet: 'выпуск из колодца по направлению и длине — конец трубы не снят', rot: 'повёрнутая копия — не снято на местности', mir: 'зеркальная копия — не снято на местности', sketch: 'от руки, на глаз — не съёмка', tape: 'по промерам рулеткой — стороны не сняты по GPS', par: 'параллельно другой линии — не снято на местности', copy: 'копия — не снято на местности' };
 // новая линия по образцу: те же знак и свойства, свой номер, без съёмочных данных
 function lineLike(src, latlngs, sameType) {
   const out = { id: uid(), no: nextNo(data.lines), type: sameType ? src.type : GENERIC.line, latlngs, caption: sameType ? src.caption || '' : '', count: src.count || 1, state: sameType ? src.state || '' : '' };
@@ -6116,6 +6177,102 @@ function moveForm(kind, obj) {
       save(); redrawAll(); showCard('line', obj); toast(`L${obj.no || ''} сдвинута на ${what} — ↶ вернёт`);
     }
   }, 'Готово');
+}
+// повернуть или отразить линию: сдвинуть её саму или поставить копию; окружность — вместе с центром
+function transformLine(line, f, zone, act, what) {
+  if (lineById(line.id) !== line) { toast('План изменился — повторите'); return; }
+  const tr = ll => xyLL(f([planeXY(L.latLng(ll), zone)]), zone)[0];
+  const ll2 = xyLL(f(line.latlngs.map(a => planeXY(L.latLng(a), zone))), zone);
+  const sideK = (LINES[line.type] || {}).kind, flipSide = what.flip && (sideK === 'fence' || sideK === 'relief');   // засечки оград, бергштрихи, штрихи откосов — по флажку стороны
+  const flipped = a => ({ ...(a || {}), flip: (a && a.flip) ? 0 : 1 });
+  const circ = line.attr && line.attr.circle ? tr([line.attr.circle.lat, line.attr.circle.lng]) : null;
+  if (act === 'copy') {
+    const cp = lineLike(line, ll2, true); cp.built = what.built;
+    if (flipSide) cp.attr = flipped(cp.attr);                           // зеркало: штрихи — на зеркальную сторону
+    if (circ) cp.attr = { ...(cp.attr || {}), circle: { ...line.attr.circle, lat: circ[0], lng: circ[1] } };
+    data.lines.push(cp); save(); redrawAll(); showCard('line', cp); toast(`${what.copy} L${cp.no} — ↶ вернёт`);
+    return;
+  }
+  if (flipSide) line.attr = flipped(line.attr);
+  line.latlngs = ll2; delete line.vol; delete line.hs;                   // отметки были у старых мест
+  if (circ) { line.attr.circle.lat = circ[0]; line.attr.circle.lng = circ[1]; }
+  save(); redrawAll(); showCard('line', line); toast(`L${line.no || ''} ${what.move} — ↶ вернёт`);
+}
+function rotateForm(line) {
+  openForm('Повернуть L' + (line.no || ''), [
+    { key: 'deg', label: 'Угол, градусы (плюс — по часовой)', placeholder: '90 или -12,5', half: true },
+    { key: 'about', label: 'Вокруг чего', type: 'select', value: 'center', options: [['center', 'середины объекта'], ['first', 'первой вершины'], ['cross', 'крестика']], half: true },
+    { key: 'act', label: 'Что сделать', type: 'select', value: 'move', options: [['move', 'повернуть сам объект'], ['copy', 'поставить повёрнутую копию']] }
+  ], v => {
+    const deg = parseNum(v.deg);
+    if (!isFinite(deg) || Math.abs(deg) > 360) { toast('Угол — число градусов, например 90 или −12,5'); return false; }
+    if (Math.abs(deg) < 0.001 || Math.abs(Math.abs(deg) - 360) < 0.001) { toast('Поворот нулевой — впишите угол'); return false; }
+    const { zone, P } = lineXY(line.latlngs);
+    const c = v.about === 'first' ? P[0] : v.about === 'cross' ? planeXY(map.getCenter(), zone) : centerXY(P);
+    const t = mText(deg, 1) + '°';
+    transformLine(line, Q => rotateXY(Q, c, deg), zone, v.act, { built: 'rot', copy: 'Повёрнутая на ' + t + ' копия', move: 'повёрнута на ' + t });
+  }, 'Повернуть');
+}
+function mirrorForm(line) {
+  openForm('Зеркально отразить L' + (line.no || ''), [
+    { key: 'axis', label: 'Ось отражения', type: 'select', value: 'tap', options: [['tap', 'другая линия — коснуться её стороны'], ['side', 'первая сторона самой линии'], ['ns', 'север — юг через середину'], ['ew', 'запад — восток через середину']] },
+    { key: 'act', label: 'Что сделать', type: 'select', value: 'copy', options: [['copy', 'поставить зеркальную копию'], ['move', 'отразить сам объект']] }
+  ], v => {
+    const { zone, P } = lineXY(line.latlngs), act = v.act;
+    const what = { built: 'mir', copy: 'Зеркальная копия', move: 'отражена', flip: true };
+    const go = (a, b) => { if (!mirrorXY([a], a, b)) { toast('Ось нулевой длины — выберите другую'); return; } transformLine(line, Q => mirrorXY(Q, a, b), zone, act, what); };
+    if (v.axis === 'side') { go(P[0], P[1]); return; }
+    if (v.axis === 'ns' || v.axis === 'ew') { const c = centerXY(P); go(c, v.axis === 'ns' ? { x: c.x + 1, y: c.y } : { x: c.x, y: c.y + 1 }); return; }
+    chooseLine('Коснитесь стороны линии, относительно которой отразить L' + (line.no || ''), (t, ll) => {
+      if (!t || !t.latlngs || t.latlngs.length < 2) { toast('У этой линии нет сторон'); return; }
+      const T = t.latlngs.map(a => planeXY(L.latLng(a), zone));
+      const s = nearSegXY(T, planeXY(L.latLng(ll || t.latlngs[0]), zone), !!(LINES[t.type] || {}).closed);
+      if (!s || Math.hypot(s[1].x - s[0].x, s[1].y - s[0].y) < 0.01) { toast('Сторона слишком короткая'); return; }
+      go(s[0], s[1]);
+    });
+  }, 'Отразить');
+}
+// колодец → какая сеть из него выходит по умолчанию
+const WELL_NET = { w_v: 'v_p', w_k: 'k_b', w_kl: 'p_kl', w_d: 'p_d', w_g: 'g_nd', w_t: 'p_t', w_e: 'c_lv', w_s: 'c_s' };
+const OUTLET_MAX = 3, OUTLET_MAX_M = 500;
+// конец выпуска: от точки (x — север, y — восток) по азимуту az градусов на len метров местности, k — масштаб проекции
+function outletEnd(o, az, len, k) { const t = az * Math.PI / 180; return { x: o.x + len * k * Math.cos(t), y: o.y + len * k * Math.sin(t) }; }
+// разбор строки формы: азимут и длина; «+» вместо азимута — к крестику; пустая строка — нет выпуска
+function outletRow(az, len) {
+  az = String(az == null ? '' : az).trim(); len = String(len == null ? '' : len).trim();
+  if (!az && !len) return null;
+  if (az === '+') return { cross: true };
+  if (!az) return { err: 'У выпуска нет направления — впишите азимут (или «+» — к крестику)' };
+  const a = parseNum(az), d = parseNum(len);
+  if (!isFinite(a) || a < 0 || a >= 360) return { err: 'Направление — азимут от 0 до 359,9° (или «+» — к крестику)' };
+  if (!isFinite(d) || d <= 0 || d > OUTLET_MAX_M) return { err: 'Длина выпуска — метры, от 0,01 до ' + OUTLET_MAX_M };
+  return { az: a, len: d };
+}
+function outletForm(p) {
+  const nets = LINE_GROUPS.filter(g => NET_GROUPS.has(g.id)).flatMap(g => g.items.map(i => [i.id, g.title + ': ' + i.name]));
+  const last = pref('outletNet', ''), def = WELL_NET[p.type] || (LINES[last] ? last : nets[0][0]);   // у колодца своей сети — она, иначе прошлая
+  const fields = [{ key: 'type', label: 'Сеть выпусков', type: 'select', value: def, options: nets }];
+  for (let i = 0; i < OUTLET_MAX; i++) fields.push({ key: 'az' + i, label: `Выпуск ${i + 1}: азимут, °`, placeholder: i ? '' : '90', half: true, ...(i ? {} : { hint: '«+» — к крестику (длина не нужна)' }) },
+    { key: 'len' + i, label: 'Длина, м', type: 'number', placeholder: i ? '' : '6.5', half: true });
+  openForm('Выпуски из ' + (p.name || 'колодца ' + (p.no || '')), fields, v => {
+    const rows = [...Array(OUTLET_MAX)].map((_, i) => outletRow(v['az' + i], v['len' + i])).filter(Boolean);
+    const bad = rows.find(r => r.err); if (bad) { toast(bad.err); return false; }
+    if (!rows.length) { toast('Впишите хотя бы один выпуск: азимут и длину'); return false; }
+    if (!LINES[v.type]) { toast('Выберите сеть'); return false; }
+    const ll0 = L.latLng(p.lat, p.lng), zone = zoneOf(p.lng), o = planeXY(ll0, zone), k = gkScale(ll0);
+    const made = [];
+    for (const r of rows) {
+      let end;
+      if (r.cross) { end = planeXY(map.getCenter(), zone); if (Math.hypot(end.x - o.x, end.y - o.y) < 0.05) { toast('Крестик стоит на колодце — отведите его туда, куда идёт труба'); return false; } }
+      else end = outletEnd(o, r.az, r.len, k);
+      const q = fromSk42(end.x, end.y, zone);
+      const line = { id: uid(), no: nextNo(data.lines), type: v.type, latlngs: [[p.lat, p.lng], [q.lat, q.lng]], caption: '', count: (LINES[v.type] || {}).defCount || 1, state: '', built: 'outlet' };
+      data.lines.push(line); made.push(line);
+    }
+    setPref('outletNet', v.type);
+    save(); redrawAll(); showCard('line', made[made.length - 1]);
+    toast(`Выпусков: ${made.length} (L${made.map(l => l.no).join(', L')}) — концы не сняты, ↶ вернёт`);
+  }, 'Построить');
 }
 const SQUARE_ASK_M = 0.3;
 function squareLine(line) {
@@ -6550,6 +6707,7 @@ $('fabLayers').onclick = () => {
     { id: 'mymaps', icon: '＋', text: myMaps.length || myDxf.length ? 'Мои карты и чертежи: загрузить ещё, прозрачность, удалить →' : 'Загрузить свою карту или чертёж (MBTiles, DXF) →' },
     { header: 'Поверх карты' }, { id: 'grid', icon: '▦', text: 'Сетка ' + planeName(), on: map.hasLayer(gridLayer), check: true },
     { id: 'netcolors', icon: '🎨', text: 'Цвета сетей (традиционные)', on: netColors, check: true },
+    { id: 'areafill', icon: '▩', text: 'Заливка: газоны, асфальт, дома (для вида)', on: areaFillOn, check: true },
     ...Object.keys(rasterLayers).map(id => ({ id: 'r:' + id, icon: '🖼', text: rasterLayers[id].r.name, on: map.hasLayer(rasterLayers[id]), check: true }))];
   openList('Слои', items, pick => {
     if (pick === 'theme') $('fabTheme').onclick();
@@ -6561,6 +6719,7 @@ $('fabLayers').onclick = () => {
     if (pick === 'fade') { const i = BASE_FADES.findIndex(f => f[0] === baseOp); baseOp = BASE_FADES[(i + 1) % BASE_FADES.length][0]; setPref('baseOp', baseOp); document.documentElement.style.setProperty('--baseOp', baseOp); }
     if (pick === 'grid') MENU.grid();
     if (pick === 'netcolors') MENU.netcolors();
+    if (pick === 'areafill') MENU.areafill();
     if (pick.startsWith('r:')) { const l = rasterLayers[pick.slice(2)]; if (map.hasLayer(l)) map.removeLayer(l); else l.addTo(map); }
     $('fabLayers').onclick();
   });
@@ -7619,6 +7778,7 @@ function exportMenu() {
     { header: 'Главное' },
     { id: 'report', icon: '⇩', text: 'Архив для отчёта: KML + CSV + каталог + DXF + фото' },
     { id: 'dxf', icon: '⇩', text: `DXF для AutoCAD, GeoniCS, КРЕДО (${planeName()}, отметки в Z${pref('dxfFrame', true) ? ', рамка и штамп' : ''})` },
+    { id: 'printplan', icon: '🖨', text: 'Печать плана — лист PDF: рамка, штамп, легенда (то, что на экране)' },
     { id: 'txt', icon: '⇩', text: 'Каталог TXT для КРЕДО (с кодами линий), коды знаков' },
     { header: 'Ведомости (CSV для Excel)' },
     { id: 'wells', icon: '⇩', text: 'Колодцы' },
@@ -7707,6 +7867,7 @@ const MENU = {
   defects: () => { if (!data.points.some(p => (POINTS[p.type] || {}).defect)) { toast('Дефектов нет — Знак… → «Дефекты»'); return; } download(`defekty_${today()}.csv`, toDefectSheet(), 'text/csv;charset=utf-8'); },
   arms: () => { if (!data.points.some(p => (POINTS[p.type] || {}).arm)) { toast('Арматуры нет — Знак… → «Арматура»'); return; } download(`armatura_${today()}.csv`, toArmSheet(), 'text/csv;charset=utf-8'); },
   nets: () => download(`seti_${today()}.csv`, toNetsSheet(), 'text/csv;charset=utf-8'),
+  printplan: () => guardExport(printForm),
   dxf: () => guardExport(() => download(`plan_${today()}.dxf`, new Blob([toDxf()], { type: 'application/dxf' }), 'application/dxf')),
   txt: () => guardExport(catalogMenu),
   pnezd: () => guardExport(() => download(`civil3d_PNEZD_${today()}.csv`, new Blob([toPnezd()], { type: 'text/csv' }), 'text/csv')),
@@ -7720,6 +7881,10 @@ const MENU = {
   theme: () => $('fabTheme').click(),
   crosssize: () => { const ks = Object.keys(CROSS_SIZES); crossSize = ks[(ks.indexOf(crossSize) + 1) % ks.length]; setPref('crossSize', crossSize); applyCrossSize(); toast('Крестик: ' + CROSS_SIZES[crossSize][0]); },
   labels: () => { labelsAll = !labelsAll; setPref('labelsAll', labelsAll); redrawAll(); toast(labelsAll ? 'Показываю все подписи — на мелком масштабе они могут налезать' : 'Подписи без наложений: лишние появятся при приближении'); },
+  areafill: () => {
+    areaFillOn = !areaFillOn; setPref('areaFill', areaFillOn); redrawAll();
+    toast(areaFillOn ? 'Газоны, площадки и дома залиты цветом — только для вида, в DXF заливки нет' : 'Заливка выключена — план как в «Условных знаках»');
+  },
   netcolors: () => {
     netColors = !netColors; setPref('netColors', netColors); redrawAll();
     if (selected) showCard(selected.kind, selected.obj);
@@ -7863,6 +8028,154 @@ function editMsk() {
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };   // местная дата
 // text — строка или Blob. В Android-приложении файл пишется в «Загрузки/Полевой план» и предлагается «Поделиться»
 const FILES = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Files) || (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('Files')));
+/* ───────────── Печать плана: лист PDF (рамка, сетка, штамп, легенда) ───────────── */
+const PRINT_SHEETS = { A4: [297, 210], A3: [420, 297] };
+const PRINT_PPM = { A4: 10, A3: 8 };                                     // точек на мм: 254 и 203 dpi — картинка не больше 13 Мп
+const PRINT_STAMP = { w: 185, h: 40 }, PRINT_LEG_W = 78, PRINT_LEG_ROW = 6;
+// размер листа и поле плана внутри рамки, мм (поле — вся рамка; штамп и легенда лежат поверх углов)
+function printLayout(size, portrait) {
+  const [a, b] = PRINT_SHEETS[size] || PRINT_SHEETS.A4, W = portrait ? b : a, H = portrait ? a : b;
+  return { W, H, x: FR.left, y: FR.other, w: W - FR.left - FR.other, h: H - 2 * FR.other };
+}
+// масштабная линейка: шаг подписи в метрах на 1 см листа и число сантиметров
+function scaleBar(denom) { const cm = denom / 100; return { cm, n: 5, label: k => planNum(k * cm, cm < 1 ? 1 : 0) }; }
+// PDF из одной картинки JPEG на весь лист (страница — W×H мм)
+function pdfFromJpeg(jpg, wPx, hPx, Wmm, Hmm) {
+  const pt = v => (v * 72 / 25.4).toFixed(2), enc = s => new TextEncoder().encode(s);
+  const content = `q ${pt(Wmm)} 0 0 ${pt(Hmm)} 0 0 cm /Im0 Do Q`;
+  const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pt(Wmm)} ${pt(Hmm)}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`,
+    null, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`];
+  const parts = [enc('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n')], offs = []; let len = parts[0].length;
+  const push = u => { parts.push(u); len += u.length; };
+  objs.forEach((o, i) => {
+    offs.push(len);
+    if (o === null) { push(enc(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${wPx} /Height ${hPx} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`)); push(jpg); push(enc('\nendstream\nendobj\n')); }
+    else push(enc(`${i + 1} 0 obj\n${o}\nendobj\n`));
+  });
+  const xref = len;
+  push(enc('xref\n0 6\n0000000000 65535 f \n' + offs.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`));
+  const out = new Uint8Array(len); let k = 0; for (const u of parts) { out.set(u, k); k += u.length; }
+  return out;
+}
+// цвета экрана (тёмная тема, переменные CSS) → чёрное на белом, как на бумаге
+const printInk = s => s.replace(/var\(--symBg\)/g, '#fff').replace(/var\(--(?:halo|panel|bg)\)/g, '#fff').replace(/var\(--[\w-]+\)/g, '#000');
+function printForm() {
+  openForm('Печать плана', [
+    { key: 'size', label: 'Лист', type: 'select', value: pref('printSize', 'A4'), options: [['A4', 'А4'], ['A3', 'А3']], half: true },
+    { key: 'orient', label: 'Как лежит', type: 'select', value: pref('printOrient', 'land'), options: [['land', 'альбомно'], ['port', 'книжно']], half: true },
+    { key: 'legend', label: 'Легенда (условные знаки на листе)', type: 'select', value: pref('printLegend', 1), options: [[1, 'есть'], [0, 'нет']], half: true },
+    { key: 'title', label: 'Название в штампе', value: pref('printTitle', 'Топографический план'), half: true, hint: `На лист попадает то, что вокруг середины экрана, в масштабе 1:${planScale}. Подвиньте карту, чтобы объект был в середине.` }
+  ], v => {
+    setPref('printSize', v.size); setPref('printOrient', v.orient); setPref('printLegend', +v.legend); setPref('printTitle', v.title || 'Топографический план');
+    printPlan({ size: v.size, portrait: v.orient === 'port', legend: +v.legend === 1, title: v.title || 'Топографический план' });
+  }, 'Сделать PDF');
+}
+// лист SVG (мм): то, что сейчас нарисовано на экране, в масштабе плана — линии, знаки, подписи
+function printSvg(o) {
+  const lay = printLayout(o.size, o.portrait), sz = map.getSize(), mpp = metersPerPx(), P = drawnAt ? drawnAt.P : 0;
+  const f = mpp * 1000 / planScale;                                     // мм листа на точку экрана
+  const cx = sz.x / 2, cy = sz.y / 2, fx = lay.x + lay.w / 2, fy = lay.y + lay.h / 2;
+  const toMm = c => ({ x: fx + (c.x - cx) * f, y: fy + (c.y - cy) * f });
+  const inField = (c, m) => { const q = toMm(c); return q.x > lay.x - m && q.x < lay.x + lay.w + m && q.y > lay.y - m && q.y < lay.y + lay.h + m; };
+  const n2 = v => v.toFixed(2), out = [];
+  out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${lay.W}mm" height="${lay.H}mm" viewBox="0 0 ${lay.W} ${lay.H}">`,
+    `<style>text{font-family:"Roboto Condensed","Arial Narrow",Arial,sans-serif}.plan text{paint-order:stroke;stroke:#fff;stroke-width:2.6px;stroke-linejoin:round}</style>`,
+    `<rect width="${lay.W}" height="${lay.H}" fill="#fff"/><defs><clipPath id="fld"><rect x="${lay.x}" y="${lay.y}" width="${lay.w}" height="${lay.h}"/></clipPath></defs>`);
+  // план: слой линий как есть (координаты экрана + запас P) и знаки точек поверх
+  let pts = '';
+  const used = new Map();                                              // легенда: тип → образец
+  for (const { p, marker } of pointMarkers) {
+    const c = map.latLngToContainerPoint([p.lat, p.lng]); if (!inField(c, 3)) continue;
+    const el0 = marker.getElement(), sv = el0 && el0.querySelector('svg'); if (!sv) continue;
+    const s = sv.cloneNode(true); s.setAttribute('x', n2(c.x - SYM_PX / 2)); s.setAttribute('y', n2(c.y - SYM_PX / 2)); s.setAttribute('width', SYM_PX); s.setAttribute('height', SYM_PX);
+    pts += new XMLSerializer().serializeToString(s);
+    const span = el0.querySelector('.lbl');
+    if (span && span.textContent && !span.classList.contains('off') && span.getBoundingClientRect().width > 0) {   // скрытая (не уместилась) — на лист не идёт
+      const r = span.getBoundingClientRect(), m = map.getContainer().getBoundingClientRect(), col = span.style.color || '#000';
+      const parts = (POINTS[p.type] || {}).frac ? fracParts(p) : [span.textContent], lx = r.left - m.left + r.width / 2, ly = r.top - m.top + r.height / 2;
+      parts.forEach((t, i) => { pts += `<text x="${n2(lx)}" y="${n2(ly + (i - (parts.length - 1) / 2) * (LBL_PX + 2))}" font-size="${n2(LBL_PX)}" font-style="italic" text-anchor="middle" dominant-baseline="central" fill="${esc(col)}">${esc(t)}</text>`; });
+      if (parts.length === 2) pts += `<path d="M${n2(lx - r.width / 2 + 1)} ${n2(ly)}H${n2(lx + r.width / 2 - 1)}" stroke="${esc(col)}" stroke-width="0.8"/>`;
+    }
+    if (!used.has('p:' + p.type)) used.set('p:' + p.type, { name: (POINTS[p.type] || POINTS.mark).name.replace(/ \(.*\)$/, ''), svg: symbolSvg(pointSvg(p), 22, objColor(p, 'point')) });
+  }
+  const crossesField = l => { const Q = l.latlngs.map(a => toMm(map.latLngToContainerPoint(a))), xs = Q.map(q => q.x), ys = Q.map(q => q.y);
+    return Math.max(...xs) > lay.x && Math.min(...xs) < lay.x + lay.w && Math.max(...ys) > lay.y && Math.min(...ys) < lay.y + lay.h; };   // рамка линии задевает поле
+  for (const l of data.lines) if (l.latlngs.length >= 2 && crossesField(l)) {
+    const sp = LINES[l.type] || LINES.plain; if (sp.kind === 'note') continue;
+    if (!used.has('l:' + l.type)) used.set('l:' + l.type, { name: sp.name.replace(/ \(.*\)$/, ''), svg: linePreview(sp, 46, 22, l.color) });
+  }
+  out.push(`<g clip-path="url(#fld)"><g class="plan" transform="translate(${n2(fx)} ${n2(fy)}) scale(${f.toFixed(5)}) translate(${n2(-cx - P)} ${n2(-cy - P)})">${[...netSvg.childNodes].map(n => new XMLSerializer().serializeToString(n)).join('')}<g transform="translate(${P} ${P})">${pts}</g></g>`);
+  // сетка: кресты через 10 см листа по осям плана, подписи у первого ряда и столбца
+  const zone = zoneOf(map.getCenter().lng), stepM = GRID_MM / 1000 * planScale;
+  const corner = (u, v) => planeXY(map.containerPointToLatLng([cx + (u - fx) / f, cy + (v - fy) / f]), zone);
+  const C4 = [corner(lay.x, lay.y), corner(lay.x + lay.w, lay.y), corner(lay.x, lay.y + lay.h), corner(lay.x + lay.w, lay.y + lay.h)];
+  const X0 = Math.min(...C4.map(q => q.x)), X1 = Math.max(...C4.map(q => q.x)), Y0 = Math.min(...C4.map(q => q.y)), Y1 = Math.max(...C4.map(q => q.y));
+  const rowsDone = new Set(), colsDone = new Set();
+  if ((X1 - X0) / stepM * (Y1 - Y0) / stepM < 2000) for (let X = Math.ceil(X0 / stepM) * stepM; X <= X1; X += stepM) for (let Y = Math.ceil(Y0 / stepM) * stepM; Y <= Y1; Y += stepM) {
+    const ll = fromSk42(X, Y, zone), q = toMm(map.latLngToContainerPoint(ll));
+    if (q.x < lay.x + 6 || q.x > lay.x + lay.w - 6 || q.y < lay.y + 6 || q.y > lay.y + lay.h - 6) continue;
+    out.push(`<path d="M${n2(q.x - 5)} ${n2(q.y)}H${n2(q.x + 5)}M${n2(q.x)} ${n2(q.y - 5)}V${n2(q.y + 5)}" stroke="#000" stroke-width="0.15"/>`);
+    if (!rowsDone.has(X)) { rowsDone.add(X); out.push(`<text x="${n2(q.x + 0.8)}" y="${n2(q.y - 0.8)}" font-size="1.8">X ${Math.round(X)}</text>`); }
+    if (!colsDone.has(Y)) { colsDone.add(Y); out.push(`<text x="${n2(q.x + 0.8)}" y="${n2(q.y + 2.6)}" font-size="1.8">Y ${Math.round(Y)}</text>`); }
+  }
+  out.push('</g>');
+  // рамка, север, масштабная линейка
+  out.push(`<rect x="0.1" y="0.1" width="${lay.W - 0.2}" height="${lay.H - 0.2}" fill="none" stroke="#000" stroke-width="0.1"/><rect x="${lay.x}" y="${lay.y}" width="${lay.w}" height="${lay.h}" fill="none" stroke="#000" stroke-width="0.5"/>`);
+  const nx = lay.x + 8, ny = lay.y + 6;
+  out.push(`<g><rect x="${nx - 4}" y="${ny - 1}" width="8" height="14" fill="#fff"/><path d="M${nx} ${ny + 1}L${nx + 2.2} ${ny + 9}L${nx} ${ny + 7.6}L${nx - 2.2} ${ny + 9}Z" fill="#000"/><text x="${nx}" y="${ny + 12.2}" font-size="2.6" text-anchor="middle">С</text></g>`);
+  const sb = scaleBar(planScale), bx = lay.x + 6, by = lay.w - PRINT_STAMP.w < 70 ? lay.y + lay.h - PRINT_STAMP.h - 6 : lay.y + lay.h - 8;   // штамп во всю ширину — линейка над ним
+  let bar = `<rect x="${bx - 2}" y="${by - 4.5}" width="${sb.n * 10 + 12}" height="8" fill="#fff"/>`;
+  for (let k = 0; k < sb.n; k++) bar += `<rect x="${bx + k * 10}" y="${by}" width="10" height="1.2" fill="${k % 2 ? '#fff' : '#000'}" stroke="#000" stroke-width="0.15"/>`;
+  for (let k = 0; k <= sb.n; k++) bar += `<text x="${bx + k * 10}" y="${by - 1}" font-size="2" text-anchor="middle">${sb.label(k)}</text>`;
+  out.push(bar + `<text x="${bx + sb.n * 10 + 2}" y="${by + 1.2}" font-size="2">м</text>`);
+  // легенда — правый верхний угол
+  if (o.legend && used.size) {
+    const rows = [...used.values()], maxRows = Math.max(1, Math.floor((lay.h - PRINT_STAMP.h - 14) / PRINT_LEG_ROW) - 1), show = rows.slice(0, rows.length > maxRows ? maxRows - 1 : maxRows);
+    const lx = lay.x + lay.w - PRINT_LEG_W, ly = lay.y, hh = 8 + (show.length + (rows.length > show.length ? 1 : 0)) * PRINT_LEG_ROW;
+    let g = `<rect x="${lx}" y="${ly}" width="${PRINT_LEG_W}" height="${hh}" fill="#fff" stroke="#000" stroke-width="0.3"/><text x="${lx + PRINT_LEG_W / 2}" y="${ly + 5}" font-size="3" text-anchor="middle">Условные обозначения</text>`;
+    show.forEach((r, i) => { const y = ly + 8 + i * PRINT_LEG_ROW;
+      g += r.svg.replace(/^<svg /, `<svg x="${lx + 2}" y="${y + 0.5}" `).replace(/ width="[\d.]+" height="[\d.]+"/, ' width="12" height="5"');   // образец — вложенный svg со своим viewBox
+      g += `<text x="${lx + 16}" y="${y + 3.6}" font-size="2.2">${esc(r.name.length > 52 ? r.name.slice(0, 51) + '…' : r.name)}</text>`; });
+    if (rows.length > show.length) g += `<text x="${lx + 16}" y="${ly + 8 + show.length * PRINT_LEG_ROW + 3.6}" font-size="2.2">…и ещё ${rows.length - show.length} — см. «Условные знаки»</text>`;
+    out.push(g);
+  }
+  // штамп — правый нижний угол: объект, название, масштаб, системы, дата
+  const m = meta(), sx = lay.x + lay.w - PRINT_STAMP.w, sy = lay.y + lay.h - PRINT_STAMP.h, day = new Date().toLocaleDateString('ru-RU');
+  const T = (x, y, s, t, max) => { if (!t) return ''; t = String(t); const fit = Math.floor(max / (s * 0.55)); if (t.length > fit) t = t.slice(0, Math.max(1, fit - 1)) + '…'; return `<text x="${n2(sx + x)}" y="${n2(sy + y)}" font-size="${s}">${esc(t)}</text>`; };
+  out.push(`<g><rect x="${sx}" y="${sy}" width="${PRINT_STAMP.w}" height="${PRINT_STAMP.h}" fill="#fff" stroke="#000" stroke-width="0.5"/>`,
+    `<path d="M${sx} ${sy + 10}H${sx + 185}M${sx} ${sy + 20}H${sx + 185}M${sx + 120} ${sy + 20}V${sy + 40}M${sx} ${sy + 30}H${sx + 120}M${sx + 120} ${sy + 30}H${sx + 185}" stroke="#000" stroke-width="0.25" fill="none"/>`,
+    T(2, 7, 4, m.cipher || '', 180), T(2, 16.5, 3, m.object || '', 180),
+    T(2, 27, 3.4, o.title, 116), T(2, 37, 2.2, 'Система координат: ' + planeName(), 116),
+    T(122, 27, 3, 'Масштаб 1:' + planScale, 62), T(122, 36.5, 2.2, 'Съёмка: ' + [m.performer, day].filter(Boolean).join(' · '), 62),
+    '</g>');
+  out.push(`<text x="${lay.x + 1}" y="${lay.H - 1.5}" font-size="1.8">Высоты: ${esc(heightsText())}. «Полевой план», сборка ${APP_BUILD}.</text>`);
+  out.push('</svg>');
+  return { svg: printInk(out.join('')).replace(/&nbsp;/g, '&#160;'), lay, k: MM * f };   // &nbsp; в XML не бывает
+}
+async function printPlan(o) {
+  // на время снимка — масштаб экрана ровно 1:planScale (подписи и мелкие знаки видны, как на плане), потом всё как было
+  const view = { c: map.getCenter(), z: map.getZoom() }, z1 = Math.min(map.getMaxZoom(), view.z + Math.log2(planDenom() / planScale));
+  if (!isFinite(z1)) { toast('Карта ещё не готова — повторите через секунду'); return; }
+  const sel = selected; selected = null;                                 // без подсветки выбранного
+  let r;
+  try { map.setView(view.c, z1, { animate: false }); redrawAll(); r = printSvg(o); } catch (e) { toast('Лист не собран: ' + ((e && e.message) || e)); return; } finally { selected = sel; map.setView(view.c, view.z, { animate: false }); redrawAll(); }
+  if (!objectName()) toast('Название объекта в штампе пустое — впишите его: Меню → «Паспорт объекта»');
+  if (r.k < 0.7 || r.k > 1.4) toast(`Знаки на листе ${r.k > 1 ? 'крупнее' : 'мельче'} нормы в ${mText(r.k > 1 ? r.k : 1 / r.k, 1)} раза — приблизьте карту до масштаба 1:${planScale} и повторите`);
+  const ppm = PRINT_PPM[o.size] || 10, wPx = Math.round(r.lay.W * ppm), hPx = Math.round(r.lay.H * ppm);
+  const img = new Image();
+  await new Promise((ok, bad) => { img.onload = ok; img.onerror = () => bad(new Error('Лист не нарисовался')); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(r.svg.replace(/width="[\d.]+mm" height="[\d.]+mm"/, `width="${wPx}" height="${hPx}"`)); })
+    .catch(e => { toast(e.message); return null; });
+  if (!img.complete || !img.naturalWidth) return;
+  const cv = document.createElement('canvas'); cv.width = wPx; cv.height = hPx;
+  const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, wPx, hPx); cx.drawImage(img, 0, 0, wPx, hPx);
+  const blob = await new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.92));
+  if (!blob || blob.type !== 'image/jpeg') { toast('Не хватило памяти на лист — попробуйте А4'); return; }
+  const buf = await new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => bad(fr.error); fr.readAsArrayBuffer(blob); }).catch(() => null);
+  if (!buf) { toast('Не удалось прочитать картинку листа'); return; }
+  const pdf = pdfFromJpeg(new Uint8Array(buf), wPx, hPx, r.lay.W, r.lay.H);
+  download(`plan_${o.size}_1-${planScale}_${today()}.pdf`, new Blob([pdf], { type: 'application/pdf' }), 'application/pdf');
+}
 async function download(name, text, type) {
   if (typeof fileSlug === 'function' && fileSlug()) name = fileSlug() + '_' + name;   // название объекта — в имени файла
   const blob = text instanceof Blob ? text : new Blob([text], { type });
@@ -8285,6 +8598,7 @@ function toDxf() {
     ent(0, 'POLYLINE', 8, lay, ...(lt ? [6, lt.name] : []), 66, 1, 10, 0, 20, 0, 30, 0, 70, (zs ? 8 : 0) | (sp.closed ? 1 : 0));
     l.latlngs.forEach((ll, i) => { const [x, y, zz] = xyz(ll, zs && zs[i]); ent(0, 'VERTEX', 8, lay, 10, x, 20, y, 30, zs ? zz : 0, 70, zs ? 32 : 0); });
     ent(0, 'SEQEND', 8, lay);
+    if (sp.area && l.latlngs.length >= 3) { const V = l.latlngs.map(ll => { const [x, y] = xyz(ll); return { x: +x, y: +y }; }), c = areaCentroid(V); ent(0, 'TEXT', 8, useLayer('ТОПО_ПОДПИСИ'), 10, c.x.toFixed(3), 20, c.y.toFixed(3), 30, 0, 40, DXF_TEXT_M, 1, coverOf(l), 7, DXF_STYLE, 72, 4, 11, c.x.toFixed(3), 21, c.y.toFixed(3), 31, 0); }   // буква покрытия — в середине
     const label = [sp.kind === 'building' ? buildingLabel(sp, l) : '', NET_LINE_KINDS.has(sp.kind) ? netCaption(l) : l.caption, (l.attr && l.attr.caption) || ''].filter(Boolean).join(' ');
     if (label) { const lay2 = useLayer('ТОПО_ПОДПИСИ'), [x, y, z] = xyz(l.latlngs[0], zs && zs[0]); ent(0, 'TEXT', 8, lay2, 10, x, 20, y, 30, z, 40, DXF_TEXT_M, 1, label, 7, DXF_STYLE); }
   }
