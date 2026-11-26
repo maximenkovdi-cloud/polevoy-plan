@@ -347,6 +347,19 @@
   body.ymap .leaflet-bottom.leaflet-right .leaflet-control-attribution { margin-right:88px; }
 
   #toast { position:absolute; left:50%; transform:translateX(-50%); z-index:3000; background:#222; color:#fff; padding:9px 15px; border-radius:18px; font-size:14px; display:none; width:max-content; max-width:calc(100% - 32px); text-align:center; line-height:1.3; }
+  body.desk.drawing .leaflet-container, body.desk.drawing .leaflet-interactive { cursor:crosshair; }   /* мышь: в рисовании — перекрестье, как в AutoCAD */
+  #hoverXY { position:fixed; left:0; top:0; z-index:990; display:none; pointer-events:none; font:700 12px/1.25 system-ui, sans-serif; color:#fff; background:rgba(20,24,30,.82); padding:4px 7px; border-radius:6px; white-space:nowrap; }
+  /* широкий экран (body.wide): карточка — внизу справа, окна — колонкой справа, панель рисования — слева; на телефоне не включается */
+  body.wide #card { left:auto; right:8px; width:min(420px, 36vw); max-height:max(260px, calc(100vh - var(--topH, 92px) - var(--barH, 70px) - 300px)); overflow:auto; }
+  body.wide #sheet { background:rgba(0,0,0,.14); }
+  body.wide #sheet .panel { left:auto; right:0; top:0; bottom:0; width:min(460px, 42vw); max-height:none; border-radius:18px 0 0 18px; padding-bottom:20px; }
+  body.wide #sheet .panel .grab { display:none; }
+  body.wide #mode { right:auto; width:min(520px, 46vw); }
+  #cmd { position:absolute; left:8px; z-index:1050; display:none; align-items:center; gap:8px; background:var(--panel); color:var(--ink); border-radius:12px; box-shadow:var(--shadow); padding:6px 10px; width:min(520px, calc(100% - 16px)); box-sizing:border-box; flex-wrap:wrap; }
+  #cmd b { font-size:13px; color:var(--muted); }
+  #cmdIn { flex:1; min-width:120px; font:700 16px/1.3 system-ui, sans-serif; border:1px solid var(--line); border-radius:8px; padding:6px 8px; background:var(--bg, #fff); color:var(--ink); text-transform:uppercase; }
+  #cmdHint { flex-basis:100%; font-size:12.5px; color:var(--muted); min-height:1em; }
+  kbd { font:700 .92em system-ui, sans-serif; border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:1px 7px; background:var(--panel); color:var(--ink); white-space:nowrap; }   /* клавиши в справке режима «компьютер» */
 </style>
 </head>
 <body class="day">
@@ -960,7 +973,9 @@ function layout() {
 function plural(n, one, few, many) { const a = n % 10, b = n % 100; return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many; }
 function toast(msg) {
   const t = $('toast'), vis = id => $(id) && $(id).style.display !== 'none' && $(id).offsetHeight;
-  const above = vis('sheet') ? $('sheetPanel').offsetHeight : vis('mode') || vis('pick') || vis('card') || 0;
+  const sideSheet = vis('sheet') && document.body.classList.contains('wide');   // окно колонкой справа — подсказка по центру карты слева от него
+  t.style.left = sideSheet ? Math.round((innerWidth - $('sheetPanel').offsetWidth) / 2) + 'px' : '';
+  const above = sideSheet ? 0 : vis('sheet') ? $('sheetPanel').offsetHeight : vis('mode') || vis('pick') || vis('card') || 0;
   t.style.top = 'auto';
   t.style.bottom = (above ? above + ($('sheet').style.display === 'block' ? 0 : $('bar').offsetHeight + 8) + 10 : $('bar').offsetHeight + 56) + 'px';
   const fp = $('fabPlus'), fr = fp && getComputedStyle(fp).display !== 'none' ? fp.getBoundingClientRect() : null;   // не закрывать кнопку «+»
@@ -1961,7 +1976,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 102;
+const APP_BUILD = 103;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -5493,6 +5508,7 @@ function setBarState() {
   layout();
 }
 function setMode(m) {
+  document.body.classList.toggle('drawing', !!m);                     // режим «компьютер»: курсор-перекрестье
   if (m && sketch) sketchEnd();                                        // начали съёмку — слой эскиза больше не перехватывает касания
   if (m && lineChoose) chooseEnd();
   if (!m && pickTool) { pickTool = null; pickLayer.clearLayers(); $('pick').style.display = 'none'; }   // вышли из съёмки — инструмент закрыть
@@ -5832,7 +5848,7 @@ let rubberFrame = 0;
 function updateRubber() { if (!rubberFrame) rubberFrame = setTimeout(() => { rubberFrame = 0; drawRubber(); }, 30); }   // не чаще ~30 раз в секунду: поиск привязки перебирает все точки
 function drawRubber() {
   rubber.clearLayers();
-  const snap = mode && snapOn && !pickTool ? snapTarget(map.getCenter()) : null;
+  const snap = mode && snapOn && !pickTool ? snapTarget(aimAt()) : null;
   updateAim(snap);
   $('cross').classList.toggle('snap', !!snap);
   if (snap) {                                                         // ярко-зелёное кольцо с белым ободком — не сливается с зелёной сеткой и растительностью
@@ -5840,7 +5856,7 @@ function drawRubber() {
     L.circleMarker(snap.ll, { radius: 14, color: '#00c853', weight: 3, fill: false, interactive: false }).addTo(rubber);
   }
   if (!mode || mode.kind !== 'line' || !mode.latlngs.length) return;
-  const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = snap ? snap.ll : orthoOn ? orthoLL(map.getCenter()) : map.getCenter(), d = groundDist(a, b);   // отрезок — на местности, как в строке вверху
+  const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]), b = snap ? snap.ll : orthoOn ? orthoLL(aimAt()) : aimAt(), d = groundDist(a, b);   // отрезок — на местности, как в строке вверху
   if (d < 0.01) return;
   L.polyline([a, b], { color: '#1e88e5', weight: 1.5, opacity: 0.55, dashArray: '3 5', interactive: false }).addTo(rubber);
   const pa = map.latLngToContainerPoint(a), pb = map.latLngToContainerPoint(b);
@@ -5874,7 +5890,7 @@ function updateAim(snap) {
   if (drawing && snap === undefined) return;
   let html = '', draw = false;
   if (drawing) {
-    const s = drawStats(snap ? snap.ll : orthoOn ? orthoLL(map.getCenter()) : map.getCenter());
+    const s = drawStats(snap ? snap.ll : orthoOn ? orthoLL(aimAt()) : aimAt());
     draw = true;
     html = `<span class="nw">Длина <b>${distText(s.len)}</b></span> · <span class="nw">отр. ${distText(s.segLen)}${s.dir != null ? ` ${angText(s.dir, map.getCenter())}` : ''}</span>${s.area > 0.01 ? ` · <span class="nw">S <b>${areaText(s.area)}</b></span>` : ''}`;
   } else if (gps) {
@@ -6517,7 +6533,7 @@ function showSheet(html) {
 function closeSheet() { $('sheet').style.display = 'none'; syncVolKeys(); }
 // подсказка, показанная до окна или пока окно меняет высоту (вкладки), — всегда над окном, а не поверх его заголовка
 if (window.ResizeObserver) new ResizeObserver(() => { const t = $('toast'); if (t.style.display !== 'block') return;
-  if ($('sheet').style.display === 'block') t.style.bottom = $('sheetPanel').offsetHeight + 10 + 'px';   // закрытое окно не трогаем: после closeSheet() часто сразу идёт новая подсказка
+  if ($('sheet').style.display === 'block' && !document.body.classList.contains('wide')) t.style.bottom = $('sheetPanel').offsetHeight + 10 + 'px';   // окно сбоку (широкий экран) — подсказка остаётся внизу   // закрытое окно не трогаем: после closeSheet() часто сразу идёт новая подсказка
 }).observe($('sheetPanel'));
 // кнопка «Назад» Android (её передаёт MainActivity): закрыть верхнее окно, выйти из съёмки; на пустой карте — двойное нажатие сворачивает
 let backAt = 0;
@@ -6679,6 +6695,192 @@ function changeType(kind, obj, id) {
 }
 $('fabUndo').onclick = undo;
 $('fabRedo').onclick = redo;
+/* ───────────── Режим «компьютер»: телефон с мышью и клавиатурой, очки или монитор. На сенсоре ничего не меняется ───────────── */
+const DESK_MQ = '(hover: hover) and (pointer: fine)';
+let deskPref = pref('desk', 'auto');                                    // 'auto' — сам при мыши; 'on' / 'off' — вручную в меню
+const deskAuto = () => !!(window.matchMedia && matchMedia(DESK_MQ).matches);
+function deskOn() { return deskPref === 'on' || (deskPref === 'auto' && deskAuto()); }
+const WIDE_PX = 1200, WIDE_DESK_PX = 900;                              // от 1200 px — всегда; с мышью — от 900 px в альбомной
+function wideApply() { const W = innerWidth, H = innerHeight; document.body.classList.toggle('wide', W >= WIDE_PX || (deskOn() && W >= WIDE_DESK_PX && W > H)); }
+function deskApply() { document.body.classList.toggle('desk', deskOn()); wideApply(); }
+addEventListener('resize', wideApply);
+deskApply();
+if (window.matchMedia) { const mq = matchMedia(DESK_MQ); if (mq.addEventListener) mq.addEventListener('change', deskApply); }   // мышь подключили или отключили
+const KEYS_HELP = [
+  ['Esc', 'отменить: закрыть окно, выйти из рисования, снять выбор'],
+  ['Enter', 'завершить линию или контур («Готово»)'],
+  ['Del', 'удалить выбранный объект (Ctrl+Z вернёт)'],
+  ['Ctrl+Z', 'шаг назад; при рисовании — убрать последнюю вершину'],
+  ['Ctrl+Y', 'вернуть отменённое'],
+  ['F1 или ?', 'эта справка'],
+  ['Колесо мыши', 'масштаб вокруг курсора'],
+  ['Левая кнопка', 'поставить точку или вершину, выбрать объект; зажать — двигать карту'],
+  ['Правая кнопка', 'меню объекта: сдвиг, копия, поворот, зеркало, продлить…; в правке линии — меню вершины'],
+  ['Наведение', 'X и Y под курсором; при рисовании резинка, длина и привязка идут за курсором'],
+  ['Буква или число', 'открывает командную строку внизу']
+];
+// команды — как в AutoCAD; русская раскладка понимается («ДШТУ» = LINE)
+const CMD_HELP = [
+  ['L, PL', 'линия (знак — после «Готово»)'], ['PO', 'точка'],
+  ['M', 'сдвинуть выбранный объект'], ['CO', 'копировать выбранный'], ['RO', 'повернуть выбранную линию'], ['MI', 'зеркально отразить'],
+  ['EX, TR', 'продлить или обрезать до другой линии'], ['U', 'шаг назад'], ['REDO', 'вернуть'],
+  ['12,5', 'при рисовании: вершина на 12,5 м в сторону курсора'], ['12,5<45', 'при рисовании: 12,5 м по дирекционному углу 45° (можно 45°30′ или 7-50)']
+];
+function keysHelp() {
+  showSheet(`<div class="sh-head"><b>Клавиши и мышь</b><button class="x" data-close>×</button></div>
+    <div class="hint" style="margin-bottom:8px">Режим «компьютер» включается сам, когда к телефону подключена мышь; вручную — в «Меню».</div>
+    <table class="keys" style="width:100%;border-collapse:collapse">${KEYS_HELP.map(([k, t]) => `<tr><td style="padding:6px 10px 6px 0;white-space:nowrap"><kbd>${esc(k)}</kbd></td><td style="padding:6px 0">${esc(t)}</td></tr>`).join('')}</table>
+    <div class="sh-head" style="margin-top:14px"><b>Команды</b></div>
+    <table class="keys" style="width:100%;border-collapse:collapse">${CMD_HELP.map(([k, t]) => `<tr><td style="padding:6px 10px 6px 0;white-space:nowrap"><kbd>${esc(k)}</kbd></td><td style="padding:6px 0">${esc(t)}</td></tr>`).join('')}</table>`);
+}
+const isTyping = el => !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
+const shown = id => { const e = $(id); return !!e && e.style.display !== 'none' && e.getBoundingClientRect().height > 0; };
+// что делает клавиша — тем же путём, что кнопка на экране (те же вопросы и проверки)
+function keyAct(e) {
+  const k = e.key, ctrl = e.ctrlKey || e.metaKey, typing = isTyping(e.target), sheetOpen = shown('sheet');
+  if (k === 'Escape') {
+    if (sheetOpen) { const no = $('askNo') || $('sheetPanel').querySelector('[data-close]'); if (no) no.click(); else closeSheet(); return true; }
+    const back = shown('card') || lineChoose || (shiftJob && $('shiftBar')) || pickTool || (typeof cal !== 'undefined' && cal && shown('calBar')) || mode || (shown('stake') && $('stakeStop'));
+    if (back) { window.androidBack(); return true; }                     // тот же порядок, что у «Назад» (без «нажмите ещё раз — свернётся»)
+    return false;
+  }
+  if (lineChoose || pickTool) return false;                            // идёт выбор линии или засечка — Enter, Del, Ctrl+Z не трогают съёмку
+  if (typing || sheetOpen) return false;                               // в поле ввода и в открытом окне — клавиши его
+  if (k === 'F1' || (k === '?' && !ctrl)) { keysHelp(); return true; }
+  if (!ctrl && !e.altKey && k.length === 1 && deskOn() && (/[A-Za-zА-Яа-яЁё]/.test(k) || (/[\d.,]/.test(k) && mode && mode.kind === 'line'))) { cmdOpen(k); return true; }
+  if (k === 'Enter' && mode) { const b = $('modeBtns').querySelector('[data-act="done"]'); if (b) { b.click(); return true; } return false; }
+  if ((k === 'Delete' || k === 'Backspace') && !mode && shown('card')) { const b = $('card').querySelector('[data-act="del"]'); if (b) { b.click(); return true; } return false; }
+  if (ctrl && !e.altKey && (k === 'z' || k === 'Z' || k === 'я' || k === 'Я') && !e.shiftKey) {
+    if (mode) { const b = $('modeBtns').querySelector('[data-act="undo"]'); if (b) b.click(); } else undo();
+    return true;
+  }
+  if (ctrl && !e.altKey && (k === 'y' || k === 'Y' || k === 'н' || k === 'Н' || ((k === 'z' || k === 'Z' || k === 'я' || k === 'Я') && e.shiftKey))) { if (!mode) redo(); return true; }
+  return false;
+}
+document.addEventListener('keydown', e => { if (e.repeat) return; if (keyAct(e)) e.preventDefault(); });
+/* ───────────── Командная строка ───────────── */
+const RU_EN = { 'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y', 'г': 'u', 'ш': 'i', 'щ': 'o', 'з': 'p', 'ф': 'a', 'ы': 's', 'в': 'd', 'а': 'f', 'п': 'g', 'р': 'h', 'о': 'j', 'л': 'k', 'д': 'l', 'я': 'z', 'ч': 'x', 'с': 'c', 'м': 'v', 'и': 'b', 'т': 'n', 'ь': 'm' };
+const cmdWord = s => String(s).trim().toLowerCase().replace(/[а-яё]/g, ch => RU_EN[ch] || ch).toUpperCase();   // «дшту» → LINE
+const CMD_ALIAS = { L: 'line', LINE: 'line', PL: 'line', PLINE: 'line', PO: 'point', POINT: 'point', M: 'move', MOVE: 'move', CO: 'copy', CP: 'copy', COPY: 'copy',
+  RO: 'rot', ROTATE: 'rot', MI: 'mir', MIRROR: 'mir', EX: 'ext', EXTEND: 'ext', TR: 'ext', TRIM: 'ext', U: 'undo', UNDO: 'undo', REDO: 'redo', HELP: 'help' };
+const CMD_TEXT = { line: 'линия', point: 'точка', move: 'сдвинуть выбранный', copy: 'копировать выбранный', rot: 'повернуть выбранную линию', mir: 'зеркально отразить выбранную',
+  ext: 'продлить или обрезать до другой линии', undo: 'шаг назад', redo: 'вернуть', help: 'справка' };
+// «12,5» — длина к курсору; «12,5<45» — длина и дирекционный угол. null — это не длина
+function cmdLen(s) {
+  const m = /^\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(?:<\s*(.+))?$/.exec(String(s)); if (!m) return null;
+  const d = parseNum(m[1]); if (!(d > 0 && isFinite(d))) return { err: 'Длина — число больше нуля' };
+  if (m[2] == null) return { d };
+  const dir = parseAz(m[2]); return dir == null ? { err: 'Угол: 45 · 45°30′ · 7-50' } : { d, dir };
+}
+function cmdHintText(s) {
+  if (!s.trim()) return mode && mode.kind === 'line' ? 'Длина: 12,5 — к курсору; 12,5<45 — по углу. Или команда: L, M, CO, RO, MI…' : 'Команда: L — линия, PO — точка, M, CO, RO, MI, EX; F1 — все';
+  if (mode && mode.kind === 'line' && /^\s*\d/.test(s)) { const q = cmdLen(s); return !q ? 'Не понял: 12,5 или 12,5<45' : q.err ? q.err : q.dir == null ? `Вершина на ${distText(q.d)} в сторону курсора` : `Вершина на ${distText(q.d)}, дир. угол ${dmsText(q.dir)}`; }
+  const a = CMD_ALIAS[cmdWord(s)]; return a ? '↵ ' + CMD_TEXT[a] : 'Нет такой команды — F1 покажет список';
+}
+const cmdBox = document.createElement('div'); cmdBox.id = 'cmd';
+cmdBox.innerHTML = '<b>Команда:</b><input id="cmdIn" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"><span id="cmdHint"></span>';
+document.body.appendChild(cmdBox);
+function cmdPlace() {
+  const under = shown('mode') ? $('mode') : shown('card') && !document.body.classList.contains('wide') ? $('card') : null;   // над панелью рисования или карточкой
+  cmdBox.style.bottom = under ? (parseFloat(under.style.bottom) || 8) + under.offsetHeight + 8 + 'px' : 'calc(var(--barH, 70px) + 8px)';
+}
+function cmdOpen(first) { cmdPlace(); cmdBox.style.display = 'flex'; const i = $('cmdIn'); i.value = first || ''; $('cmdHint').textContent = cmdHintText(i.value); i.focus(); }
+function cmdClose() { cmdBox.style.display = 'none'; $('cmdIn').value = ''; $('cmdIn').blur(); }
+function cmdSel(need) {
+  if (!selected) { toast('Сначала выберите объект щелчком'); return null; }
+  if (need === 'line' && selected.kind !== 'line') { toast('Эта команда — для линии'); return null; }
+  return selected;
+}
+// true — выполнено (строку закрыть); false — ошибка, строка остаётся для исправления
+function cmdRun(s) {
+  if (!s.trim()) return true;
+  if (lineChoose || pickTool) { toast('Сначала закончите выбор (Esc — отменить)'); return false; }
+  if (mode && mode.kind === 'line' && /^\s*\d/.test(s)) {
+    const q = cmdLen(s); if (!q || q.err) { toast(q ? q.err : 'Не понял: 12,5 или 12,5<45'); return false; }
+    if (!mode.latlngs.length) { toast('Сначала поставьте первую вершину щелчком'); return false; }
+    const a = L.latLng(mode.latlngs[mode.latlngs.length - 1]);
+    let dir = q.dir;
+    if (dir == null) { const r = planeInverse(a, aimAt()); if (r.d < 0.001) { toast('Наведите курсор, куда вести линию, или укажите угол: 12,5<45'); return false; } dir = r.dir; }
+    addAt(planeForward(a, q.d * gkScale(a), dir), null, 'keyboard');   // длина на местности → на плане (как промеры и вынос)
+    return true;
+  }
+  const c = CMD_ALIAS[cmdWord(s)];
+  if (!c) { toast('Нет такой команды — F1 покажет список'); return false; }
+  if (c === 'help') { keysHelp(); return true; }
+  if (c === 'undo') { if (mode) { const b = $('modeBtns').querySelector('[data-act="undo"]'); if (b) b.click(); } else undo(); return true; }
+  if (c === 'redo') { if (!mode) redo(); return true; }
+  if (mode && (c === 'line' || c === 'point')) { toast('Сначала закончите текущее рисование (Enter или Esc)'); return false; }
+  if (c === 'line') { $('btnLine').click(); return true; }
+  if (c === 'point') { $('btnPoint').click(); return true; }
+  if (mode) { toast('Во время рисования эта команда недоступна'); return false; }
+  const sel = cmdSel(c === 'move' || c === 'copy' ? null : 'line'); if (!sel) return false;
+  if (c === 'move' || c === 'copy') { moveForm(sel.kind, sel.obj); return true; }   // в форме — «сдвинуть» или «копия»
+  if (c === 'rot') { rotateForm(sel.obj); return true; }
+  if (c === 'mir') { mirrorForm(sel.obj); return true; }
+  if (c === 'ext') {
+    if ((LINES[sel.obj.type] || {}).closed) { toast('Контур не продлевают — только открытую линию'); return false; }
+    chooseLine('Коснитесь линии, до которой продлить или обрезать L' + (sel.obj.no || ''), t => extendLine(sel.obj, t)); return true;
+  }
+  return false;
+}
+$('cmdIn').addEventListener('input', () => { $('cmdHint').textContent = cmdHintText($('cmdIn').value); });
+$('cmdIn').addEventListener('keydown', e => {
+  e.stopPropagation();                                                  // клавиши строки — не горячие клавиши карты
+  if (e.key === 'Escape') { e.preventDefault(); cmdClose(); return; }
+  if (e.key === 'Enter') { e.preventDefault(); if (cmdRun($('cmdIn').value)) cmdClose(); return; }
+});
+$('cmdIn').addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('cmdIn')) cmdClose(); }, 150));
+// мышь: где курсор над картой (null — ушёл с карты или сенсор)
+let deskCursor = null, hoverAt = null, hoverRaf = 0;
+function aimAt() { return deskCursor && deskOn() ? deskCursor : map.getCenter(); }
+const hoverBox = document.createElement('div'); hoverBox.id = 'hoverXY'; document.body.appendChild(hoverBox);
+function hoverShow() {
+  hoverRaf = 0; if (!deskCursor || !hoverAt || shown('sheet')) { hoverBox.style.display = 'none'; return; }
+  const r = map.getContainer().getBoundingClientRect(), x = r.left + hoverAt.x, y = r.top + hoverAt.y;
+  hoverBox.textContent = coordText(deskCursor).sk; hoverBox.style.display = 'block';
+  const w = hoverBox.offsetWidth, h = hoverBox.offsetHeight;
+  hoverBox.style.transform = `translate(${x + 18 + w > innerWidth ? x - 14 - w : x + 18}px, ${y + 22 + h > innerHeight ? y - 14 - h : y + 22}px)`;   // у края — по другую сторону курсора
+}
+function deskCursorOff() { if (!deskCursor) return; deskCursor = null; hoverBox.style.display = 'none'; if (mode) updateRubber(); }
+map.getContainer().addEventListener('pointermove', e => {
+  if (e.pointerType !== 'mouse' || !deskOn()) return;                   // сенсор и стилус — как раньше, к крестику
+  deskCursor = map.mouseEventToLatLng(e); hoverAt = map.mouseEventToContainerPoint(e);
+  if (!hoverRaf) hoverRaf = requestAnimationFrame(hoverShow);
+  if (mode) updateRubber();
+});
+map.getContainer().addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') deskCursorOff(); });
+map.getContainer().addEventListener('pointerleave', deskCursorOff);
+// правая кнопка: объект под курсором → его карточка и «Построения»; в правке линии — меню ближней вершины
+const HIT_PX = 12;                                                      // полоса касания линии — 24 px, по 12 в каждую сторону
+function segPx(c, a, b) { const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / L2)) : 0; return Math.hypot(a.x + t * dx - c.x, a.y + t * dy - c.y); }
+function objAtPx(c) {
+  let best = null, bd = HIT_PX + 2;
+  for (const p of data.points) { const q = map.latLngToContainerPoint([p.lat, p.lng]), d = Math.hypot(q.x - c.x, q.y - c.y); if (d < bd) { bd = d; best = { kind: 'point', obj: p }; } }
+  if (best) return best;                                                // точка — раньше линии, на которой стоит
+  bd = HIT_PX;
+  for (const l of data.lines) {
+    const Q = l.latlngs.map(a => map.latLngToContainerPoint(a)), n = Q.length, closed = !!(LINES[l.type] || {}).closed && n > 2;
+    for (let i = 0; i < n - 1 + (closed ? 1 : 0); i++) { const d = segPx(c, Q[i], Q[(i + 1) % n]); if (d < bd) { bd = d; best = { kind: 'line', obj: l }; } }
+  }
+  return best;
+}
+map.on('contextmenu', e => {
+  if (!deskOn()) return;                                                // на сенсоре долгое касание — как раньше
+  if (e.originalEvent) e.originalEvent.preventDefault();
+  hoverBox.style.display = 'none';                                       // откроется меню — подсказка не висит над ним
+  if (shown('sheet')) return;
+  const c = e.containerPoint;
+  if (mode && mode.editId) {
+    let bi = -1, bd = PICK_PX;
+    mode.latlngs.forEach((a, i) => { const q = map.latLngToContainerPoint(a), d = Math.hypot(q.x - c.x, q.y - c.y); if (d < bd) { bd = d; bi = i; } });
+    if (bi >= 0) vertexMenu(bi);
+    return;
+  }
+  if (mode) return;
+  const hit = objAtPx(c);
+  if (!hit) { if (shown('card')) hideCard(); return; }
+  showCard(hit.kind, hit.obj); buildMenu(hit.kind, hit.obj);
+});
 $('btnMap').onclick = () => {
   if (mode && mode.kind === 'line' && mode.latlngs.length) { const m = mode; ask('Бросить рисование линии?', 'Бросить', true).then(ok => { if (ok && mode === m) setMode(null); }); return; }
   setMode(null); closeSheet();
@@ -7744,6 +7946,8 @@ $('btnMenu').onclick = () => openList('Меню', [
   { header: 'Поле' },
   { id: 'glove', icon: '✋', text: 'Крупные кнопки (перчатки)', on: gloveOn, check: true },
   { id: 'rain', icon: '☂', text: 'Дождь: касание карты не ставит точку', on: rainOn, check: true },
+  { id: 'desk', icon: '🖱', text: 'Режим «компьютер»: мышь и клавиатура' + (deskPref === 'auto' ? ' (сам — при мыши)' : ''), on: deskOn(), check: true },
+  ...(deskOn() ? [{ id: 'keyshelp', icon: '⌨', text: 'Клавиши и мышь — справка (F1)' }] : []),
   { header: 'Объект' },
   { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || ((projectList().find(p => p.id === projectId) || {}).name) || 'без названия') + ' — сменить, новый' },
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
@@ -7855,6 +8059,8 @@ const MENU = {
   check: () => checkSheet(),
   sound: () => { soundOn = !soundOn; setPref('sound', soundOn); if (soundOn) cue('ok'); toast(soundOn ? 'Звук включён: два высоких — в допуске, низкий — брак, три падающих — потерян FIX' : 'Звук выключен, осталась вибрация'); },
   voice: () => { voiceOn = !voiceOn; setPref('voice', voiceOn); if (voiceOn) say('В допуске, плюс-минус 2 сантиметра'); toast(voiceOn ? 'Результат измерения будет озвучен' : 'Без голоса'); },
+  desk: () => { const next = deskOn() ? 'off' : 'on'; deskPref = (next === 'on') === deskAuto() ? 'auto' : next; setPref('desk', deskPref); if (next === 'off') deskCursorOff(); deskApply(); toast(deskOn() ? 'Режим «компьютер» включён: F1 — клавиши' : 'Режим «компьютер» выключен'); },
+  keyshelp: () => keysHelp(),
   glove: () => { gloveOn = !gloveOn; setPref('glove', gloveOn); document.body.classList.toggle('glove', gloveOn); toast(gloveOn ? 'Крупные кнопки включены' : 'Обычные кнопки'); },
   rain: () => { rainOn = !rainOn; setPref('rain', rainOn); toast(rainOn ? 'Дождь: точки ставятся только кнопками — капли и мокрая перчатка не наставят лишнего' : 'Касание карты снова ставит точку'); },
   kmz: () => exportKmz(),
