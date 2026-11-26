@@ -715,6 +715,13 @@ const LINE_GROUPS = [
     { id: 'cad_ex_q', name: 'Граница существующая (сведений недостаточно)', kind: 'cad', w: 0.2, dash: [2, 1] },
     { id: 'cad_new_q', name: 'Граница вновь образованная (сведений недостаточно)', kind: 'cad', w: 0.2, dash: [2, 1], color: CAD_RED }
   ]},
+  // Абрис прямо в плане (этап 3): в DXF — слои ТОПО_ПОДПИСИ, ТОПО_РАЗМЕРЫ, ТОПО_ЭСКИЗ
+  { id: 'notes', title: 'Подписи и размеры', items: [
+    { id: 'note_text', name: 'Подпись (две точки — направление текста)', kind: 'note', style: 'text', w: 0.15 },
+    { id: 'note_leader', name: 'Выноска (от предмета к надписи)', kind: 'note', style: 'leader', w: 0.15 },
+    { id: 'note_dim', name: 'Размер, промер между точками', kind: 'note', style: 'dim', w: 0.15 },
+    { id: 'note_sketch', name: 'Эскиз от руки (пальцем)', kind: 'note', style: 'sketch', w: 0.25 }
+  ]},
   { id: 'own', title: 'Своё', items: [
     { id: 'route', name: 'Трасса демонтажа (пикеты)', kind: 'route', w: 0.3, color: '#c62828' },
     { id: 'plain', name: 'Простая линия с подписью', kind: 'plain', w: 0.3, color: VIS_COLOR }
@@ -1950,7 +1957,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 99;
+const APP_BUILD = 100;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 // manual — из меню: сказать, чем кончилась проверка (нет связи, последняя версия, есть новая)
 async function checkUpdate(manual) {
@@ -2784,6 +2791,7 @@ function frame(mayReuse) {                                            // mayReus
       for (let k = 0; k <= n; k++) { const x = pts[i - 1].x + (pts[i].x - pts[i - 1].x) * k / n, y = pts[i - 1].y + (pts[i].y - pts[i - 1].y) * k / n; reserve({ x: x - 1.5, y: y - 1.5, w: 3, h: 3 }, line.id); }
     }
   }
+  for (const line of data.lines) if (isNote(line)) for (const t of noteLabels(line, screenPts(line))) reserve(t.box, 'note:' + line.id);   // подписи, поставленные человеком, — раньше автоматических
   placePointLabels();
   if (reuse) {                              // линии не перерисованы — их подписи всё равно занимают место (для сетки)
     const o = map.containerPointToLayerPoint([0, 0]), dx = drawnAt.origin.x - o.x, dy = drawnAt.origin.y - o.y;
@@ -3015,6 +3023,21 @@ const DRAW = {
   // Воздушная связь: опоры кружками на своих местах, тонкая линия между ними
   air(g, path, spec, line, w, pts) { poleLine(g, spec, line, w, pts, 'circle', false); },
   plain(g, path, spec, line, w) { segment(g, path, 0, path.getTotalLength(), w); },
+  // подпись, выноска, размер, эскиз: текст ставится всегда (место выбрал человек), чужие надписи его обходят — см. frame()
+  note(g, path, spec, line, w, pts) {
+    const st = spec.style, thin = Math.max(0.6, 0.15 * MM), pl = q => q.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+    if (st === 'sketch') { el('polyline', { points: pl(pts), fill: 'none', stroke: 'currentColor', 'stroke-width': w, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g); return; }
+    if (st === 'leader' || st === 'dim') el('polyline', { points: pl(pts), fill: 'none', stroke: 'currentColor', 'stroke-width': thin, 'stroke-linejoin': 'round' }, g);
+    if (st === 'leader') el('circle', { cx: pts[0].x.toFixed(1), cy: pts[0].y.toFixed(1), r: Math.max(1.2, 0.4 * MM).toFixed(1), fill: 'currentColor' }, g);   // точка на предмете
+    if (st === 'dim') pts.forEach((p, i) => { const a = pts[i ? i - 1 : 0], b = pts[i ? i : 1], t = Math.atan2(b.y - a.y, b.x - a.x) + Math.PI / 4, r = MM;   // засечки 45°, как на абрисе
+      el('line', { x1: (p.x - Math.cos(t) * r).toFixed(1), y1: (p.y - Math.sin(t) * r).toFixed(1), x2: (p.x + Math.cos(t) * r).toFixed(1), y2: (p.y + Math.sin(t) * r).toFixed(1), stroke: 'currentColor', 'stroke-width': thin }, g); });
+    for (const t of noteLabels(line, pts)) {
+      el('text', { 'font-size': (t.size * TEXT_K).toFixed(1), 'text-anchor': t.anchor, 'dominant-baseline': 'central', fill: 'currentColor', ...(t.empty ? { opacity: 0.45 } : {}),
+        'font-family': t.italic ? 'Georgia, "Times New Roman", serif' : '"Roboto Condensed", "Arial Narrow", Arial, sans-serif', 'font-style': t.italic ? 'italic' : 'normal',
+        transform: `translate(${t.x.toFixed(1)} ${t.y.toFixed(1)}) rotate(${t.deg.toFixed(1)}) translate(0 ${t.dy.toFixed(1)})` }, g).textContent = t.str;
+      if (st === 'leader') el('line', { x1: t.x.toFixed(1), y1: t.y.toFixed(1), x2: (t.x + (t.anchor === 'start' ? 1 : -1) * (t.w + 0.6 * MM)).toFixed(1), y2: t.y.toFixed(1), stroke: 'currentColor', 'stroke-width': thin }, g);   // полка под надписью
+    }
+  },
   cad(g, path, spec, line, w) { segment(g, path, 0, path.getTotalLength(), w, 0, spec.dash ? spec.dash.map(d => d * MM).join(' ') : null); },
   // Ограждения: рисунок по ГКИНП (зн. 472–477), размеры в «мм» знака; засечки — на сторону территории (по ходу слева, «flip» — справа)
   fence(g, path, spec, line, w) {
@@ -3189,7 +3212,30 @@ function screenPts(line) {
   if ((LINES[line.type] || {}).closed && pts.length > 2) pts.push(pts[0]);
   return pts;
 }
-const NO_STATE = new Set(['building', 'fence', 'road', 'relief', 'veg', 'cad']);
+const NO_STATE = new Set(['building', 'fence', 'road', 'relief', 'veg', 'cad', 'note']);
+const NOTE_MM = 2.5;                                                   // высота букв подписи на плане, мм
+const isNote = l => (LINES[l.type] || {}).kind === 'note';
+function noteSize(line) { const v = Number((line.attr || {}).size); return v >= 1 && v <= 10 ? v : NOTE_MM; }
+function noteStr(line) { return String((line.attr || {}).text || line.caption || '').replace(/[\r\n]+/g, ' ').trim(); }
+// где и как стоит текст подписи (экранные точки pts): [{ x, y, deg, dy, str, anchor, w, size, italic, empty, box }]
+function noteLabels(line, pts) {
+  const sp = LINES[line.type] || {}, out = [], str = noteStr(line), size = noteSize(line) * MM, hpx = size * TEXT_K;
+  if (pts.length < 2 || sp.kind !== 'note' || hpx < LBL_HIDE_PX) return out;   // мелкий масштаб — текста нет
+  let len = 0; for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  if (len < 6) return out;                                             // короче 6 px — рисуется точкой, без текста
+  const deg = (a, b) => { const d = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI; return d >= 90 || d < -90 ? d + 180 : d; };   // отвесно — снизу вверх, как в DXF
+  const put = (x, y, dg, dy, s, anchor, italic, empty) => {
+    const w = tw(s, size, italic), cx = anchor === 'start' ? x + w / 2 : anchor === 'end' ? x - w / 2 : x;
+    out.push({ x, y, deg: dg, dy, str: s, anchor, w, size, italic, empty, box: textBox({ x: cx, y }, dg, dy, w + 4, hpx + 3) });
+  };
+  if (sp.style === 'text') { const a = pts[0], b = pts[pts.length - 1]; put((a.x + b.x) / 2, (a.y + b.y) / 2, deg(a, b), 0, str || 'подпись', 'middle', true, !str); }
+  if (sp.style === 'leader') { const a = pts[pts.length - 2], b = pts[pts.length - 1]; put(b.x, b.y, 0, -hpx * 0.6, str || 'выноска', b.x >= a.x ? 'start' : 'end', true, !str); }
+  if (sp.style === 'dim') for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], s = pts.length === 2 && str ? str : mText(groundDist(line.latlngs[i - 1], line.latlngs[i]), 2);   // своя надпись — только у одного промера
+    put((a.x + b.x) / 2, (a.y + b.y) / 2, deg(a, b), -(hpx * 0.5 + 0.8 * MM), s, 'middle', false, false);
+  }
+  return out;
+}
 function drawLines() {
   planSizes();
   const size = map.getSize();
@@ -3400,6 +3446,10 @@ function linePreview(spec, w, h, color) {
   else if (spec.kind === 'indexed' && spec.numberedIndex) body = `<path d="M2 ${m}H${w * 0.36}M${w * 0.64} ${m}H${w - 2}" stroke="currentColor" stroke-width="1.2"/><text x="${w / 2}" y="${m + 4.5}" font-size="12" text-anchor="middle" ${ital}>${spec.defCount}</text>`;
   else if (spec.kind === 'route') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="2.2" stroke-dasharray="7 3"/><path d="M${w * 0.3} ${m - 5}V${m + 5}M${w * 0.7} ${m - 5}V${m + 5}" stroke="currentColor" stroke-width="2"/>`;
   else if (spec.kind === 'cad') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="1.4"${spec.dash ? ` stroke-dasharray="${spec.dash[0] * 3} ${spec.dash[1] * 3}"` : ''}/>`;
+  else if (spec.kind === 'note') body = spec.style === 'text' ? `<text x="${w / 2}" y="${m + 4}" font-size="12" text-anchor="middle" font-style="italic" font-family="Georgia, serif" fill="currentColor">Абв</text>`
+    : spec.style === 'leader' ? `<circle cx="4" cy="${m + 6}" r="1.8" fill="currentColor"/><path d="M4 ${m + 6}L${w * 0.42} ${m - 2}H${w - 2}" fill="none" stroke="currentColor" stroke-width="1.1"/><text x="${w * 0.71}" y="${m - 4}" font-size="9" text-anchor="middle" font-style="italic" fill="currentColor">аб</text>`
+    : spec.style === 'dim' ? `<path d="M4 ${m + 4}H${w - 4}M1 ${m + 7}L7 ${m + 1}M${w - 7} ${m + 7}L${w - 1} ${m + 1}" stroke="currentColor" stroke-width="1.1"/><text x="${w / 2}" y="${m}" font-size="9" text-anchor="middle" fill="currentColor">5,20</text>`
+    : `<path d="M3 ${m + 4}C${w * 0.25} ${m - 8} ${w * 0.4} ${m + 9} ${w * 0.6} ${m - 2}S${w - 6} ${m + 6} ${w - 3} ${m - 5}" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>`;
   else if (spec.kind === 'plain') body = `<path d="M2 ${m}H${w - 2}" stroke="currentColor" stroke-width="1.8"/>`;
   else if (spec.kind === 'relief') {
     const st = spec.style, y = m - 3, ticks = (len, step, k) => Array.from({ length: Math.floor((w - 8) / step) }, (_, i) => `M${5 + i * step} ${y}v${(k && i % 2) ? len / 2 : len}`).join('');
@@ -3495,6 +3545,11 @@ function showCard(kind, obj) {
     kv = [...(obj.no ? [['№', 'L' + esc(obj.no)]] : []), ['Длина', mText(lenP, 2) + ' м' + groundNote(lenP, obj.latlngs)], ['Вершин', obj.latlngs.length + (withH ? `, с отметками ${withH}` : ', без отметок')]];
     const ci = obj.attr && obj.attr.circle;
     if (BUILT_TXT[obj.built]) kv.push(['Построено', BUILT_TXT[obj.built]]);
+    if (s.kind === 'note') {
+      sub = esc(noteStr(obj)) || (s.style === 'dim' ? 'длина пишется сама' : s.style === 'sketch' ? 'от руки' : 'без текста');
+      if (s.style === 'dim') kv.push(['Промеры', obj.latlngs.slice(1).map((ll, i) => mText(groundDist(obj.latlngs[i], ll), 2)).join(' · ') + ' м на местности']);
+      if (s.style !== 'sketch') kv.push(['Буквы', mText(noteSize(obj), 1) + ' мм на плане']);
+    }
     if (ci) { const cs = sk42(ci.lat, ci.lng); kv.push(['Окружность', `R ${mText(ci.r, 2)} м на местности · центр X ${f2(cs.x)} Y ${f2(cs.y)}`]); }
     if (s.kind === 'building') {
       const a = obj.attr || {}, lab = buildingLabel(s, obj);
@@ -3945,6 +4000,22 @@ function editFence(line, isNew) {
     save(); showCard('line', line);
   }, isNew ? 'Готово' : 'Сохранить');
 }
+function editNote(line, isNew, spec) {
+  const a = line.attr || {};
+  if (spec.style === 'sketch') { if (isNew) data.lines.push(line); save(); redrawAll(); showCard('line', line); return; }
+  openForm(spec.name, [
+    { key: 'text', label: spec.style === 'dim' ? 'Своя надпись (пусто — длина на местности, сама)' : 'Текст', value: noteStr(line),
+      placeholder: spec.style === 'dim' ? 'например 5,20' : spec.style === 'leader' ? 'например «бет. ж/б 0,4×0,4»' : 'например «ул. Садовая»',
+      hint: spec.style === 'dim' && line.latlngs.length > 2 ? 'У размера из нескольких сторон длины пишутся сами' : spec.style === 'text' ? 'Текст встанет посередине между точками, вдоль них' : '' },
+    { key: 'size', label: 'Высота букв на плане', type: 'select', value: String(noteSize(line)), options: [['2', '2 мм'], ['2.5', '2,5 мм'], ['3', '3 мм'], ['4', '4 мм'], ['5', '5 мм']], half: true }
+  ], v => {
+    const t = String(v.text || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 200);
+    if (spec.style !== 'dim' && !t) { toast('Впишите текст'); return false; }
+    line.attr = { ...a, text: t, size: noteSize({ attr: { size: v.size } }) }; line.caption = '';
+    if (isNew) data.lines.push(line);
+    save(); redrawAll(); showCard('line', line);
+  }, isNew ? 'Готово' : 'Сохранить');
+}
 function editLine(line, isNew) {
   const spec = LINES[line.type] || LINES.plain;
   if (spec.kind === 'building') return editBuilding(line, isNew);
@@ -3953,6 +4024,7 @@ function editLine(line, isNew) {
   if (spec.kind === 'veg') return editVeg(line, isNew);
   if (spec.kind === 'relief') return editRelief(line, isNew);
   if (spec.kind === 'cad') return editCadLine(line, isNew, spec);
+  if (spec.kind === 'note') return editNote(line, isNew, spec);
   const fields = [];
   if (spec.kind === 'route') {
     fields.push({ key: 'pk0', label: 'Начальный ПК', type: 'number', value: line.pk0, placeholder: 'например 39', half: true },
@@ -5286,6 +5358,7 @@ const PICK_TEXT = {
   tape: ['Рулетка: нажмите первую точку', 'Нажмите вторую точку']
 };
 function pickStart(kind) {
+  if (sketch) sketchEnd();
   pickTool = { kind, step: 0 }; pickLayer.clearLayers();
   $('mode').style.display = 'none'; placePlus(); updateRubber(); pickPanel(); cue('tick');
 }
@@ -5389,6 +5462,7 @@ function setBarState() {
   layout();
 }
 function setMode(m) {
+  if (m && sketch) sketchEnd();                                        // начали съёмку — слой эскиза больше не перехватывает касания
   if (m && lineChoose) chooseEnd();
   if (!m && pickTool) { pickTool = null; pickLayer.clearLayers(); $('pick').style.display = 'none'; }   // вышли из съёмки — инструмент закрыть
   if (mode && mode.temp && (!m || m !== mode)) { map.removeLayer(mode.temp); mode.temp = null; }
@@ -5468,6 +5542,7 @@ addEventListener('volumeKey', e => {
 $('modeQuick').addEventListener('click', e => {
   const b = e.target.closest('[data-quick]');
   if (!b || !mode) return;
+  if (noteSketchNow(mode, b.dataset.quick)) return;
   mode.type = b.dataset.quick; remember(mode.kind, mode.type);
   if (mode.temp) refreshTemp();
   setMode(mode); toast('Знак: ' + (mode.kind === 'point' ? POINTS : LINES)[mode.type].name);
@@ -5501,7 +5576,7 @@ $('modeBtns').addEventListener('click', e => {
   if (act === 'axisline') pickStart('line');
   if (act === 'tape') pickStart('tape');
   if (act === 'snap') { snapOn = !snapOn; setPref('snap', snapOn); setMode(mode); toast(snapOn ? 'Привязка к точкам, вершинам и линиям включена' : 'Привязка выключена — точка ставится ровно куда нажали'); }
-  if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); }); }
+  if (act === 'sign') { const m = mode; openPicker(m.kind, id => { if (mode !== m) return; if (noteSketchNow(m, id)) return; m.type = id; if (m.temp) refreshTemp(); setMode(m); noteHint(m, id); }); }
   if (act === 'measure') { const m = mode; openMeasure((ll, meas) => { if (mode !== m) return; const pt = addAt(ll, meas);
     if (pt && pt.type === GENERIC.point) openPicker('point', id => changeType('point', pt, id), 'Закройте — останется простой точкой'); }); }
   if (act === 'undo') undoVertex();
@@ -5574,7 +5649,7 @@ function snapTarget(ll) {
   const take = (a, h, what) => { if (a === last) return; const d = dist(a); if (d < bd) { bd = d; best = { ll: L.latLng(a[0], a[1]), h, what }; } };
   const hText = h => h != null && h !== '' ? ', H ' + mText(Number(h), 2) : '';
   for (const p of data.points) take([p.lat, p.lng], p.h, 'к точке' + hText(p.h));
-  for (const line of data.lines) if (!mode.editId || line.id !== mode.editId) line.latlngs.forEach((a, i) => { const z = line.hs && line.hs[i]; take(a, z ? z.h : null, 'к вершине' + hText(z && z.h)); });
+  for (const line of data.lines) if ((!mode.editId || line.id !== mode.editId) && !isNote(line)) line.latlngs.forEach((a, i) => { const z = line.hs && line.hs[i]; take(a, z ? z.h : null, 'к вершине' + hText(z && z.h)); });
   (mode.latlngs || []).forEach((a, i) => { const z = mode.hs && mode.hs[i]; take(a, z ? z.h : null, 'к вершине этой линии' + hText(z && z.h)); });
   snapExtra(c, take);
   // чертежи DXF — только если рядом нет своих точек и вершин: свежая съёмка важнее архивного чертежа
@@ -5588,7 +5663,7 @@ function snapTarget(ll) {
     if (d < ed) { ed = d; best = { ll: map.containerPointToLatLng([px, py]), h: null, what }; }
   };
   for (const line of data.lines) {
-    if (mode.editId && line.id === mode.editId) continue;
+    if ((mode.editId && line.id === mode.editId) || isNote(line)) continue;
     const pts = screenPts(line);
     for (let i = 1; i < pts.length; i++) seg(pts[i - 1], pts[i], 'на линию');
   }
@@ -5604,7 +5679,7 @@ function snapExtra(c, take) {
   const near = [], R = SNAP_PX * SNAP_NEAR_K, toLL = p => { const ll = map.containerPointToLatLng(p); return [ll.lat, ll.lng]; };
   const segD = (a, b) => { const dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / (dx * dx + dy * dy || 1))); return Math.hypot(a.x + t * dx - c.x, a.y + t * dy - c.y); };
   const add = pts => { for (let i = 1; i < pts.length; i++) if (segD(pts[i - 1], pts[i]) < R) near.push([pts[i - 1], pts[i]]); };
-  for (const line of data.lines) if (!mode.editId || line.id !== mode.editId) add(screenPts(line));
+  for (const line of data.lines) if ((!mode.editId || line.id !== mode.editId) && !isNote(line)) add(screenPts(line));
   if (mode.latlngs && mode.latlngs.length > 1) add(mode.latlngs.map(a => map.latLngToContainerPoint(a)));
   if (snapKinds.mid) for (const [a, b] of near) take(toLL({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }), null, 'к середине отрезка');
   if (snapKinds.cross && near.length <= SNAP_CROSS_MAX) for (let i = 0; i < near.length; i++) for (let j = i + 1; j < near.length; j++) {
@@ -5855,6 +5930,7 @@ function squareXY(P) {
 // выбор второй линии касанием (для «продлить до», «соединить с»)
 let lineChoose = null;
 function chooseLine(text, cb) {
+  if (sketch) sketchEnd();
   hideCard(); lineChoose = cb;
   const box = $('pick');
   box.innerHTML = `<div class="row" style="justify-content:space-between;gap:8px"><b style="flex:1">${esc(text)}</b><button class="x" id="pickX" aria-label="Отмена">×</button></div>`;
@@ -5882,7 +5958,7 @@ function buildMenu(kind, obj) {
   });
 }
 const lineById = id => data.lines.find(l => l.id === id);
-const BUILT_TXT = { tape: 'по промерам рулеткой — стороны не сняты по GPS', par: 'параллельно другой линии — не снято на местности', copy: 'копия — не снято на местности' };
+const BUILT_TXT = { sketch: 'от руки, на глаз — не съёмка', tape: 'по промерам рулеткой — стороны не сняты по GPS', par: 'параллельно другой линии — не снято на местности', copy: 'копия — не снято на местности' };
 // новая линия по образцу: те же знак и свойства, свой номер, без съёмочных данных
 function lineLike(src, latlngs, sameType) {
   const out = { id: uid(), no: nextNo(data.lines), type: sameType ? src.type : GENERIC.line, latlngs, caption: sameType ? src.caption || '' : '', count: src.count || 1, state: sameType ? src.state || '' : '' };
@@ -6259,6 +6335,8 @@ function finishMode() {
     setMode(null);
     data.lines.push(line); save();                                    // сохранена сразу: закрытая форма не теряет линию
     if (line.type === GENERIC.line) { showCard('line', line); openPicker('line', id => changeType('line', line, id), 'Закройте — останется простой линией'); return; }
+    const nst = (LINES[line.type] || {}).style;
+    if (nst === 'dim' || nst === 'sketch') { redrawAll(); showCard('line', line); toast(nst === 'dim' ? 'Готово. Своя надпись — «Изменить» в карточке' : 'Эскиз готов'); return; }
     editLine(line, false);
     return;
   }
@@ -6349,9 +6427,57 @@ function openPicker(kind, onPick, note) {
     remember(kind, id); closeSheet();
     if (onPick) { onPick(id); return; }
     if (kind === 'point') { setMode({ kind: 'point', type: id }); toast('Наведите крестик и нажмите «+» — или нажмите на карту'); }
-    else { setMode({ kind: 'line', type: id, latlngs: [] }); toast('Ставьте точки линии касанием карты'); }
+    else if (id === 'note_sketch') sketchStart();
+    else { setMode({ kind: 'line', type: id, latlngs: [] }); toast(LINES[id] && NOTE_HINT[LINES[id].style] || 'Ставьте точки линии касанием карты'); }
   };
   render();
+}
+const NOTE_HINT = { text: 'Две точки: начало и конец строки. Текст впишете после «Готово»', leader: 'Первая точка — на предмете, последняя — где встанет надпись',
+  dim: 'Точки промера: от первой до последней. Длины встанут сами (на местности)' };
+// выбран «Эскиз от руки», а точек ещё нет — сразу рисование пальцем (иначе — линия по касаниям со знаком «эскиз»)
+function noteSketchNow(m, id) { if (id !== 'note_sketch' || !m || m.kind !== 'line' || m.editId || (m.latlngs || []).length) return false; setMode(null); sketchStart(); return true; }
+function noteHint(m, id) { const sp = m && m.kind === 'line' && LINES[id]; if (sp && sp.kind === 'note' && NOTE_HINT[sp.style] && !(m.latlngs || []).length) toast(NOTE_HINT[sp.style]); }
+// Эскиз от руки: пальцем по карте; каждый штрих — отдельная линия «эскиз» (сдвинуть карту — после «Готово»)
+let sketch = null;
+const SKETCH_PX = 2.5;                                                 // точки штриха — не чаще 2,5 px: рука дрожит, файл не пухнет
+function sketchThin(pts, tol) {                                       // упростить штрих (Дуглас — Пейкер), концы остаются
+  if (pts.length < 3) return pts.slice();
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const st = [[0, pts.length - 1]];
+  while (st.length) { const [i, j] = st.pop(), a = pts[i], b = pts[j], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+    let md = -1, mk = -1;
+    for (let k = i + 1; k < j; k++) { const p = pts[k], t = L2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2)) : 0, d = Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y); if (d > md) { md = d; mk = k; } }
+    if (md > tol) { keep[mk] = 1; st.push([i, mk], [mk, j]); } }
+  return pts.filter((_, k) => keep[k]);
+}
+function sketchStart() {
+  setMode(null); hideCard(); if (sketch) return;
+  const host = map.getContainer(), ov = document.createElement('div'), svg = document.createElementNS(NS, 'svg');
+  ov.style.cssText = 'position:absolute;inset:0;z-index:1000;touch-action:none;cursor:crosshair'; svg.style.cssText = 'width:100%;height:100%;overflow:visible';
+  ov.appendChild(svg); host.appendChild(ov);
+  L.DomEvent.disableClickPropagation(ov); L.DomEvent.disableScrollPropagation(ov);
+  for (const t of ['pointerdown', 'pointermove', 'pointerup', 'touchstart', 'touchmove', 'mousedown', 'mousemove']) L.DomEvent.on(ov, t, L.DomEvent.stopPropagation);
+  sketch = { ov, ids: [], cur: null, pid: null };
+  const box = $('pick');
+  box.innerHTML = `<div class="row" style="justify-content:space-between;gap:8px;align-items:center"><b style="flex:1">Эскиз: рисуйте пальцем. Карту сдвинуть — после «Готово»</b><button class="btn" id="skUndo">↶ Штрих</button><button class="btn primary" id="skDone">Готово</button></div>`;
+  box.style.display = 'block'; box.style.bottom = ($('bar').offsetHeight + 8) + 'px';
+  $('skDone').onclick = sketchEnd;
+  $('skUndo').onclick = () => { const id = sketch && sketch.ids.pop(); if (!id) { toast('Штрихов нет'); return; } data.lines = data.lines.filter(l => l.id !== id); save(); redrawAll(); };
+  const at = e => { const r = host.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  ov.onpointerdown = e => { if (sketch.pid != null) return; sketch.pid = e.pointerId; try { ov.setPointerCapture(e.pointerId); } catch (x) { /* нет — не важно */ }
+    sketch.cur = [at(e)]; sketch.live = el('polyline', { fill: 'none', stroke: VIS_COLOR, 'stroke-width': 2.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, svg); e.preventDefault(); };
+  ov.onpointermove = e => { if (e.pointerId !== sketch.pid || !sketch.cur) return; const p = at(e), q = sketch.cur[sketch.cur.length - 1];
+    if (Math.hypot(p.x - q.x, p.y - q.y) < SKETCH_PX) return; sketch.cur.push(p); sketch.live.setAttribute('points', sketch.cur.map(c => c.x.toFixed(1) + ',' + c.y.toFixed(1)).join(' ')); };
+  ov.onpointerup = ov.onpointercancel = e => { if (e.pointerId !== sketch.pid) return; sketch.pid = null;
+    const pts = sketchThin(sketch.cur || [], 0.7); sketch.cur = null; if (sketch.live) sketch.live.remove();
+    if (pts.length < 2 || Math.hypot(pts[pts.length - 1].x - pts[0].x, pts[pts.length - 1].y - pts[0].y) + pts.length < 6) return;   // случайное касание
+    const line = { id: uid(), no: nextNo(data.lines), type: 'note_sketch', latlngs: pts.map(p => { const ll = map.containerPointToLatLng([p.x, p.y]); return [ll.lat, ll.lng]; }), caption: '', count: 1, state: '', color: pref('color', VIS_COLOR), built: 'sketch' };
+    data.lines.push(line); sketch.ids.push(line.id); save(); redrawAll(); };
+}
+function sketchEnd() {
+  if (!sketch) return;
+  sketch.ov.remove(); const n = sketch.ids.length; sketch = null; $('pick').style.display = 'none';
+  toast(n ? `Эскиз: штрихов ${n}. Каждый — в карточке, можно удалить или сдвинуть` : 'Эскиз закрыт');
 }
 // Как в «Тактической карте»: сначала просто точка или линия, условный знак — потом, в карточке объекта
 const GENERIC = { point: 'mark', line: 'plain' };
@@ -8099,6 +8225,34 @@ function dxfFrame(box, ent, useLayer) {
   box.splice(0, 4, x0, y0, x0 + sh.W * k, y0 + sh.H * k);
   return sh;
 }
+// подпись, выноска, размер, эскиз → TEXT, POLYLINE и LINE на слоях ТОПО_ПОДПИСИ / ТОПО_РАЗМЕРЫ / ТОПО_ЭСКИЗ (в DXF R12 нет LEADER, а DIMENSION требует блоков)
+function dxfNote(l, ent, useLayer, xyz) {
+  const st = (LINES[l.type] || {}).style, V = l.latlngs;
+  if (!V || V.length < 2) return;
+  const P = V.map(a => xyz(a, null).map(Number)), hgt = noteSize(l) * DXF_M_PER_MM, mm = DXF_M_PER_MM, str = noteStr(l);
+  const ang = (a, b) => { let d = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI; if (d > 90.001) d -= 180; else if (d <= -90) d += 180; return d; };   // текст читается снизу или справа
+  const poly = (lay, q) => { ent(0, 'POLYLINE', 8, lay, 66, 1, 10, 0, 20, 0, 30, 0, 70, 0); for (const p of q) ent(0, 'VERTEX', 8, lay, 10, f3(p[0]), 20, f3(p[1]), 30, 0); ent(0, 'SEQEND', 8, lay); };
+  const seg = (lay, a, b) => ent(0, 'LINE', 8, lay, 10, f3(a[0]), 20, f3(a[1]), 30, 0, 11, f3(b[0]), 21, f3(b[1]), 31, 0);
+  const txt = (lay, p, deg, s, h72) => ent(0, 'TEXT', 8, lay, 10, f3(p[0]), 20, f3(p[1]), 30, 0, 40, f3(hgt), 1, s, 50, deg.toFixed(2), 7, DXF_STYLE, ...(h72 ? [72, h72, 11, f3(p[0]), 21, f3(p[1])] : []));
+  if (st === 'sketch') { poly(useLayer('ТОПО_ЭСКИЗ'), P); return; }
+  if (st === 'text') { const a = P[0], b = P[P.length - 1]; if (str) txt(useLayer('ТОПО_ПОДПИСИ'), [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], ang(a, b), str, 4); return; }   // 4 — по середине; пустая — не пишем
+  if (st === 'leader') {
+    const lay = useLayer('ТОПО_ПОДПИСИ'), a = P[P.length - 2], b = P[P.length - 1], dir = b[0] >= a[0] ? 1 : -1, w = hgt * 0.75 * str.length + mm;
+    poly(lay, P);
+    ent(0, 'CIRCLE', 8, lay, 10, f3(P[0][0]), 20, f3(P[0][1]), 30, 0, 40, f3(0.4 * mm));   // точка на предмете
+    if (str) { seg(lay, b, [b[0] + dir * w, b[1]]); txt(lay, [b[0] + dir * 0.5 * mm, b[1] + 0.6 * mm], 0, str, dir > 0 ? 0 : 2); }   // полка и текст; 2 — по правому краю
+    return;
+  }
+  if (st === 'dim') {
+    const lay = useLayer('ТОПО_РАЗМЕРЫ'), own = P.length === 2 && str;
+    for (let i = 1; i < P.length; i++) { const a = P[i - 1], b = P[i], d = Math.hypot(b[0] - a[0], b[1] - a[1]); if (!(d > 0)) continue;
+      seg(lay, a, b);
+      const ux = (b[0] - a[0]) / d, uy = (b[1] - a[1]) / d, t = 1 * mm / Math.SQRT2;
+      for (const p of [a, b]) seg(lay, [p[0] - (ux - uy) * t, p[1] - (uy + ux) * t], [p[0] + (ux - uy) * t, p[1] + (uy + ux) * t]);   // засечка 45°
+      const deg = ang(a, b), r = deg * Math.PI / 180, off = hgt * 0.5 + 0.8 * mm;   // текст — над линией (влево от направления текста)
+      txt(lay, [(a[0] + b[0]) / 2 - Math.sin(r) * off, (a[1] + b[1]) / 2 + Math.cos(r) * off], deg, own ? str : mText(groundDist(V[i - 1], V[i]), 2), 4); }
+  }
+}
 function toDxf() {
   const L = [], put = (...kv) => { for (let i = 0; i < kv.length; i += 2) L.push(String(kv[i]), String(kv[i + 1])); };
   const box = [Infinity, Infinity, -Infinity, -Infinity];               // границы чертежа — чтобы AutoCAD сразу показал объекты
@@ -8123,6 +8277,7 @@ function toDxf() {
     ent(0, 'SEQEND', 8, lay);
   }
   for (const l of data.lines) {
+    if (isNote(l)) { dxfNote(l, ent, useLayer, xyz); continue; }
     const sp = LINES[l.type] || LINES.plain, lay = useLayer(dxfLayerOfLine(l), NET_KIND[l.type] || (sp.color === REL ? 'relief' : sp.color === VEG ? 'veg' : null));
     // с отметками — 3D-полилиния (пропуски — по соседним вершинам), без отметок — плоская, чтобы не было ложных нулей
     const zs = lineZs(l), lt = dxfLtype(l, sp);
@@ -8983,6 +9138,7 @@ function toCatalog(coded) {
   for (const p of data.points) { const c = sk42(p.lat, p.lng), H = pointH(p);
     out.push([p.no || '', f3(c.x), f3(c.y), H == null ? '' : H.toFixed(3), codeOf(p.type), field([(POINTS[p.type] || POINTS.mark).name, p.name, pointNote(p)].filter(Boolean).join(' '))].join(';')); }
   for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain, n = l.latlngs.length;
+    if (sp.kind === 'note') continue;                                  // подписи и эскиз — не точки съёмки
     const cmd = i => !coded || n < 2 ? '' : i === 0 ? ' p' : i === n - 1 ? (sp.closed ? ' o' : ' e') : '';
     l.latlngs.forEach((ll, i) => { const c = sk42(ll[0], ll[1]), z = l.hs && l.hs[i];
       out.push([`L${l.no || ''}.${i + 1}`, f3(c.x), f3(c.y), z && hasH(z.h) ? Number(z.h).toFixed(3) : '', codeOf(l.type) + (coded ? '-' + (l.no || 0) : '') + cmd(i),
@@ -9042,6 +9198,7 @@ function toPnezd() {
   const row = (n, c, H, d) => out.push([n, f3(c.x), f3(c.y), H == null ? '' : Number(H).toFixed(3), field(d, ',')].join(','));
   for (const p of data.points) row(num(Number(p.no)), sk42(p.lat, p.lng), pointH(p), [codeOf(p.type), p.name, pointNote(p)].filter(Boolean).join(' '));
   for (const l of data.lines) { const sp = LINES[l.type] || LINES.plain, n = l.latlngs.length;
+    if (sp.kind === 'note') continue;                                  // подписи и эскиз — не точки съёмки
     const fig = i => n < 2 ? '' : i === 0 ? 'B' : i === n - 1 ? (sp.closed ? 'CLS' : 'E') : '';
     l.latlngs.forEach((ll, i) => { const z = l.hs && l.hs[i];
       row(num(0), sk42(ll[0], ll[1]), z && hasH(z.h) ? z.h : null, [codeOf(l.type), fig(i)].filter(Boolean).join(' ')); }); }
