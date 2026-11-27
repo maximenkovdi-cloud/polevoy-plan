@@ -75,7 +75,8 @@
   body.night #gpsLine[data-st=phone] { background:#455a64; color:#fff; }
   #updLine { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; padding:6px 8px; border-radius:10px;
     background:color-mix(in srgb, var(--accent) 14%, transparent); font-size:13px; }
-  #updLine .btn { min-height:34px; padding:6px 14px; }
+  #updLine .btn { min-height:44px; padding:6px 14px; }
+  body.glove #updLine .btn { min-height:56px; }
   #spoofLine { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; padding:6px 8px; border-radius:10px; background:#c62828; color:#fff; font-size:13px; font-weight:600; }
   #spoofLine .btn { min-height:34px; padding:6px 12px; flex:none; }
   #spoofLine { display:none !important; }                           /* подмена — красной плашкой GPS, подробности по касанию */
@@ -136,13 +137,13 @@
   #fabTrack.rec::after { content:''; position:absolute; right:3px; top:3px; width:11px; height:11px; border-radius:50%; background:#fff; box-shadow:0 0 0 2px #c62828; }   /* «●» — видно и без пульсации */
   @keyframes recPulse { 50% { box-shadow:0 0 0 7px rgba(198,40,40,.25), var(--shadow); } }
   #fabCompass { position:absolute; left:10px; top:calc(var(--topH, 92px) + 96px); z-index:1000; width:52px; height:52px; }
-  body.glove #fabCompass { width:62px; height:62px; top:calc(var(--topH, 92px) + 112px); }
+  body.glove #fabCompass { width:62px; height:62px; top:calc(var(--topH, 92px) + 128px); }   /* под столбиком «+/−» 2×56 с зазором 16 */
   #fabCompass svg { transition:transform .1s ease-out; }   /* короткий переход: датчик шлёт часто, длинный отставал бы */
   #fabUndo { position:absolute; left:10px; top:calc(var(--topH, 92px) + 160px); z-index:1000; }   /* «Вернуть» — слева, под компасом: правый столбец короче */
-  body.glove #fabUndo { top:calc(var(--topH, 92px) + 186px); }
+  body.glove #fabUndo { top:calc(var(--topH, 92px) + 202px); }
   /* низкий экран (телефон боком): «Вернуть» — рядом с компасом, а не под ним, чтобы не наезжать на масштаб внизу */
   #fabRedo { position:absolute; left:10px; top:calc(var(--topH, 92px) + 222px); z-index:1000; }   /* «Повторить» — под «Вернуть» */
-  body.glove #fabRedo { top:calc(var(--topH, 92px) + 258px); }
+  body.glove #fabRedo { top:calc(var(--topH, 92px) + 274px); }
   @media (max-height:520px) { #fabRedo, body.glove #fabRedo { top:calc(var(--topH, 92px) + 96px); left:134px; } body.glove #fabRedo { left:158px; } }
   @media (max-height:520px) { #fabUndo, body.glove #fabUndo { top:calc(var(--topH, 92px) + 96px); left:72px; } body.glove #fabUndo { left:84px; } }
   /* ночью светлый крестик — с тёмным ободком (белый ободок сливается со светлым крестиком) */
@@ -178,7 +179,7 @@
   /* ── нижняя панель ── */
   #bar { position:absolute; left:0; right:0; bottom:0; z-index:1000; background:var(--panel); display:flex; justify-content:space-around; padding:8px 4px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); }
   body.sun #bar { border-top:2px solid #000; }
-  #bar button { border:0; background:none; display:flex; flex-direction:column; align-items:center; gap:3px; color:var(--muted); font-size:12.5px; width:72px; padding:0; }
+  #bar button { border:0; background:none; display:flex; flex-direction:column; align-items:center; gap:3px; color:var(--muted); font-size:14px; width:72px; padding:0; }
   #bar .ic { width:56px; height:36px; border-radius:18px; display:flex; align-items:center; justify-content:center; }
   #bar svg { width:26px; height:26px; }
   body.day #bar button:not(.on) { color:#424242; }   /* на солнце серое бледнеет — темнее, чем остальной вспомогательный текст */
@@ -190,8 +191,8 @@
   #mode { padding:8px 8px 10px; }
   #mode .hd { display:flex; align-items:center; gap:6px; margin-bottom:8px; min-width:0; }
   #mode .title { display:flex; align-items:center; gap:6px; font-weight:700; flex:none; white-space:nowrap; }
-  #mode .mx { flex:none; width:44px; height:44px; border-radius:50%; border:1px solid var(--line); background:var(--panel); color:var(--ink); font-size:22px; line-height:1; }
-  body.glove #mode .mx { width:52px; height:52px; }
+  #mode .mx { flex:none; width:48px; height:48px; border-radius:50%; border:1px solid var(--line); background:var(--panel); color:var(--ink); font-size:22px; line-height:1; }
+  body.glove #mode .mx { width:56px; height:56px; }
   #mode .btn.off { opacity:.45; }
   #mode .title svg { flex:none; }
   #mode .btns { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; }
@@ -224,7 +225,7 @@
   /* масштаб «+/−» — крупно и в том же стиле, что круглые кнопки справа */
   .leaflet-control-zoom { border:0 !important; box-shadow:var(--shadow) !important; border-radius:14px !important; overflow:hidden; }
   .leaflet-control-zoom a { width:50px !important; height:50px !important; line-height:50px !important; font-size:26px !important; background:var(--panel) !important; color:var(--ink) !important; }
-  .x { border:0; background:var(--line); color:var(--ink); width:44px; height:44px; border-radius:50%; font-size:20px; line-height:1; flex:none; }
+  .x { border:0; background:var(--line); color:var(--ink); width:48px; height:48px; border-radius:50%; font-size:20px; line-height:1; flex:none; }
   body.sun .x { background:#fff; color:#000; border:2px solid #000; }
   .search { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:12px; padding:0 10px; color:var(--muted); }
   body.sun .search { border:2px solid #000; }
@@ -241,7 +242,8 @@
   .tile:active { background:color-mix(in srgb, var(--accent) 15%, transparent); }
   .tile svg { flex:none; }
   .empty { color:var(--muted); font-size:13px; padding:8px 2px; }
-  .list .item { display:flex; align-items:center; gap:12px; padding:13px 6px; border-bottom:1px solid var(--line); }
+  .list .item { display:flex; align-items:center; gap:12px; padding:13px 6px; border-bottom:1px solid var(--line); min-height:48px; box-sizing:border-box; }
+  body.glove .list .item { min-height:56px; }
   .list .item:active { background:color-mix(in srgb, var(--accent) 12%, transparent); }
   .list .item .i { width:26px; text-align:center; font-size:18px; flex:none; }
   .list .item.on { font-weight:600; }
@@ -294,8 +296,9 @@
   body.glove #bar button { width:84px; font-size:14px; }
   body.glove .seg button, body.glove .meas-row .seg button { min-height:54px; padding:10px 14px; font-size:15px; }
   body.glove #modeQuick button { min-height:58px; }
-  body.glove .x { min-width:52px; min-height:52px; }
-  .tabs button { min-height:40px; }
+  body.glove .x { min-width:56px; min-height:56px; }
+  body.glove #ar .x, body.glove #ar .cb, body.glove #ar .calbar button { min-width:56px; min-height:56px; }   /* в камере тоже перчатки */
+  .tabs button { min-height:48px; }
   #card .swatches > span { color:var(--muted); font-size:.9em; margin-right:4px; }
   #card .swatches button { flex:none; width:38px; height:38px; border-radius:50%; border:1px solid var(--line); background:var(--panel); padding:0; font-size:9px; color:var(--muted); }
   #card .swatches button[data-color=""] { width:auto; border-radius:19px; padding:0 10px; font-size:11px; }
@@ -338,8 +341,8 @@
   .leaflet-control-layers, .leaflet-control-scale { display:none !important; }
   .leaflet-top.leaflet-left { top:var(--topH, 92px); }
   .leaflet-top.leaflet-left .leaflet-control { margin-top:0; }          /* отступ уже учтён в --topH */
-  .leaflet-control-zoom a { width:40px !important; height:40px !important; line-height:40px !important; font-size:20px !important; background:var(--panel) !important; color:var(--ink) !important; border-color:var(--line) !important; }
-  body.glove .leaflet-control-zoom a { width:52px !important; height:52px !important; line-height:52px !important; font-size:26px !important; }   /* перчатки: столбик 104 px — выше компаса (+112) */
+  .leaflet-control-zoom a { width:48px !important; height:48px !important; line-height:48px !important; font-size:20px !important; background:var(--panel) !important; color:var(--ink) !important; border-color:var(--line) !important; }
+  body.glove .leaflet-control-zoom a { width:56px !important; height:56px !important; line-height:56px !important; font-size:26px !important; }   /* перчатки: столбик 104 px — выше компаса (+112) */
   .leaflet-bottom { bottom:var(--barH, 70px); }
   body.yjs .leaflet-bottom { bottom:calc(var(--barH, 70px) + 34px); }
   .yjs-box, .yjs-inner { position:absolute; left:0; top:0; }
@@ -350,7 +353,7 @@
   #yLogo img { display:block; width:88px; height:48px; }
   body.ymap .leaflet-bottom.leaflet-right .leaflet-control-attribution { margin-right:88px; }
 
-  #toast { position:absolute; left:50%; transform:translateX(-50%); z-index:3000; background:#222; color:#fff; padding:9px 15px; border-radius:18px; font-size:14px; display:none; width:max-content; max-width:calc(100% - 32px); text-align:center; line-height:1.3; }
+  #toast { position:absolute; left:50%; transform:translateX(-50%); z-index:3000; background:#222; color:#fff; padding:9px 15px; border-radius:18px; font-size:14px; display:none; width:max-content; max-width:calc(100% - 32px); text-align:center; line-height:1.3; pointer-events:none; }   /* подсказка — только текст: касание проходит сквозь неё на карту, а не теряется (ролевой разбор 114) */
   body.desk.drawing .leaflet-container, body.desk.drawing .leaflet-interactive { cursor:crosshair; }   /* мышь: в рисовании — перекрестье, как в AutoCAD */
   #hoverXY { position:fixed; left:0; top:0; z-index:990; display:none; pointer-events:none; font:700 12px/1.25 system-ui, sans-serif; color:#fff; background:rgba(20,24,30,.82); padding:4px 7px; border-radius:6px; white-space:nowrap; }
   /* широкий экран (body.wide): карточка — внизу справа, окна — колонкой справа, панель рисования — слева; на телефоне не включается */
@@ -2000,7 +2003,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 114;
+const APP_BUILD = 115;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -2224,7 +2227,7 @@ const RX_STALE_MS = 5000, RX_GST_MS = 10000, RX_SILENT_MS = 10000;
 const RX_Q = { 0: 'нет решения', 1: 'автономно', 2: 'DGPS', 4: 'FIX', 5: 'FLOAT' };
 let rxCfg = pref('rx', { address: '', name: '', host: '', port: 2101, mount: '', user: '', pass: '', init: '', auto: false });
 let rxFix = null, rxGst = null, rxStateNow = { bt: 'off', ntrip: 'off', msg: '', rtcm: 0 }, rxWasLive = false, rxOnAt = 0, rxGeoidWarned = false;
-const RX_GEOID_TXT = 'Приёмник не передал поправку геоида — отметка может отличаться на ~14 м. Сверьте: Меню → Отметки → «Встать на репер и привязать», или там же «уже отметка», если приёмник даёт отметку';
+const RX_GEOID_TXT = 'Приёмник не передал поправку геоида — отметка может отличаться на величину геоида (по России — до десятков метров). Сверьте: Меню → Отметки → «Встать на репер и привязать», или там же «уже отметка», если приёмник даёт отметку';
 function rxLive() { return !!(rxFix && rxFix.q > 0 && Date.now() - rxFix.at < RX_STALE_MS); }
 function rxLine(line) {
   const n = nmeaParse(line); if (!n) return;
@@ -4191,9 +4194,9 @@ function updateStake() {
   else {
     const me = sk42(gps.lat, gps.lng), az = (Math.atan2(t.y - me.y, t.x - me.x) * 180 / Math.PI + 360) % 360;   // дирекционный угол на цель (от оси X — на север, по часовой)
     const m = gkScale(midLL(L.latLng(gps.lat, gps.lng), stake.ll)), dx = (t.x - me.x) / m, dy = (t.y - me.y) / m, d = Math.hypot(dx, dy);   // сколько идти — на местности
-    const here = d <= Math.max(STAKE_OK_M, gps.acc);
+    const near = d <= Math.max(STAKE_OK_M, gps.acc), here = near && d <= STAKE_OK_M && gps.acc <= STAKE_OK_M;   // зелёное — только когда и точка, и точность в пределах 2 см
     body = `<div class="row"><svg width="56" height="56" viewBox="-28 -28 56 56" style="flex:none;transform:rotate(${az}deg)"><path d="M0 -24L10 8L0 2L-10 8Z" fill="${here ? '#2e7d32' : '#e65100'}"/></svg>
-      <div><div class="big ${here ? 'ok' : ''}">${here ? (d <= STAKE_OK_M ? 'На месте' : 'На месте ±' + cmText(gps.acc)) : cmText(d)}</div>
+      <div><div class="big ${here ? 'ok' : ''}">${here ? 'На месте' : near ? 'Рядом: в пределах ошибки ±' + cmText(gps.acc) : cmText(d)}</div>${near && !here ? '<div style="color:#e65100;font-weight:700">Колышек по этому не ставить — для разбивки нужен RTK (сантиметры)</div>' : ''}
       <div>${dx >= 0 ? 'на север' : 'на юг'} ${cmText(Math.abs(dx))} · ${dy >= 0 ? 'на восток' : 'на запад'} ${cmText(Math.abs(dy))}</div>
       <div style="color:var(--muted);font-size:.85em">${angText(az, L.latLng(gps.lat, gps.lng))} · GPS ±${cmText(gps.acc)}</div></div></div>`;
   }
@@ -4749,7 +4752,7 @@ function soPanel(p) {
   return `${hLine}${p.crs && p.crs !== planeName() ? `<div style="margin-top:4px;color:#c62828"><b>Задание в ${esc(p.crs)}, а сейчас выбрана ${esc(planeName())}</b> — верните систему, иначе отклонения будут неверны</div>` : ''}${p.done ? `<div style="margin-top:4px;color:${p.done.ok ? '#2e7d32' : '#c62828'}">Уже вынесена: ${cmText(p.done.dl)}${p.done.ok ? ', в допуске' : ', вне допуска'}</div>` : ''}
     <div style="color:var(--muted);font-size:.8em;margin-top:2px">осталось ${left} из ${soList().length}</div>`;
 }
-const soButtons = () => '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-top:8px"><button class="btn primary" id="soRec">Записать</button><button class="btn" id="soSkip">Дальше →</button><button class="btn" id="soMenu">Список</button></div>';
+const soButtons = () => '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-top:8px"><button class="btn primary" id="soRec">Записать</button><button class="btn" id="soSkip">Дальше →</button><button class="btn" id="soMenu">Список</button></div>';
 function soPanelWire(p) { $('soRec').onclick = () => soRecord(p); $('soSkip').onclick = () => soNext(p); $('soMenu').onclick = () => soSheet(); }
 function soNext(p) {
   const L0 = soList(), i = L0.findIndex(x => x.id === p.id), n = L0.slice(i + 1).find(x => !x.done) || L0.find(x => !x.done && x.id !== p.id);
@@ -5280,7 +5283,7 @@ function redoSheet() {
   $('redoGo').onclick = () => redoGo(L0[0]);
 }
 function redoGo(p) { startStake([p.lat, p.lng], 'доснять: ' + (pointLabel(p) || (POINTS[p.type] || POINTS.mark).name), null); stake.redo = { id: p.id }; $('stake').dataset.key = ''; updateStake(); }
-const redoButtons = () => '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-top:8px"><button class="btn primary" id="redoRec">Измерить здесь</button><button class="btn" id="redoSkip">Дальше →</button><button class="btn" id="redoMenu">Список</button></div>';
+const redoButtons = () => '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-top:8px"><button class="btn primary" id="redoRec">Измерить здесь</button><button class="btn" id="redoSkip">Дальше →</button><button class="btn" id="redoMenu">Список</button></div>';
 function redoWire(p) { $('redoRec').onclick = () => redoRecord(p.id); $('redoSkip').onclick = () => redoNext(p.id); $('redoMenu').onclick = () => redoSheet(); }
 function redoNext(id) {
   const L0 = waitList(), i = L0.findIndex(x => x.id === id), n = L0.slice(i + 1)[0] || L0.find(x => x.id !== id);
@@ -6899,7 +6902,7 @@ function arDepthTxt(l) {
   const v = [...(l.tdep || []), ...(l.tdep && l.tdep.some(hasH) ? [] : [l.attr && l.attr.depth])].filter(hasH).map(Number).filter(d => d > 0 && d < AR_DEPTH_MAX);
   if (!v.length) return '';
   const a = Math.min(...v), b = Math.max(...v);
-  return 'глуб. ' + (b - a < 0.05 ? mText(a, 1) : mText(a, 1) + '–' + mText(b, 1)) + ' м';
+  return 'глуб. по плану ' + (b - a < 0.05 ? mText(a, 1) : mText(a, 1) + '–' + mText(b, 1)) + ' м';
 }
 // круг ошибки на расстоянии d: ошибка положения + боковой сдвиг от ошибки курса
 function arErrM(d, posAcc, courseErr) { return (isFinite(posAcc) && posAcc > 0 ? posAcc : 5) + d * Math.tan((courseErr || AR_COURSE_ERR) * Math.PI / 180); }
@@ -6921,7 +6924,7 @@ addEventListener('deviceorientationabsolute', e => { if (e.beta != null) { arTil
 const arBox = document.createElement('div'); arBox.id = 'ar';
 arBox.innerHTML = '<video id="arVid" autoplay playsinline muted></video><svg class="ov" id="arSvg"></svg><div class="bar"><div class="lvl" id="arLvl"></div><button class="cb" id="arXrBtn" style="display:none">WebXR</button><button class="cb" id="arCalBtn">Курс</button><button class="x" id="arX" aria-label="Закрыть камеру">×</button></div>'
   + '<div class="calbar" id="arCalBar"><div id="arCalTxt"></div><div class="row"><button class="no" id="arCalNo">Отмена</button><button class="go" id="arCalGo" disabled>Совместить</button></div></div>'
-  + '<div class="msg" id="arMsg"></div><div class="warn">Подсказка, не разбивка. Копать по картинке нельзя — сеть подтверждают трассоискателем или шурфом (СП 45 п. 11.19)</div>';
+  + '<div class="msg" id="arMsg"></div><div class="warn">Подсказка, не разбивка. Копать и выносить точки по картинке нельзя — сеть подтверждают трассоискателем или шурфом (СП 45 п. 11.19)</div>';
 document.body.appendChild(arBox);
 function arMe() { return gps && Date.now() - gps.at < AIM_STALE_MS ? { ll: L.latLng(gps.lat, gps.lng), acc: gps.acc, src: rxLive() ? 'приёмник' : 'GPS' } : null; }
 // камера смотрит вверх на (pitch): телефон вертикально — 0°, наклон к земле — минус
@@ -6936,9 +6939,9 @@ function arDraw() {
   arRtk = fixNow && me.acc <= (arRtk ? AR_RTK_OUT_M : RTK_FIX_M);   // гистерезис: войти при ≤5 см, выйти при >8 см — уровень не мигает
   const rtk = arRtk, posAcc = me ? (rtk ? Math.max(me.acc, AR_ANT_OFFSET_M) : me.acc) : null;   // антенна на вехе или рюкзаке — не в камере: запас 0,5 м
   const courseErr = cal ? cal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR), lvl = arLevel(c, hd, arCamOk, rtk, arXr.on);
-  const calTxt = cal ? ` (калибровка по «${esc(cal.name)}», ${Math.max(1, Math.round((Date.now() - cal.at) / 60000))} мин назад)` : arCal ? (arCal.src !== arHdSrc() ? ' — калибровка была для другого режима, нажмите «Курс»' : ' — калибровка устарела, нажмите «Курс»') : magDeclOk ? ' (без калибровки — «Курс»)' : ' — склонение неизвестно, нажмите «Курс»';
+  const calTxt = cal ? ` (калибровка по «${esc(cal.name)}», ${Math.max(1, Math.round((Date.now() - cal.at) / 60000))} мин назад)` : arCal ? (arCal.src !== arHdSrc() ? ' — курс не выверен, нажмите «Курс»' : ' — калибровка устарела, нажмите «Курс»') : magDeclOk ? ' (без калибровки — «Курс»)' : ' — склонение неизвестно, нажмите «Курс»';
   const accTxt = a => mText(a, a < 1 ? 2 : 1);
-  $('arLvl').innerHTML = `<b>Уровень ${lvl}: ${lvl === 3 ? 'WebXR, курс по повороту телефона' : lvl === 4 ? (arXr.on ? 'WebXR + RTK' : 'камера + компас + RTK') + (cal ? '' : ' — положение точное, ошибка в курсе и наклоне: нажмите «Курс»') : lvl === 2 ? 'камера + компас' : lvl === 1 ? 'стрелка: GPS + компас (камеры нет)' : 'нет компаса — только карта'}</b><br>`
+  $('arLvl').innerHTML = `<b>Уровень ${lvl}: ${lvl === 3 ? 'WebXR, курс по повороту телефона' : lvl === 4 ? (arXr.on ? 'WebXR + RTK' : 'камера + компас + RTK') + (cal ? '' : ' — ошибка в курсе и наклоне: нажмите «Курс»') : lvl === 2 ? 'камера + компас' : lvl === 1 ? 'стрелка: GPS + компас (камеры нет)' : 'нет компаса — только карта'}</b><br>`
     + (me ? `Точность ±${accTxt(arErrM(20, posAcc, courseErr))} м на 20 м · курс ±${Number.isInteger(courseErr) ? courseErr : mText(courseErr, 1)}°${calTxt} · ${esc(me.src)} ±${accTxt(isFinite(me.acc) && me.acc > 0 ? me.acc : 5)} м` : 'Нет свежего GPS — подписи не рисую');
   const why = !me ? 'Жду GPS. Без своего положения подписи легли бы не туда — выйдите на открытое место.' : !arXr.on && arLandscape() ? 'Держите телефон вертикально: в альбомной ориентации направление камеры считается неверно.'
     : hd == null ? (compassDeg != null ? 'Компас давно не обновлялся — пошевелите телефон или покачайте его восьмёркой.' : 'Компас телефона не отвечает — направление неизвестно. Покачайте телефон восьмёркой или откройте на устройстве с компасом.') : '';
@@ -6952,15 +6955,17 @@ function arDraw() {
   };
   let s = '';
   for (const l of data.lines) {                                         // линии: куски по ~2 м в радиусе показа
-    let path = '', prev = null, lab = null;
+    let path = '', prev = null, lab = null, band = null;                   // band — ближняя точка: по ней ширина полосы ошибки (у ближних она шире всего)
     for (let i = 0; i + 1 < l.latlngs.length + ((LINES[l.type] || {}).closed ? 1 : 0); i++) {
       const a = L.latLng(l.latlngs[i]), b = L.latLng(l.latlngs[(i + 1) % l.latlngs.length]), pa = planeXY(a, zone), pb = planeXY(b, zone);
       if (segPx(o, pa, pb) > AR_R_M * k) { prev = null; continue; }      // отрезок далеко — не считаем
       const n = Math.min(60, Math.max(1, Math.ceil(Math.hypot(pb.x - pa.x, pb.y - pa.y) / k / 2)));
       for (let j = 0; j <= n; j++) { const q = P([a.lat + (b.lat - a.lat) * j / n, a.lng + (b.lng - a.lng) * j / n]);
-        if (q && !q.off && q.x > -W && q.x < 2 * W && q.y > -H && q.y < 2 * H) { path += (prev ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); prev = q; if (q.x > 10 && q.x < W - 10 && q.y > 60 && q.y < H - 140 && (!lab || q.d < lab.d)) lab = q; } else prev = null; }
+        if (q && !q.off && q.x > -W && q.x < 2 * W && q.y > -H && q.y < 2 * H) { path += (prev ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); prev = q; if (!band || q.d < band.d) band = q; if (q.x > 10 && q.x < W - 10 && q.y > 60 && q.y < H - 140 && (!lab || q.d < lab.d)) lab = q; } else prev = null; }
     }
-    if (path) { const col = l.color || (LINES[l.type] || {}).color || '#ffeb3b'; s += `<path d="${path}" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="7" stroke-linejoin="round"/><path d="${path}" fill="none" stroke="${esc(col)}" stroke-width="4" stroke-linejoin="round"/>`;
+    if (path) { const col = l.color || (LINES[l.type] || {}).color || '#ffeb3b', bw = band ? Math.max(8, Math.min(W / 2, 2 * arErrM(band.d, posAcc, courseErr) / band.d * band.f)) : 8;
+      s += `<path d="${path}" fill="none" stroke="${esc(col)}" stroke-opacity=".16" stroke-width="${bw.toFixed(1)}" stroke-linejoin="round" stroke-linecap="round"/>`;   // полоса ±ошибка: сеть где-то в ней, а не точно на линии
+      s += `<path d="${path}" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="7" stroke-linejoin="round"/><path d="${path}" fill="none" stroke="${esc(col)}" stroke-width="4" stroke-linejoin="round"/>`;
       const dt = arCalMode ? '' : arDepthTxt(l); if (dt && lab) { const rt = lab.x > W / 2; s += `<text x="${(lab.x + (rt ? -8 : 8)).toFixed(1)}" y="${(lab.y + 22).toFixed(1)}"${rt ? ' text-anchor="end"' : ''}>${esc(dt)}</text>`; } }   // у правого края — выравнивание вправо, чтобы не уйти за экран   // глубина — у ближней видимой точки линии
   }
   for (const p of data.points) { const q = P([p.lat, p.lng]); if (q && !q.off && q.x > -40 && q.x < W + 40 && q.y > -40 && q.y < H + 40) items.push({ q, p, t: pointLabel(p) || ((POINTS[p.type] || POINTS.mark).name + (p.no ? ' № ' + p.no : '')) }); }
@@ -6972,8 +6977,8 @@ function arDraw() {
   }
   if (stake && stake.ll) {                                             // цель выноса: на экране — кольцо, за краем — стрелка с расстоянием
     const q = P(stake.ll), d = groundDist(sw, stake.ll), pe = isFinite(posAcc) && posAcc > 0 ? posAcc : 5;
-    if (d < Math.max(AR_NEAR_M, pe)) s += `<text x="${(W / 2).toFixed(1)}" y="${(H * 0.68).toFixed(1)}" text-anchor="middle">цель рядом: ${esc(distText(d))} (±${esc(accTxt(pe))} м)</text><text x="${(W / 2).toFixed(1)}" y="${(H * 0.68 + 20).toFixed(1)}" text-anchor="middle">дальше — по «Выносу» на карте</text>`;   // в пределах ошибки положения стрелка «левее 7°» ничего не значит
-    else if (q && !q.off && q.x > 0 && q.x < W) s += `<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="16" fill="none" stroke="#ff6d00" stroke-width="4"/><text x="${(q.x + 20).toFixed(1)}" y="${(q.y + 5).toFixed(1)}">цель · ${esc(distText(d))}</text>`;
+    if (d < Math.max(AR_NEAR_M, pe)) s += `<text x="${(W / 2).toFixed(1)}" y="${(H * 0.68).toFixed(1)}" text-anchor="middle">цель рядом: ${esc(distText(d))} (±${esc(accTxt(pe))} м)</text><text x="${(W / 2).toFixed(1)}" y="${(H * 0.68 + 20).toFixed(1)}" text-anchor="middle">закройте камеру × — точно по «Выносу»</text>`;   // в пределах ошибки положения стрелка «левее 7°» ничего не значит
+    else if (q && !q.off && q.x > 0 && q.x < W) s += `<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="${Math.max(16, Math.min(W, arErrM(q.d, posAcc, courseErr) / q.d * q.f)).toFixed(1)}" fill="rgba(255,109,0,.12)" stroke="#ff6d00" stroke-width="3" stroke-dasharray="7 5"/><circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="16" fill="none" stroke="#ff6d00" stroke-width="4"/><text x="${(q.x + 20).toFixed(1)}" y="${(q.y + 5).toFixed(1)}">цель · ${esc(distText(d))}</text>`;
     else { const rel = angDiff((planeInverse(sw, stake.ll).dir + gam + 360) % 360, hd), right = rel > 0, x = right ? W - 30 : 30, y = H / 2;
       s += `<path d="M${x} ${y - 26}L${right ? x + 22 : x - 22} ${y}L${x} ${y + 26}Z" fill="#ff6d00" stroke="#000" stroke-width="2"/><text x="${right ? x - 8 : x + 8}" y="${y + 46}" text-anchor="${right ? 'end' : 'start'}">цель ${esc(distText(d))} · ${right ? 'правее' : 'левее'} ${Math.round(Math.abs(rel))}°</text>`; }
   }
@@ -8954,7 +8959,7 @@ const DXF_STYLE = 'GOST';                                              // сти
 // Рамка листа и штамп для DXF (слои «РАМКА», «ШТАМП» — их можно отключить). Формат — наименьший из А4…А0, куда план
 // входит в масштабе 1:500 над штампом; не входит и в А0 — рамка по размеру плана. Штамп — 185×55 мм, графы по ГОСТ Р 21.101 (форма 3)
 const SHEETS = [['А4', 297, 210], ['А3', 420, 297], ['А2', 594, 420], ['А1', 841, 594], ['А0', 1189, 841]];
-const DXF_CHAR_W = 0.7;                                                 // средняя ширина буквы isocpeur с пробелами, доля высоты (проверено в AutoCAD 2027: ~0,66 — берём с запасом)
+const DXF_CHAR_W = 0.7, DXF_STR_MAX = 250;   // DXF_STR_MAX — байт в текстовом значении R12 (предел 255)                                                 // средняя ширина буквы isocpeur с пробелами, доля высоты (проверено в AutoCAD 2027: ~0,66 — берём с запасом)
 const FR = { left: 20, other: 5, gap: 10, stampW: 185, stampH: 55, noteH: 22, g27H: 10 };   // поля и штамп, мм листа; g27H — графа 27 над штампом
 const GRID_MM = 100;                                                   // координатная сетка — через 10 см (50 м на 1:500)
 const GRID_MAX = 5000, SHEET_MAX_MM = 5000;                             // больше — сбойная точка или две зоны: сетку и рамку не рисуем
@@ -9058,6 +9063,14 @@ function dxfNote(l, ent, useLayer, xyz) {
       txt(lay, [(a[0] + b[0]) / 2 - Math.sin(r) * off, (a[1] + b[1]) / 2 + Math.cos(r) * off], deg, own ? str : mText(groundDist(V[i - 1], V[i]), 2), 4); }
   }
 }
+// текст для DXF R12: знак диаметра — кодом %%c (его понимают все, а не только новый AutoCAD); не длиннее 250 байт после перекодировки
+// (символ вне cp1251 пишется как \U+XXXX — 7 байт), иначе R12 обрежет или не прочитает значение
+function dxfStr(v) {
+  let t = String(v == null ? '' : v).replace(/[\r\n]+/g, ' ').replace(/[Ø⌀ø]/g, '%%c'), n = 0, cut = -1;
+  for (let i = 0; i < t.length; i++) { const c = t.charCodeAt(i), b = c < 128 || (c >= 0x410 && c <= 0x451) || c === 0x2026 || c === 0xAB || c === 0xBB || c === 0xB0 || c === 0xB1 || c === 0x2116 || c === 0x2013 || c === 0x2014 ? 1 : 7;
+    if (n + b > DXF_STR_MAX - 1 && cut < 0) cut = i; n += b; }
+  return n > DXF_STR_MAX ? t.slice(0, cut) + '…' : t;
+}
 function toDxf() {
   const L = [], put = (...kv) => { for (let i = 0; i < kv.length; i += 2) L.push(String(kv[i]), String(kv[i + 1])); };
   const box = [Infinity, Infinity, -Infinity, -Infinity];               // границы чертежа — чтобы AutoCAD сразу показал объекты
@@ -9067,16 +9080,16 @@ function toDxf() {
   const layers = new Map();
   const useLayer = (name, kind) => { if (!layers.has(name)) layers.set(name, dxfColorOfLayer(name, kind)); return name; };
   // сущности — сначала, чтобы знать слои и блоки
-  const E = [], ent = (...kv) => { for (let i = 0; i < kv.length; i += 2) E.push(String(kv[i]), String(kv[i + 1]).replace(/[\r\n]+/g, ' ')); };   // перевод строки в значении сломал бы файл
+  const E = [], ent = (...kv) => { for (let i = 0; i < kv.length; i += 2) E.push(String(kv[i]), kv[i] === 1 ? dxfStr(kv[i + 1]) : String(kv[i + 1]).replace(/[\r\n]+/g, ' ')); };   // перевод строки в значении сломал бы файл
   const blocks = new Set(), ltypes = new Map();
-  const ATTRS = [['НОМЕР', 0], ['ОТМ_ПОДП', 0], ['ОТМ', 1], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]; отметку видно подписью с запятой (ГОСТ Р 21.101 п. 5.4), а ОТМ — то же число с точкой для программ рельефа
+  const ATTRS = [['НОМЕР', 0], ['ОТМ_ПОДП', 0], ['ОТМ_НИЗ', 0], ['ОТМ', 1], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]; отметку видно подписью с запятой (ГОСТ Р 21.101 п. 5.4), а ОТМ — то же число с точкой для программ рельефа
   for (const p of data.points) {
     // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
     const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : '') + (approxNote(p) ? '_ПРИБЛ' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
     const blk = codeOf(p.type).toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31);
     blocks.add(blk);
     ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z, ...(p.rot ? [50, (-Number(p.rot)).toFixed(1)] : []));   // поворот: на экране — по часовой, в DXF — против
-    const val = { НОМЕР: p.no || '', ОТМ_ПОДП: H == null ? '' : planNum(H, 2), ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
+    const val = { НОМЕР: p.no || '', ОТМ_ПОДП: H == null ? '' : planNum(H, 2), ОТМ_НИЗ: /^w_/.test(p.type) && wellBottom(p) != null ? planNum(wellBottom(p), 2) : '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
       ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : !p.q && p.approx != null ? f3(p.approx) : '' };
     ATTRS.forEach(([tag, inv], k) => ent(0, 'ATTRIB', 8, lay, 10, (Number(x) + 0.6).toFixed(3), 20, (Number(y) + 0.4 - k * 1.2).toFixed(3), 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE));
     ent(0, 'SEQEND', 8, lay);
@@ -9092,7 +9105,13 @@ function toDxf() {
     ent(0, 'SEQEND', 8, lay);
     if (sp.area && l.latlngs.length >= 3) { const V = l.latlngs.map(ll => { const [x, y] = xyz(ll); return { x: +x, y: +y }; }), c = areaCentroid(V); ent(0, 'TEXT', 8, useLayer('ТОПО_ПОДПИСИ'), 10, c.x.toFixed(3), 20, c.y.toFixed(3), 30, 0, 40, DXF_TEXT_M, 1, coverOf(l), 7, DXF_STYLE, 72, 4, 11, c.x.toFixed(3), 21, c.y.toFixed(3), 31, 0); }   // буква покрытия — в середине
     const label = [sp.kind === 'building' ? buildingLabel(sp, l) : '', NET_LINE_KINDS.has(sp.kind) ? netCaption(l) : l.caption, (l.attr && l.attr.caption) || ''].filter(Boolean).join(' ');
-    if (label) { const lay2 = useLayer('ТОПО_ПОДПИСИ'), [x, y, z] = xyz(l.latlngs[0], zs && zs[0]); ent(0, 'TEXT', 8, lay2, 10, x, 20, y, 30, z, 40, DXF_TEXT_M, 1, label, 7, DXF_STYLE); }
+    if (label) {                                                         // подпись — у середины самого длинного участка, вдоль него и чуть в стороне: не в точке колодца
+      const lay2 = useLayer('ТОПО_ПОДПИСИ'), P2 = l.latlngs.map(a => xyz(a, null).map(Number));
+      let k = 1, best = -1; for (let i = 1; i < P2.length; i++) { const d = Math.hypot(P2[i][0] - P2[i - 1][0], P2[i][1] - P2[i - 1][1]); if (d > best) { best = d; k = i; } }
+      const a = P2[k - 1], b = P2[k]; let deg = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI; if (deg > 90.001) deg -= 180; else if (deg <= -90) deg += 180;   // читается снизу или справа
+      const r = deg * Math.PI / 180, off = DXF_TEXT_M * 0.5 + 0.8 * DXF_M_PER_MM, mx = f3((a[0] + b[0]) / 2 - Math.sin(r) * off), my = f3((a[1] + b[1]) / 2 + Math.cos(r) * off);
+      ent(0, 'TEXT', 8, lay2, 10, mx, 20, my, 30, 0, 40, DXF_TEXT_M, 1, label, 50, deg.toFixed(2), 7, DXF_STYLE, 72, 1, 11, mx, 21, my, 31, 0);
+    }
   }
   if (box[0] === Infinity) box.splice(0, 4, 0, 0, 100, 100);
   else if (pref('dxfFrame', true)) dxfFrame(box, ent, useLayer);                                   // рамка листа и штамп — на своих слоях
