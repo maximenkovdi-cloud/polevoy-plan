@@ -1139,7 +1139,7 @@ function yandexKeyForm(then) {
   openForm('Ключ Яндекс Карт', [{ key: 'k', label: 'Ключ Tiles API', value: pref('yandexKey', ''), placeholder: 'например 1a2b3c4d-…',
     hint: 'Ключ бесплатный. Как получить: войдите в Яндекс ID → developer.tech.yandex.ru → «Подключить API» → Tiles API → скопируйте ключ сюда. Включается до 15 минут. Ключ хранится только в этом телефоне.' }], v => {
     const k = String(v.k || '').trim();
-    if (k && !/^[\w-]{20,80}$/.test(k)) { toast('Ключ — латинские буквы, цифры и дефисы, без пробелов'); return false; }
+    if (k && !/^[\w-]{20,80}$/.test(k)) { toast('Ключ — латинские буквы, цифры, дефис и подчёркивание, без пробелов'); return false; }
     setPref('yandexKey', k); bases[Y_MAP].options.k = k || 'none'; bases[Y_MAP].redraw();
     if (!k && baseName === Y_MAP) setBase('Схема (OSM)');                // ключ удалили — без него схема Яндекса пустая
     toast(k ? 'Ключ Яндекс Карт сохранён' : 'Ключ Яндекс Карт удалён');
@@ -1219,7 +1219,7 @@ function yandexJsKeyForm(then) {
   openForm('Ключ Яндекс Карт: спутник', [{ key: 'k', label: 'Ключ «JavaScript API и HTTP Геокодер»', value: pref('yandexJsKey', ''), placeholder: 'например 1a2b3c4d-…',
     hint: 'Ключ бесплатный. Как получить: войдите в Яндекс ID → developer.tech.yandex.ru → «Подключить API» → «JavaScript API и HTTP Геокодер» → скопируйте ключ сюда. Это другой ключ, не тот, что для схемы. Хранится только в этом телефоне.' }], v => {
     const k = String(v.k || '').trim();
-    if (k && !/^[\w-]{20,80}$/.test(k)) { toast('Ключ — латинские буквы, цифры и дефисы, без пробелов'); return false; }
+    if (k && !/^[\w-]{20,80}$/.test(k)) { toast('Ключ — латинские буквы, цифры, дефис и подчёркивание, без пробелов'); return false; }
     const was = yandexJsKey(); setPref('yandexJsKey', k);
     if (!k && Y_JS[baseName]) setBase('Схема (OSM)');
     toast(!k ? 'Ключ удалён' : window.ymaps && was && was !== k ? 'Ключ сохранён — перезапустите приложение, чтобы он заработал' : 'Ключ сохранён');
@@ -1992,7 +1992,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 105;
+const APP_BUILD = 106;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -4295,7 +4295,7 @@ function planeCands(a, b) {
 }
 function placeCandidates(txt) {
   const t = normPlaceText(txt), out = [];
-  const xy = /\bX\s*[=:]?\s*(-?\d+(?:[.,]\d+)?)[^\dXY]*?\bY\s*[=:]?\s*(-?\d+(?:[.,]\d+)?)/i.exec(t);   // \b — не цеплять «x» внутри слов
+  const xy = /(?<![\dA-Za-zА-Яа-яЁё_])[XХ]\s*[=:]?\s*(-?\d+(?:[.,]\d+)?)[^\d]*?(?<![\dA-Za-zА-Яа-яЁё_])[YУ]\s*[=:]?\s*(-?\d+(?:[.,]\d+)?)/i.exec(t);   // и латинские X/Y, и русские Х/У; не цеплять букву внутри слова и «2х3»; слова между ними не мешают
   if (xy) out.push(...planeCands(parseNum(xy[1]), parseNum(xy[2])));
   // полушарие — только латинская заглавная буква сразу после числа (русские предлоги «с», «в», «з» не путаем со сторонами света)
   const dms = [...t.matchAll(/(\d+(?:[.,]\d+)?)\s*°\s*(?:(\d+(?:[.,]\d+)?)\s*'\s*)?(?:(\d+(?:[.,]\d+)?)\s*")?\s*([NSEW](?![A-Za-zА-Яа-я]))?/g)];
@@ -6681,7 +6681,7 @@ const COLORS = [['', 'по ГКИНП'], [VIS_COLOR, 'малиновый — в�
   ['#00c853', 'зелёный'], ['#2962ff', 'синий'], ['#000000', 'чёрный'], ['#ffffff', 'белый']];
 function objColor(obj, kind) {
   // свой цвет — только #rrggbb или слово (red): из чужого файла в разметку не должна попасть вставка вместо цвета
-  if (/^(?:#[0-9a-f]{3,8}|[a-z]{3,20})$/i.test(String(obj.color || ''))) return obj.color;
+  if (/^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,20})$/i.test(String(obj.color || ''))) return obj.color;   // 3, 4, 6 или 8 цифр — других цветов не бывает
   if (kind === 'line' && obj.state === 'project') return PROJECT_RED;   // проектируемое — красным, как на проектных планах: в поле не спутать со снятым
   if (kind === 'line') { const s = LINES[obj.type] || LINES.plain; return netColor(obj.type, s.color || 'var(--sym)'); }
   const s = POINTS[obj.type] || POINTS.mark; if (s.defect) return (obj.attr || {}).fixed ? DEF_DONE : s.color;
