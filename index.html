@@ -1999,7 +1999,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 110;
+const APP_BUILD = 111;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -10062,6 +10062,8 @@ function parseKml(text) {
   return add;
 }
 // чтение ZIP/KMZ: { имя → Uint8Array }; сжатые записи распаковывает сам браузер (deflate-raw)
+// пределы распаковки ZIP (защита от «архивной бомбы», см. readZip)
+const ZIP_TOTAL_MAX = 300 * (1 << 20), ZIP_BIG = 50 * (1 << 20), ZIP_RATIO_MAX = 200;
 async function readZip(u8) {
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), dec = new TextDecoder();
   let eocd = -1;
@@ -10070,7 +10072,6 @@ async function readZip(u8) {
   // защита от «архивной бомбы»: маленький файл, который распаковывается в гигабайты и роняет приложение.
   // Распакованного всего — не больше 300 МБ; отдельный файл больше 50 МБ, сжатый сильнее чем в 200 раз, — подделка (снимки и KML
   // так не жмутся). Несжатые записи не считаем: это куски уже прочитанного файла, памяти они не добавляют (полная копия с фото — вся такая)
-  const ZIP_TOTAL_MAX = 300 * (1 << 20), ZIP_BIG = 50 * (1 << 20), ZIP_RATIO_MAX = 200;
   let total = 0;
   const inflate = async raw => {
     const reader = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader(), parts = [];
@@ -10089,6 +10090,7 @@ async function readZip(u8) {
   };
   const out = Object.create(null), count = dv.getUint16(eocd + 10, true);   // без прототипа: запись «__proto__» в архиве — просто имя файла
   let p = dv.getUint32(eocd + 16, true);
+  const list = [];                                                       // сначала — только оглавление; распаковка — после проверки
   for (let k = 0; k < count; k++) {
     // смещение за концом файла — DataView бросит RangeError; показываем понятное «архив повреждён»
     if (p + 46 > u8.length || dv.getUint32(p, true) !== 0x02014b50) throw new Error('архив повреждён');
@@ -10100,9 +10102,16 @@ async function readZip(u8) {
     if (lho + 30 > u8.length) throw new Error('архив повреждён');
     const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
     if (start + csize > u8.length) throw new Error('архив повреждён');   // данные записи за концом файла — не отдаём обрезанный кусок
-    const raw = u8.subarray(start, start + csize);
-    if (method === 0) out[name] = raw;
-    else if (method === 8) out[name] = await inflate(raw);
+    list.push({ name, method, start, csize });
+  }
+  // сжатые записи не должны делить данные: в настоящем архиве так не бывает, а «перекрывающаяся бомба» так раздувает один кусок в N раз.
+  // Отказ сразу, без распаковки (несжатые записи могут ссылаться на одно и то же — памяти это не добавляет)
+  const packed = list.filter(e => e.method === 8 && e.csize > 0).sort((a, b) => a.start - b.start);
+  for (let i = 1; i < packed.length; i++) if (packed[i].start < packed[i - 1].start + packed[i - 1].csize) throw new Error('записи архива перекрываются — похоже на «архивную бомбу», файл не открываю');
+  for (const e of list) {
+    const raw = u8.subarray(e.start, e.start + e.csize);
+    if (e.method === 0) out[e.name] = raw;
+    else if (e.method === 8) out[e.name] = await inflate(raw);
   }
   return out;
 }
