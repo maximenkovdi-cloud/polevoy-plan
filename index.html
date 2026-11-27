@@ -2003,7 +2003,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 118;
+const APP_BUILD = 119;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -9039,10 +9039,10 @@ function dxfFrame(box, ent, useLayer) {
   const notes = [`Система координат — ${planeName()}.`, `Система высот — ${heightsText()}.`,
     [m.receiver ? 'Приёмник ' + m.receiver + (m.serial ? ', зав. № ' + m.serial : '') : '', m.verif ? 'поверка ' + m.verif : '', m.ntrip ? 'поправки: ' + m.ntrip : ''].filter(Boolean).join('; '),
     antH ? `Высота антенны ${mText(antH, 3)} м.` : '', `Съёмка выполнена ${day}.`].filter(Boolean).map((t, i) => `${i + 1}. ${t}`);   // нумерованные примечания; служебное (сборка) — не на листе
-  const NOTE_H = 2.5, NOTE_STEP = 3.9, NOTE_MAX = 5, per = Math.floor(FR.stampW / (NOTE_H * DXF_CHAR_W));   // переносим по словам, а не обрезаем: «без привязки к реперу» терять нельзя
+  const NOTE_H = 2.5, NOTE_STEP = 3.9, NOTE_MAX = 5, NOTE_IN = 1, per = Math.floor((FR.stampW - 2 * NOTE_IN) / (NOTE_H * DXF_CHAR_W));   // переносим по словам, а не обрезаем: «без привязки к реперу» терять нельзя
   const lines = notes.flatMap(t => t.split(' ').reduce((acc, w) => { const last = acc[acc.length - 1]; if (last != null && (last + ' ' + w).length <= per) acc[acc.length - 1] = last + ' ' + w; else acc.push(w); return acc; }, []));
   if (lines.length > NOTE_MAX) { lines.length = NOTE_MAX; lines[NOTE_MAX - 1] = lines[NOTE_MAX - 1].slice(0, per - 1) + '…'; }   // больше 5 строк не помещается над штампом
-  lines.forEach((t, i) => text(ls, X(0), Y(55 + g27 + 3 + (lines.length - 1 - i) * NOTE_STEP), NOTE_H, t, FR.stampW));
+  lines.forEach((t, i) => text(ls, X(NOTE_IN), Y(55 + g27 + 3 + (lines.length - 1 - i) * NOTE_STEP), NOTE_H, t, FR.stampW));
   // общая граница чертежа — по листу
   box.splice(0, 4, x0, y0, x0 + sh.W * k, y0 + sh.H * k);
   return sh;
@@ -9194,7 +9194,8 @@ function toDxf() {
     const rectOf = q => { const x0 = q.e ? +x : +x - lw, y0 = q.n ? +y : +y - lh; return { x0, y0, x1: x0 + lw, y1: y0 + lh }; };
     const order = dxfFreeSide(p), q = order.find(o => { const r = rectOf(o); return !dxfLbl.some(t => t.x0 < r.x1 && t.x1 > r.x0 && t.y0 < r.y1 && t.y1 > r.y0); }) || order[0], sx = q.e ? 1 : -1;   // и не на подписи соседних точек
     dxfLbl.push(rectOf(q));      // четверть без линий: подписи туда, не поперёк трубы
-    ATTRS.forEach(([tag, inv], k) => { const ax = (Number(x) + sx * 0.6 * d0).toFixed(3), ay = (Number(y) + (q.n ? 0.4 + (2 - k) * 1.2 : -0.4 - (k + 1) * 1.2) * d0).toFixed(3);
+    const vt = ATTRS.filter(a => !a[1] && val[a[0]]).map(a => a[0]);   // строки подписи — только непустые: без отметки номер не уходит на пустые строки к соседнему знаку
+    ATTRS.forEach(([tag, inv], k) => { const j = vt.indexOf(tag), ln = j < 0 ? k : j, ax = (Number(x) + sx * 0.6 * d0).toFixed(3), ay = (Number(y) + (q.n ? 0.4 + ((j < 0 ? 2 : vt.length - 1) - ln) * 1.2 : -0.4 - (ln + 1) * 1.2) * d0).toFixed(3);
       ent(0, 'ATTRIB', 8, lay, 10, ax, 20, ay, 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE, ...(q.e ? [] : [72, 2, 11, ax, 21, ay, 31, z])); });
     ent(0, 'SEQEND', 8, lay);
   }
