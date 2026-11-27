@@ -1992,7 +1992,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 104;
+const APP_BUILD = 105;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -8851,21 +8851,22 @@ const DXF_STYLE = 'GOST';                                              // сти
 // входит в масштабе 1:500 над штампом; не входит и в А0 — рамка по размеру плана. Штамп — 185×55 мм, графы по ГОСТ Р 21.101 (форма 3)
 const SHEETS = [['А4', 297, 210], ['А3', 420, 297], ['А2', 594, 420], ['А1', 841, 594], ['А0', 1189, 841]];
 const DXF_CHAR_W = 0.7;                                                 // средняя ширина буквы isocpeur с пробелами, доля высоты (проверено в AutoCAD 2027: ~0,66 — берём с запасом)
-const FR = { left: 20, other: 5, gap: 10, stampW: 185, stampH: 55, noteH: 22 };   // поля и штамп, мм листа
+const FR = { left: 20, other: 5, gap: 10, stampW: 185, stampH: 55, noteH: 22, g27H: 10 };   // поля и штамп, мм листа; g27H — графа 27 над штампом
 const GRID_MM = 100;                                                   // координатная сетка — через 10 см (50 м на 1:500)
 const GRID_MAX = 5000, SHEET_MAX_MM = 5000;                             // больше — сбойная точка или две зоны: сетку и рамку не рисуем
-function dxfSheet(box) {                                                // размер листа и где лежит план, мм
+function dxfSheet(box, nh = FR.noteH) {                                 // размер листа и где лежит план, мм; nh — полоса над штампом (примечания и графа 27)
   const w = (box[2] - box[0]) / DXF_M_PER_MM + 2 * FR.gap, h = (box[3] - box[1]) / DXF_M_PER_MM + 2 * FR.gap;
-  const usable = (W, H) => ({ w: W - FR.left - FR.other, h: H - 2 * FR.other - FR.stampH - FR.noteH });
+  const usable = (W, H) => ({ w: W - FR.left - FR.other, h: H - 2 * FR.other - FR.stampH - nh });
   for (const [name, a, b] of SHEETS) for (const [W, H] of [[a, b], [b, a]]) { const u = usable(W, H); if (w <= u.w && h <= u.h) return { name, W, H }; }
-  return { name: 'нестандартный', W: Math.ceil(w + FR.left + FR.other), H: Math.ceil(h + 2 * FR.other + FR.stampH + FR.noteH) };
+  return { name: 'нестандартный', W: Math.ceil(w + FR.left + FR.other), H: Math.ceil(h + 2 * FR.other + FR.stampH + nh) };
 }
 function dxfFrame(box, ent, useLayer) {
-  const sh = dxfSheet(box), k = DXF_M_PER_MM;
+  const m = meta(), cust = String(m.customer || '').trim(), g27 = cust ? FR.g27H : 0, nh = FR.noteH + g27;   // графа 27 «заказчик» — только если он указан (ГОСТ Р 21.101-2026: «при необходимости»)
+  const sh = dxfSheet(box, nh), k = DXF_M_PER_MM;
   if (sh.W > SHEET_MAX_MM || sh.H > SHEET_MAX_MM) return null;          // план в километры шириной — лист не нужен (скорее всего, сбойная точка)
   // лист: план — по центру области над штампом
-  const areaW = sh.W - FR.left - FR.other, areaH = sh.H - 2 * FR.other - FR.stampH - FR.noteH;
-  const x0 = (box[0] + box[2]) / 2 - (FR.left + areaW / 2) * k, y0 = (box[1] + box[3]) / 2 - (FR.other + FR.stampH + FR.noteH + areaH / 2) * k;
+  const areaW = sh.W - FR.left - FR.other, areaH = sh.H - 2 * FR.other - FR.stampH - nh;
+  const x0 = (box[0] + box[2]) / 2 - (FR.left + areaW / 2) * k, y0 = (box[1] + box[3]) / 2 - (FR.other + FR.stampH + nh + areaH / 2) * k;
   const P = (mx, my) => [f3(x0 + mx * k), f3(y0 + my * k)];          // мм листа → метры чертежа
   const lf = useLayer('РАМКА'), ls = useLayer('ШТАМП');
   const rect = (lay, ax, ay, bx, by, wmm) => { ent(0, 'POLYLINE', 8, lay, 66, 1, 10, 0, 20, 0, 30, 0, 70, 1, ...(wmm ? [40, f3(wmm * k), 41, f3(wmm * k)] : []));
@@ -8880,35 +8881,39 @@ function dxfFrame(box, ent, useLayer) {
   // сетка: кресты через 10 см и подписи координат у рамки (полные метры); кресты — целиком внутри рамки
   const lg = useLayer('РАМКА_СЕТКА'), step = GRID_MM * k, cross = 5;    // крест 10 мм
   const toM = (mx, my) => [x0 + mx * k, y0 + my * k];
-  const [e0, n0] = toM(R.l + cross, R.b + FR.stampH + FR.noteH + cross), [e1, n1] = toM(R.r - cross, R.t - cross);
+  const [e0, n0] = toM(R.l + cross, R.b + FR.stampH + nh + cross), [e1, n1] = toM(R.r - cross, R.t - cross);
   if (((e1 - e0) / step + 1) * ((n1 - n0) / step + 1) <= GRID_MAX) for (let e = Math.ceil(e0 / step) * step; e <= e1; e += step) for (let n = Math.ceil(n0 / step) * step; n <= n1; n += step) {
     const mx = (e - x0) / k, my = (n - y0) / k;
     line(lg, mx - cross, my, mx + cross, my); line(lg, mx, my - cross, mx, my + cross);
-    if (Math.abs(n - Math.ceil(n0 / step) * step) < 1e-6) text(lg, mx + 1, R.b + FR.stampH + FR.noteH + 1.5, 2, `Y ${Math.round(e)}`);
+    if (Math.abs(n - Math.ceil(n0 / step) * step) < 1e-6) text(lg, mx + 1, R.b + FR.stampH + nh + 1.5, 2, `Y ${Math.round(e)}`);
     if (Math.abs(e - Math.ceil(e0 / step) * step) < 1e-6) text(lg, R.l + 1.5, my + 1, 2, `X ${Math.round(n)}`);
   }
-  // штамп — правый нижний угол
-  const m = meta(), sx = R.r - FR.stampW, sy = R.b, X = v => sx + v, Y = v => sy + v;
+  // штамп — правый нижний угол, ГОСТ Р 21.101-2026, прил. Е, форма 3. Справа снизу вверх: графы 4 и 9 — 15 мм, 6/7/8 — 10, их заголовки — 5, графа 3 — 15–30, графа 2 — 15, графа 1 — 10
+  const sx = R.r - FR.stampW, sy = R.b, X = v => sx + v, Y = v => sy + v;
   rect(ls, X(0), Y(0), X(185), Y(55), 0.5);
-  for (const v of [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]) line(ls, X(0), Y(v), X(65), Y(v));     // левая часть: строки по 5 мм
-  for (const v of [10, 20, 30, 40, 55]) line(ls, X(v), Y(25), X(v), Y(55));       // графы изменений
-  for (const v of [17, 40, 55]) line(ls, X(v), Y(0), X(v), Y(25));
-  line(ls, X(65), Y(0), X(65), Y(55)); line(ls, X(65), Y(40), X(185), Y(40)); line(ls, X(65), Y(25), X(185), Y(25));
-  line(ls, X(135), Y(0), X(135), Y(25)); line(ls, X(135), Y(15), X(185), Y(15)); line(ls, X(135), Y(20), X(185), Y(20));
-  line(ls, X(150), Y(15), X(150), Y(25)); line(ls, X(165), Y(15), X(165), Y(25));
-  [['Изм.', 0], ['Кол.уч', 10], ['Лист', 20], ['№ док.', 30], ['Подп.', 40], ['Дата', 55]].forEach(([t, v]) => text(ls, X(v + 0.6), Y(26.2), 1.8, t));
+  for (const v of [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]) line(ls, X(0), Y(v), X(65), Y(v));     // левая часть: 11 строк по 5 мм
+  for (const v of [10, 20, 30, 40, 55]) line(ls, X(v), Y(30), X(v), Y(55));       // графы 14–19 (изменения): 10, 10, 10, 10, 15, 10
+  for (const v of [20, 40, 55]) line(ls, X(v), Y(0), X(v), Y(30));        // графы 10–13 (подписи): 20, 20, 15, 10
+  line(ls, X(65), Y(0), X(65), Y(55)); for (const v of [15, 30, 45]) line(ls, X(65), Y(v), X(185), Y(v));
+  line(ls, X(135), Y(0), X(135), Y(30)); line(ls, X(135), Y(25), X(185), Y(25));
+  line(ls, X(150), Y(15), X(150), Y(30)); line(ls, X(165), Y(15), X(165), Y(30));
+  [['Изм.', 0], ['Кол.уч', 10], ['Лист', 20], ['№ док.', 30], ['Подп.', 40], ['Дата', 55]].forEach(([t, v]) => text(ls, X(v + 0.6), Y(31.2), 1.8, t));
   const day = new Date().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
-  [['Съёмка', m.performer, day], ['Проверил', '', ''], ['', '', ''], ['Н. контр.', '', ''], ['', '', '']].forEach(([role, who, d], i) => {
-    const yy = Y(20 - i * 5 + 1.2); text(ls, X(0.6), yy, 1.8, role, 16); text(ls, X(17.6), yy, 1.8, who, 22); text(ls, X(55.6), yy, 1.6, d, 9); });
-  text(ls, X(67), Y(45.5), 5, m.cipher || '', 116);                     // графа 1 — обозначение (шифр)
-  text(ls, X(67), Y(33.5), 3, m.object || '', 116);                     // графа 2 — объект
-  text(ls, X(67), Y(29), 2.2, m.customer ? 'Заказчик: ' + m.customer : '', 116);
-  text(ls, X(67), Y(17), 3, 'Топографический план', 66);                 // графа 4 — наименование
-  text(ls, X(67), Y(11), 3, 'Масштаб 1:' + planScale, 66);
-  text(ls, X(67), Y(4), 2, `Формат ${sh.name}${sh.name === 'нестандартный' ? ` ${sh.W}x${sh.H} мм` : ''}`, 66);
-  [['Стадия', 135], ['Лист', 150], ['Листов', 165]].forEach(([t, v]) => text(ls, X(v + 0.8), Y(21.2), 1.8, t));
-  text(ls, X(137), Y(16.2), 2.5, 'И'); text(ls, X(155), Y(16.2), 2.5, '1'); text(ls, X(171), Y(16.2), 2.5, '1');   // «И» — изыскания
-  text(ls, X(137), Y(6), 2.5, m.contractor || '', 47); text(ls, X(137), Y(2), 1.8, m.sro || '', 47);
+  [['Разраб.', m.performer, day], ['Проверил', '', ''], ['', '', ''], ['', '', ''], ['Н. контр.', '', ''], ['', '', '']].forEach(([role, who, d], i) => {
+    const yy = Y(25 - i * 5 + 1.2); text(ls, X(0.6), yy, 1.8, role, 19); text(ls, X(20.6), yy, 1.8, who, 19); text(ls, X(55.6), yy, 1.6, d, 9); });   // «Н. контр.» для изысканий можно не заполнять
+  text(ls, X(67), Y(47.5), 5, m.cipher || '', 116);                     // графа 1 — обозначение (шифр)
+  text(ls, X(67), Y(36.5), 3, m.object || '', 116);                     // графа 2 — объект; графа 3 (здание) — пустая
+  text(ls, X(67), Y(8.5), 3, 'Топографический план', 66);                // графа 4 — наименование изображения
+  text(ls, X(67), Y(3), 3, 'Масштаб 1:' + planScale, 66);
+  text(ls, X(137), Y(-3.8), 2, `Формат ${sh.name}${sh.name === 'нестандартный' ? ` ${sh.W}x${sh.H} мм` : ''}`, 47);   // графа 26 — под рамкой
+  [['Стадия', 135], ['Лист', 150], ['Листов', 165]].forEach(([t, v]) => text(ls, X(v + 0.8), Y(26.2), 1.8, t));
+  text(ls, X(140.5), Y(18.7), 2.5, 'И'); text(ls, X(174), Y(18.7), 2.5, '1');   // «И» — изыскания; графа 7 «Лист» на документе из одного листа не заполняется (ГОСТ Р 21.101-2026), «Листов» — 1
+  text(ls, X(137), Y(8), 2.5, m.contractor || '', 47); text(ls, X(137), Y(3), 1.8, m.sro || '', 47);   // графа 9 — организация
+  if (g27) {                                                             // графа 27 — краткое наименование заказчика, штриховой рамкой над штампом справа
+    const dash = (ax, ay, bx, by) => { const L0 = Math.hypot(bx - ax, by - ay); for (let s = 0; s < L0; s += 4.5) { const e = Math.min(s + 3, L0); line(ls, ax + (bx - ax) * s / L0, ay + (by - ay) * s / L0, ax + (bx - ax) * e / L0, ay + (by - ay) * e / L0); } };
+    dash(X(65), Y(55 + g27), X(185), Y(55 + g27)); dash(X(65), Y(55), X(65), Y(55 + g27));
+    text(ls, X(67), Y(58.5), 3, cust, 116);
+  }
   // над штампом — сведения о съёмке: система координат и высот, приёмник, поверка, поправки
   const notes = [`Система координат: ${planeName()}. Система высот: ${heightsText()}.`,
     [m.receiver ? 'Приёмник ' + m.receiver + (m.serial ? ', зав. № ' + m.serial : '') : '', m.verif ? 'поверка ' + m.verif : '', m.ntrip ? 'поправки: ' + m.ntrip : ''].filter(Boolean).join('; '),
@@ -8916,7 +8921,7 @@ function dxfFrame(box, ent, useLayer) {
   const NOTE_H = 2.2, NOTE_STEP = 3.6, NOTE_MAX = 5, per = Math.floor(FR.stampW / (NOTE_H * DXF_CHAR_W));   // переносим по словам, а не обрезаем: «без привязки к реперу» терять нельзя
   const lines = notes.flatMap(t => t.split(' ').reduce((acc, w) => { const last = acc[acc.length - 1]; if (last != null && (last + ' ' + w).length <= per) acc[acc.length - 1] = last + ' ' + w; else acc.push(w); return acc; }, []));
   if (lines.length > NOTE_MAX) { lines.length = NOTE_MAX; lines[NOTE_MAX - 1] = lines[NOTE_MAX - 1].slice(0, per - 1) + '…'; }   // больше 5 строк не помещается над штампом
-  lines.forEach((t, i) => text(ls, X(0), Y(55 + 3 + (lines.length - 1 - i) * NOTE_STEP), NOTE_H, t, FR.stampW));
+  lines.forEach((t, i) => text(ls, X(0), Y(55 + g27 + 3 + (lines.length - 1 - i) * NOTE_STEP), NOTE_H, t, FR.stampW));
   // общая граница чертежа — по листу
   box.splice(0, 4, x0, y0, x0 + sh.W * k, y0 + sh.H * k);
   return sh;
