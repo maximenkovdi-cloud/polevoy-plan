@@ -2003,7 +2003,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 116;
+const APP_BUILD = 117;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -8996,7 +8996,7 @@ function dxfFrame(box, ent, useLayer) {
   const busy = (mx, my) => { const a = toM(mx - cross - 0.5, my - cross - 0.5), b = toM(mx + cross + 0.5, my + cross + 0.5); return dxfBoxes.some(t => t.x0 < b[0] && t.x1 > a[0] && t.y0 < b[1] && t.y1 > a[1]); };   // крест не рисуем поверх подписи
   if (((e1 - e0) / step + 1) * ((n1 - n0) / step + 1) <= GRID_MAX) {
     for (let e = Math.ceil(e0 / step) * step; e <= e1; e += step) { const t = `Y ${Math.round(e)}`, mx = (e - x0) / k + 1; if (mx + t.length * 2.5 * DXF_CHAR_W < R.r - 1) text(lg, mx, R.t - 4.5, 2.5, t); }   // у верхней рамки, против линии сетки; не за рамку
-    for (let n = Math.ceil(n0 / step) * step; n <= n1; n += step) if ((n - y0) / k > R.b + 4) text(lg, R.l + 1.5, (n - y0) / k + 1, 2.5, `X ${Math.round(n)}`);   // у левой рамки
+    for (let n = Math.ceil(n0 / step) * step; n <= n1; n += step) if ((n - y0) / k > R.b + 4 && !((n - y0) / k < stampBox.y1 && R.l + 1.5 + 12 * 2.5 * DXF_CHAR_W > stampBox.x0)) text(lg, R.l + 1.5, (n - y0) / k + 1, 2.5, `X ${Math.round(n)}`);   // у левой рамки
     for (let e = Math.ceil(e0 / step) * step; e <= e1; e += step) for (let n = Math.ceil(n0 / step) * step; n <= n1; n += step) {   // кресты — после подписей: обходят и их
       const mx = (e - x0) / k, my = (n - y0) / k;
       if (mx > stampBox.x0 && my < stampBox.y1 || busy(mx, my)) continue;
@@ -9074,7 +9074,7 @@ function dxfNote(l, ent, useLayer, xyz) {
 // (символ вне cp1251 пишется как \U+XXXX — 7 байт), иначе R12 обрежет или не прочитает значение
 function dxfStr(v) {
   let t = String(v == null ? '' : v).replace(/[\r\n]+/g, ' ').replace(/[Ø⌀ø]/g, '%%c'), n = 0, cut = -1;
-  for (let i = 0; i < t.length; i++) { const c = t.charCodeAt(i), b = c < 128 || (c >= 0x410 && c <= 0x451) || c === 0x2026 || c === 0xAB || c === 0xBB || c === 0xB0 || c === 0xB1 || c === 0x2116 || c === 0x2013 || c === 0x2014 ? 1 : 7;
+  for (let i = 0; i < t.length; i++) { const c = t.charCodeAt(i), b = c < 128 || (c >= 0x410 && c <= 0x44F) || c === 0x401 || c === 0x451 || c === 0x2026 || c === 0xAB || c === 0xBB || c === 0xB0 || c === 0xB1 || c === 0x2116 || c === 0x2013 || c === 0x2014 ? 1 : 7;
     if (n + b > DXF_STR_MAX - 1 && cut < 0) cut = i; n += b; }
   return n > DXF_STR_MAX ? t.slice(0, cut) + '…' : t;
 }
@@ -9086,7 +9086,7 @@ function dxfTxtBox(kv) {
   if (kv[1] === 'ATTRIB' && Number(g(70)) % 2 === 1) return;          // невидимый
   const t = String(g(1) || ''), h = Number(g(40)) || 0; if (!t || !h) return;
   const al = Number(g(72)) || 0, x = Number(al ? g(11) : g(10)), y = Number(al ? g(21) : g(20)), w = t.length * h * DXF_CHAR_W;
-  const cx = al === 1 || al === 4 ? x : al === 2 ? x - w / 2 : x + w / 2, cy = y + h / 2, r = Math.hypot(w, h) / 2;
+  const cx = al === 1 || al === 4 ? x : al === 2 ? x - w / 2 : x + w / 2, cy = al === 4 ? y : y + h / 2, r = Math.hypot(w, h) / 2;
   if (isFinite(cx) && isFinite(cy)) dxfBoxes.push({ x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r });
 }
 // свободная от линий четверть у точки: направления линий, сходящихся в ней (вершины в 5 см), — подписи в четверть, дальше всего от них
@@ -9119,20 +9119,21 @@ function toDxf() {
   dxfBoxes = []; dxfVtxBuild();   // перевод строки в значении сломал бы файл
   const blocks = new Set(), blkType = new Map(), ltypes = new Map();
   const ATTRS = [['НОМЕР', 0], ['ОТМ_ПОДП', 0], ['ОТМ_НИЗ', 0], ['ОТМ', 1], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]; отметку видно подписью с запятой (ГОСТ Р 21.101 п. 5.4), а ОТМ — то же число с точкой для программ рельефа
-  for (const p of data.points) {
+  const okLL = a => a && isFinite(+a[0]) && isFinite(+a[1]);              // NaN/Infinity в одной точке испортили бы весь файл (AutoCAD не откроет)
+  for (const p of data.points.filter(q => okLL([q.lat, q.lng]))) {
     // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
     const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : '') + (approxNote(p) ? '_ПРИБЛ' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
-    const blk = codeOf(p.type).toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31);
+    const blk = String(codeOf(p.type) || 'POINT').toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31) || 'POINT';   // без типа — не падаем
     blocks.add(blk); if (!blkType.has(blk)) blkType.set(blk, p.type);
-    ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z, ...(p.rot ? [50, (-Number(p.rot)).toFixed(1)] : []));   // поворот: на экране — по часовой, в DXF — против
+    ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z, ...(p.rot && isFinite(+p.rot) ? [50, (-Number(p.rot)).toFixed(1)] : []));   // поворот: на экране — по часовой, в DXF — против
     const val = { НОМЕР: p.no || '', ОТМ_ПОДП: H == null ? '' : planNum(H, 2), ОТМ_НИЗ: /^w_/.test(p.type) && wellBottom(p) != null ? planNum(wellBottom(p), 2) : '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
       ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : !p.q && p.approx != null ? f3(p.approx) : '' };
     const q = dxfFreeSide(p), sx = q.e ? 1 : -1, d0 = DXF_TEXT_M;      // четверть без линий: подписи туда, не поперёк трубы
-    ATTRS.forEach(([tag, inv], k) => { const ax = (Number(x) + sx * 0.6 * d0).toFixed(3), ay = (Number(y) + (q.n ? 0.4 - k * 1.2 : -0.4 - (k + 1) * 1.2) * d0).toFixed(3);
+    ATTRS.forEach(([tag, inv], k) => { const ax = (Number(x) + sx * 0.6 * d0).toFixed(3), ay = (Number(y) + (q.n ? 0.4 + (2 - k) * 1.2 : -0.4 - (k + 1) * 1.2) * d0).toFixed(3);
       ent(0, 'ATTRIB', 8, lay, 10, ax, 20, ay, 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE, ...(q.e ? [] : [72, 2, 11, ax, 21, ay, 31, z])); });
     ent(0, 'SEQEND', 8, lay);
   }
-  for (const l of data.lines) {
+  for (const l of data.lines.filter(q => Array.isArray(q.latlngs) && q.latlngs.length >= 2 && q.latlngs.every(okLL))) {   // пустая или из одной вершины — не линия
     if (isNote(l)) { dxfNote(l, ent, useLayer, xyz); continue; }
     const sp = LINES[l.type] || LINES.plain, lay = useLayer(dxfLayerOfLine(l), NET_KIND[l.type] || (sp.color === REL ? 'relief' : sp.color === VEG ? 'veg' : null));
     // с отметками — 3D-полилиния (пропуски — по соседним вершинам), без отметок — плоская, чтобы не было ложных нулей
@@ -9151,7 +9152,7 @@ function toDxf() {
       ent(0, 'TEXT', 8, lay2, 10, mx, 20, my, 30, 0, 40, DXF_TEXT_M, 1, label, 50, deg.toFixed(2), 7, DXF_STYLE, 72, 1, 11, mx, 21, my, 31, 0);
     }
   }
-  if (box[0] === Infinity) box.splice(0, 4, 0, 0, 100, 100);
+  if (!isFinite(box[0]) || !isFinite(box[2])) box.splice(0, 4, 0, 0, 100, 100);
   else if (pref('dxfFrame', true)) dxfFrame(box, ent, useLayer);                                   // рамка листа и штамп — на своих слоях
   const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2, vh = Math.max(box[3] - box[1], (box[2] - box[0]) / 1.5, 20) * 1.1;
   put(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1009', 9, '$DWGCODEPAGE', 3, 'ANSI_1251', 9, '$INSUNITS', 70, 6,
@@ -9179,8 +9180,8 @@ function toDxf() {
     const ty = blkType.get(blk) || '';
     if (/^w_/.test(ty)) { const r = 0.9 * km, c = r * Math.SQRT1_2; put(0, 'CIRCLE', 8, '0', 10, 0, 20, 0, 30, 0, 40, f3(r), 0, 'LINE', 8, '0', 10, f3(-c), 20, f3(c), 30, 0, 11, f3(c), 21, f3(-c), 31, 0); }   // колодец: кружок Ø1,8 мм с косой чертой
     else if (ty === 'spot') { const r = 0.25 * km; put(0, 'POLYLINE', 8, '0', 66, 1, 10, 0, 20, 0, 30, 0, 70, 1, 40, f3(r), 41, f3(r), 0, 'VERTEX', 8, '0', 10, f3(-r / 2), 20, 0, 30, 0, 42, 1, 0, 'VERTEX', 8, '0', 10, f3(r / 2), 20, 0, 30, 0, 42, 1, 0, 'SEQEND', 8, '0'); }   // отметка высоты: закрашенная точка Ø0,5 мм
-    else put(0, 'CIRCLE', 8, '0', 10, 0, 20, 0, 30, 0, 40, 0.25);           // прочие — кружок (заменяются своими блоками ГКИНП в офисе)
-    ATTRS.forEach(([tag, inv], k) => put(0, 'ATTDEF', 8, '0', 10, 0.6, 20, (0.4 - k * 1.2).toFixed(1), 30, 0, 40, DXF_TEXT_M, 1, '', 3, tag, 2, tag, 70, inv, 7, DXF_STYLE));
+    else put(0, 'CIRCLE', 8, '0', 10, 0, 20, 0, 30, 0, 40, f3(0.5 * km));           // прочие — кружок (заменяются своими блоками ГКИНП в офисе)
+    ATTRS.forEach(([tag, inv], k) => put(0, 'ATTDEF', 8, '0', 10, f3(0.6 * DXF_TEXT_M), 20, f3((0.4 - k * 1.2) * DXF_TEXT_M), 30, 0, 40, DXF_TEXT_M, 1, '', 3, tag, 2, tag, 70, inv, 7, DXF_STYLE));
     put(0, 'ENDBLK', 8, '0');
   }
   put(0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES');
