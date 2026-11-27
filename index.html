@@ -370,6 +370,7 @@
   #ar .bar { position:absolute; left:8px; right:8px; top:calc(8px + env(safe-area-inset-top)); display:flex; gap:8px; align-items:flex-start; }
   #ar .lvl { flex:1; background:rgba(20,24,30,.78); color:#fff; border-radius:12px; padding:7px 10px; font:600 13px/1.35 system-ui, sans-serif; }
   #ar .lvl b { font-size:14px; }
+  @media (max-width: 420px) { #ar .bar { flex-wrap:wrap; justify-content:flex-end; } #ar .lvl { order:2; flex-basis:100%; } }   /* узкий телефон: кнопки строкой сверху, текст уровня под ними во всю ширину, а не узкой колонкой */
   #ar .x { flex:none; min-width:48px; min-height:48px; border-radius:24px; border:0; background:rgba(20,24,30,.78); color:#fff; font-size:24px; }
   #ar .calbar { position:absolute; left:8px; right:8px; bottom:calc(84px + env(safe-area-inset-bottom)); background:rgba(20,24,30,.86); color:#fff; border-radius:12px; padding:9px 10px; font:600 14px/1.35 system-ui, sans-serif; display:none; }
   #ar .calbar .row { display:flex; gap:8px; margin-top:8px; }
@@ -1633,7 +1634,7 @@ function refDistanceKm(lat, lng) {
   return Math.hypot((lat - r.lat) * M_PER_DEG, (lng - r.lng) * M_PER_DEG * k) / 1000;
 }
 // число на плане — с точкой, как в ГКИНП (142.37); в карточках и формах — с запятой (mText)
-function planNum(v, digits) { return Number(v).toFixed(digits); }
+function planNum(v, digits) { return Number(v).toFixed(digits).replace('.', ','); }   // подписи на плане — с запятой (ГОСТ Р 21.101-2026, п. 5.4.1, 5.4.3); машинные числа (атрибут ОТМ в DXF, CSV) — отдельно
 function mText(v, digits) { return v.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits }); }
 
 function heightsMenu() {
@@ -1999,7 +2000,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 113;
+const APP_BUILD = 114;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -6869,7 +6870,7 @@ $('cmdIn').addEventListener('blur', () => setTimeout(() => { if (document.active
    5° на 20 м ≈ 1,7 м. Поэтому у каждого объекта — круг ошибки, а на экране — уровень и точность. Копать по AR нельзя
    (СП 45.13330 п. 11.19, СП 341.1325800 п. 13.1.7) — подтверждение трассоискателем или шурфом. */
 const AR_CAL_MS = 15 * 60 * 1000, AR_CAL_MIN_M = 10, AR_CAL_FLOOR = 3, AR_CAL_PICK = 25;   // калибровка живёт 15 мин; вешка не ближе 10 м; после неё курс не точнее ±3° (наведение, рука, уход компаса у металла); окно поиска — не уже 25°
-const AR_R_M = 150, AR_HFOV = 50, AR_EYE_M = 1.5, AR_COURSE_ERR = 8, AR_FPS_MS = 66, AR_DECL_ERR = 20, AR_DEPTH_MAX = 30, AR_RTK_OUT_M = 0.08, AR_ANT_OFFSET_M = 0.5, AR_ORIENT_MS = 10000;   // + склонение не получено (в России обычно до 15°, в Арктике и на аномалиях — больше 20°); компас молчит дольше 10 с — курса нет (в руке он обновляется постоянно)   // радиус показа, гориз. угол камеры (портрет), высота глаз, ошибка курса без калибровки, ~15 кадров/с
+const AR_R_M = 150, AR_HFOV = 50, AR_EYE_M = 1.5, AR_COURSE_ERR = 8, AR_FPS_MS = 66, AR_DECL_ERR = 20, AR_NEAR_M = 1, AR_DEPTH_MAX = 30, AR_RTK_OUT_M = 0.08, AR_ANT_OFFSET_M = 0.5, AR_ORIENT_MS = 10000;   // + склонение не получено (в России обычно до 15°, в Арктике и на аномалиях — больше 20°); компас молчит дольше 10 с — курса нет (в руке он обновляется постоянно)   // радиус показа, гориз. угол камеры (портрет), высота глаз, ошибка курса без калибровки, ~15 кадров/с
 // что умеет устройство — проверка функций, а не моделей; на неизвестном устройстве — тихо нижний уровень
 function arCaps() {
   const md = typeof navigator !== 'undefined' && navigator.mediaDevices;
@@ -6970,8 +6971,9 @@ function arDraw() {
       + (arCalMode ? '' : `<text x="${(q.x + 9).toFixed(1)}" y="${(q.y - 8).toFixed(1)}">${esc(t)} · ${esc(distText(q.d))}</text>`);   // при наведении подписи не налезают на перекрестие — имя точки в кнопке внизу
   }
   if (stake && stake.ll) {                                             // цель выноса: на экране — кольцо, за краем — стрелка с расстоянием
-    const q = P(stake.ll), d = groundDist(sw, stake.ll);
-    if (q && !q.off && q.x > 0 && q.x < W) s += `<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="16" fill="none" stroke="#ff6d00" stroke-width="4"/><text x="${(q.x + 20).toFixed(1)}" y="${(q.y + 5).toFixed(1)}">цель · ${esc(distText(d))}</text>`;
+    const q = P(stake.ll), d = groundDist(sw, stake.ll), pe = isFinite(posAcc) && posAcc > 0 ? posAcc : 5;
+    if (d < Math.max(AR_NEAR_M, pe)) s += `<text x="${(W / 2).toFixed(1)}" y="${(H * 0.68).toFixed(1)}" text-anchor="middle">цель рядом: ${esc(distText(d))} (±${esc(accTxt(pe))} м)</text><text x="${(W / 2).toFixed(1)}" y="${(H * 0.68 + 20).toFixed(1)}" text-anchor="middle">дальше — по «Выносу» на карте</text>`;   // в пределах ошибки положения стрелка «левее 7°» ничего не значит
+    else if (q && !q.off && q.x > 0 && q.x < W) s += `<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="16" fill="none" stroke="#ff6d00" stroke-width="4"/><text x="${(q.x + 20).toFixed(1)}" y="${(q.y + 5).toFixed(1)}">цель · ${esc(distText(d))}</text>`;
     else { const rel = angDiff((planeInverse(sw, stake.ll).dir + gam + 360) % 360, hd), right = rel > 0, x = right ? W - 30 : 30, y = H / 2;
       s += `<path d="M${x} ${y - 26}L${right ? x + 22 : x - 22} ${y}L${x} ${y + 26}Z" fill="#ff6d00" stroke="#000" stroke-width="2"/><text x="${right ? x - 8 : x + 8}" y="${y + 46}" text-anchor="${right ? 'end' : 'start'}">цель ${esc(distText(d))} · ${right ? 'правее' : 'левее'} ${Math.round(Math.abs(rel))}°</text>`; }
   }
@@ -9067,14 +9069,14 @@ function toDxf() {
   // сущности — сначала, чтобы знать слои и блоки
   const E = [], ent = (...kv) => { for (let i = 0; i < kv.length; i += 2) E.push(String(kv[i]), String(kv[i + 1]).replace(/[\r\n]+/g, ' ')); };   // перевод строки в значении сломал бы файл
   const blocks = new Set(), ltypes = new Map();
-  const ATTRS = [['НОМЕР', 0], ['ОТМ', 0], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]
+  const ATTRS = [['НОМЕР', 0], ['ОТМ_ПОДП', 0], ['ОТМ', 1], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]; отметку видно подписью с запятой (ГОСТ Р 21.101 п. 5.4), а ОТМ — то же число с точкой для программ рельефа
   for (const p of data.points) {
     // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
     const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : '') + (approxNote(p) ? '_ПРИБЛ' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
     const blk = codeOf(p.type).toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31);
     blocks.add(blk);
     ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z, ...(p.rot ? [50, (-Number(p.rot)).toFixed(1)] : []));   // поворот: на экране — по часовой, в DXF — против
-    const val = { НОМЕР: p.no || '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
+    const val = { НОМЕР: p.no || '', ОТМ_ПОДП: H == null ? '' : planNum(H, 2), ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
       ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : !p.q && p.approx != null ? f3(p.approx) : '' };
     ATTRS.forEach(([tag, inv], k) => ent(0, 'ATTRIB', 8, lay, 10, (Number(x) + 0.6).toFixed(3), 20, (Number(y) + 0.4 - k * 1.2).toFixed(3), 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE));
     ent(0, 'SEQEND', 8, lay);
@@ -9530,7 +9532,7 @@ const approxNote = p => p.q ? '' : p.approx != null ? `приближённо ±
 function pointNote(p) {
   const s = POINTS[p.type] || {}, a = p.attr || {}, bot = /^w_/.test(p.type) ? wellBottom(p) : null;
   const lots = /^w_/.test(p.type) && a.lot && a.lot.length ? 'лотки ' + a.lot.map(l => (hasH(l.h) ? planNum(l.h, 2) : '?') + (l.dir ? ' (' + l.dir + ')' : '')).join(', ') : '';
-  return [p.note, approxNote(p), s.frac && hasH(a.bot) ? 'рядом с камнем ' + planNum(a.bot, 2) : '', lots, bot != null && hasH(p.h) ? 'глуб. ' + (Number(p.h) - bot).toFixed(2) : ''].filter(Boolean).join('; ');
+  return [p.note, approxNote(p), s.frac && hasH(a.bot) ? 'рядом с камнем ' + planNum(a.bot, 2) : '', lots, bot != null && hasH(p.h) ? 'глуб. ' + planNum(Number(p.h) - bot, 2) : ''].filter(Boolean).join('; ');
 }
 const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки', dxf: 'с чертежа (архив)' };
 // метаданные отметки для отчёта: СКО, высота над эллипсоидом, высота антенны (с какой снимали), репер привязки
@@ -9931,7 +9933,7 @@ function toMifMid() {
   return { mif: cp1251(mif.join('\r\n') + '\r\n'), mid: cp1251(mid.join('\r\n') + '\r\n') };
 }
 // текст поля без разделителя файла: «;» внутри описания сдвигал столбцы в КРЕДО
-const field = (s, sep) => String(s == null ? '' : s).replace(sep === ',' ? /[,;]/g : /;/g, sep === ',' ? ' ' : ',').replace(/\s+/g, ' ').trim();
+const field = (s, sep) => String(s == null ? '' : s).replace(sep === ',' ? /(\d),(\d)/g : /(?!)/g, '$1.$2').replace(sep === ',' ? /[,;]/g : /;/g, sep === ',' ? ' ' : ',').replace(/\s+/g, ' ').trim();   // в файле через запятую десятичная запятая подписей («глуб. 1,25») — снова точка, а не пробел
 // Коды знаков под классификатор пользователя (КРЕДО, Civil 3D): pref 'codes' { тип: код }; не задан — код приложения
 let codeMap = pref('codes', {}) || {};
 const codeOf = type => codeMap[type] || type;
