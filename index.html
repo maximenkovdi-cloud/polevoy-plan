@@ -364,6 +364,7 @@
   #cmdIn { flex:1; min-width:120px; font:700 16px/1.3 system-ui, sans-serif; border:1px solid var(--line); border-radius:8px; padding:6px 8px; background:var(--bg, #fff); color:var(--ink); text-transform:uppercase; }
   #cmdHint { flex-basis:100%; font-size:12.5px; color:var(--muted); min-height:1em; }
   #ar { position:fixed; top:0;right:0;bottom:0;left:0; z-index:1900; background:#000; display:none; overflow:hidden; touch-action:none; }
+  #ar.xr { background:transparent; } #ar.xr video { display:none; }   /* WebXR: камеру показывает браузер, мы — только подписи поверх */
   #ar video { position:absolute; top:0;right:0;bottom:0;left:0; width:100%; height:100%; object-fit:cover; }
   #ar svg.ov { position:absolute; top:0;right:0;bottom:0;left:0; width:100%; height:100%; pointer-events:none; }
   #ar .bar { position:absolute; left:8px; right:8px; top:calc(8px + env(safe-area-inset-top)); display:flex; gap:8px; align-items:flex-start; }
@@ -1998,7 +1999,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 109;
+const APP_BUILD = 110;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -6876,7 +6877,21 @@ function arCaps() {
     cam: !!(md && md.getUserMedia), xr: !!(typeof navigator !== 'undefined' && navigator.xr) };
 }
 // уровень: 0 — только карта; 1 — стрелка (GPS + компас); 2 — камера с подписями
-function arLevel(c, heading, camOk, rtk) { if (!c.geo || !c.orient || heading == null) return 0; const l = c.cam && camOk ? 2 : 1; return l === 2 && rtk ? 4 : l; }   // 4 — положение от RTK-приёмника (уровень 3 — WebXR, его нет в WebView)
+function arLevel(c, heading, camOk, rtk, xr) { if (!c.geo || !c.orient || heading == null) return 0; const l = (c.cam && camOk) || xr ? 2 : 1; return l === 2 && rtk ? 4 : l === 2 && xr ? 3 : l; }   // 3 — WebXR (браузер следит за поворотами телефона), 4 — положение от RTK-приёмника
+// WebXR (AR-3): только там, где браузер его даёт (Chrome на телефоне с ARCore); в Android-приложении (WebView) его нет — кнопка открывает сайт в браузере
+const arXr = { ok: false, on: false, starting: false, s: null, ref: null, yaw: null, bias: null, n: 0, t0: 0, decl0: 0, sid: 0, pitch: 0, hfov: AR_HFOV };
+const AR_XR_ANCHOR_MS = 2000;                                          // выравнивание WebXR по компасу — среднее за 2 с (один отсчёт запаздывает из-за сглаживания)
+// куда смотрит камера по позе WebXR: вектор «вперёд» (0,0,−1), повёрнутый кватернионом; рысканье — по часовой от начального направления, наклон — вверх плюс
+const arHdSrc = () => arXr.on ? 'xr' + arXr.sid : 'compass';   // источник курса: компас или конкретное выравнивание WebXR
+function arXrQuat(q) {
+  const { x, y, z, w } = q, fx = -2 * (x * z + w * y), fy = -2 * (y * z - w * x), fz = -(1 - 2 * (x * x + y * y));
+  return { yaw: (Math.atan2(fx, -fz) * 180 / Math.PI + 360) % 360, pitch: Math.asin(Math.max(-1, Math.min(1, fy))) * 180 / Math.PI };
+}
+// курс «как от компаса»: в WebXR — поворот телефона + средняя поправка к компасу при выравнивании (+ прирост склонения с тех пор); иначе — компас; старый — не курс
+function arRawHeading() {
+  if (arXr.on) return arXr.bias == null || arXr.yaw == null ? null : (arXr.yaw + arXr.bias + (magDecl - arXr.decl0) + 720) % 360;
+  return compassDeg != null && Date.now() - arOrientAt < AR_ORIENT_MS ? compassDeg : null;
+}
 // глубина подземной сети — подписью у линии (сама линия — в плане, на поверхности: нарисованная «на глубине» поверх земли казалась бы ближе, чем лежит)
 function arDepthTxt(l) {
   if (!['indexed', 'cable'].includes((LINES[l.type] || {}).kind)) return '';   // ЛЭП и воздушная связь — не под землёй
@@ -6903,7 +6918,7 @@ let arGen = 0, arCal = null, arCalMode = false, arCalPick = null;   // { off, er
 let arTilt = { beta: 90, gamma: 0 }, arStream = null, arTimer = 0, arCamOk = false, arOrientAt = 0, arOpening = false, arRtk = false;
 addEventListener('deviceorientationabsolute', e => { if (e.beta != null) { arTilt = { beta: e.beta, gamma: e.gamma || 0 }; arOrientAt = Date.now(); } });
 const arBox = document.createElement('div'); arBox.id = 'ar';
-arBox.innerHTML = '<video id="arVid" autoplay playsinline muted></video><svg class="ov" id="arSvg"></svg><div class="bar"><div class="lvl" id="arLvl"></div><button class="cb" id="arCalBtn">Курс</button><button class="x" id="arX" aria-label="Закрыть камеру">×</button></div>'
+arBox.innerHTML = '<video id="arVid" autoplay playsinline muted></video><svg class="ov" id="arSvg"></svg><div class="bar"><div class="lvl" id="arLvl"></div><button class="cb" id="arXrBtn" style="display:none">WebXR</button><button class="cb" id="arCalBtn">Курс</button><button class="x" id="arX" aria-label="Закрыть камеру">×</button></div>'
   + '<div class="calbar" id="arCalBar"><div id="arCalTxt"></div><div class="row"><button class="no" id="arCalNo">Отмена</button><button class="go" id="arCalGo" disabled>Совместить</button></div></div>'
   + '<div class="msg" id="arMsg"></div><div class="warn">Подсказка, не разбивка. Копать по картинке нельзя — сеть подтверждают трассоискателем или шурфом (СП 45 п. 11.19)</div>';
 document.body.appendChild(arBox);
@@ -6913,26 +6928,26 @@ const arLandscape = () => Math.abs(((screen.orientation && screen.orientation.an
 function arPitch() { return arTilt.beta - 90; }                         // телефон вертикально (портрет): beta 90° — камера на горизонт
 function arDraw() {
   const svg = $('arSvg'), W = arBox.clientWidth, H = arBox.clientHeight, c = arCaps(), me = arMe();
-  const hdRaw = compassDeg != null && Date.now() - arOrientAt < AR_ORIENT_MS ? compassDeg : null;   // старый курс — не курс
-  const cal = arCal && Date.now() - arCal.at < AR_CAL_MS ? arCal : null;   // калибровка поглощает и склонение
+  const hdRaw = arRawHeading();                                         // WebXR или компас; старый курс — не курс
+  const cal = arCal && Date.now() - arCal.at < AR_CAL_MS && arCal.src === arHdSrc() ? arCal : null;   // калибровка поглощает и склонение; от компаса к WebXR не переносится
   const hd = hdRaw == null ? null : (hdRaw + (cal ? cal.off - (magDecl - cal.decl) : 0) + 360) % 360;   // компас уже содержит склонение: его прирост после калибровки вычитаем
   const fixNow = !!(me && me.src === 'приёмник' && isFinite(me.acc) && me.acc > 0);
   arRtk = fixNow && me.acc <= (arRtk ? AR_RTK_OUT_M : RTK_FIX_M);   // гистерезис: войти при ≤5 см, выйти при >8 см — уровень не мигает
   const rtk = arRtk, posAcc = me ? (rtk ? Math.max(me.acc, AR_ANT_OFFSET_M) : me.acc) : null;   // антенна на вехе или рюкзаке — не в камере: запас 0,5 м
-  const courseErr = cal ? cal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR), lvl = arLevel(c, hd, arCamOk, rtk);
-  const calTxt = cal ? ` (калибровка по «${esc(cal.name)}», ${Math.max(1, Math.round((Date.now() - cal.at) / 60000))} мин назад)` : arCal ? ' — калибровка устарела, нажмите «Курс»' : magDeclOk ? ' (без калибровки — «Курс»)' : ' — склонение неизвестно, нажмите «Курс»';
+  const courseErr = cal ? cal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR), lvl = arLevel(c, hd, arCamOk, rtk, arXr.on);
+  const calTxt = cal ? ` (калибровка по «${esc(cal.name)}», ${Math.max(1, Math.round((Date.now() - cal.at) / 60000))} мин назад)` : arCal ? (arCal.src !== arHdSrc() ? ' — калибровка была для другого режима, нажмите «Курс»' : ' — калибровка устарела, нажмите «Курс»') : magDeclOk ? ' (без калибровки — «Курс»)' : ' — склонение неизвестно, нажмите «Курс»';
   const accTxt = a => mText(a, a < 1 ? 2 : 1);
-  $('arLvl').innerHTML = `<b>Уровень ${lvl}: ${lvl === 4 ? 'камера + компас + RTK' + (cal ? '' : ' — положение точное, ошибка в курсе и наклоне: нажмите «Курс»') : lvl === 2 ? 'камера + компас' : lvl === 1 ? 'стрелка: GPS + компас (камеры нет)' : 'нет компаса — только карта'}</b><br>`
+  $('arLvl').innerHTML = `<b>Уровень ${lvl}: ${lvl === 3 ? 'WebXR, курс по повороту телефона' : lvl === 4 ? (arXr.on ? 'WebXR + RTK' : 'камера + компас + RTK') + (cal ? '' : ' — положение точное, ошибка в курсе и наклоне: нажмите «Курс»') : lvl === 2 ? 'камера + компас' : lvl === 1 ? 'стрелка: GPS + компас (камеры нет)' : 'нет компаса — только карта'}</b><br>`
     + (me ? `Точность ±${accTxt(arErrM(20, posAcc, courseErr))} м на 20 м · курс ±${Number.isInteger(courseErr) ? courseErr : mText(courseErr, 1)}°${calTxt} · ${esc(me.src)} ±${accTxt(isFinite(me.acc) && me.acc > 0 ? me.acc : 5)} м` : 'Нет свежего GPS — подписи не рисую');
-  const why = !me ? 'Жду GPS. Без своего положения подписи легли бы не туда — выйдите на открытое место.' : arLandscape() ? 'Держите телефон вертикально: в альбомной ориентации направление камеры считается неверно.'
+  const why = !me ? 'Жду GPS. Без своего положения подписи легли бы не туда — выйдите на открытое место.' : !arXr.on && arLandscape() ? 'Держите телефон вертикально: в альбомной ориентации направление камеры считается неверно.'
     : hd == null ? (compassDeg != null ? 'Компас давно не обновлялся — пошевелите телефон или покачайте его восьмёркой.' : 'Компас телефона не отвечает — направление неизвестно. Покачайте телефон восьмёркой или откройте на устройстве с компасом.') : '';
   $('arMsg').style.display = why ? 'block' : 'none'; $('arMsg').textContent = why;
   if (why) { svg.innerHTML = ''; if (arCalMode) { arCalPick = null; $('arCalGo').disabled = true; $('arCalGo').textContent = 'Совместить'; $('arCalTxt').textContent = why; } return; }
-  const pitch = arPitch(), sw = me.ll, gam = gammaAt(sw), zone = zoneOf(sw.lng), o = planeXY(sw, zone), k = gkScale(sw);
+  const pitch = arXr.on ? arXr.pitch : arPitch(), hfov = arXr.on ? arXr.hfov : AR_HFOV, sw = me.ll, gam = gammaAt(sw), zone = zoneOf(sw.lng), o = planeXY(sw, zone), k = gkScale(sw);
   const items = [], P = (ll, near) => {                                 // объект → экран
     const d = groundDist(sw, ll); if (d > AR_R_M || d < 0.3) return null;
     const az = (planeInverse(sw, L.latLng(ll)).dir + gam + 360) % 360, rel = angDiff(az, hd);
-    const pr = arProject(rel, -Math.atan2(AR_EYE_M, d) * 180 / Math.PI, pitch, W, H); return pr ? { ...pr, d, rel } : { d, rel, off: true };
+    const pr = arProject(rel, -Math.atan2(AR_EYE_M, d) * 180 / Math.PI, pitch, W, H, hfov); return pr ? { ...pr, d, rel } : { d, rel, off: true };
   };
   let s = '';
   for (const l of data.lines) {                                         // линии: куски по ~2 м в радиусе показа
@@ -6982,13 +6997,13 @@ function arDraw() {
 function arCalStart() { arCalMode = true; arCalPick = null; $('arCalBar').style.display = 'block'; arDraw(); }
 function arCalEnd() { arCalMode = false; arCalPick = null; $('arCalBar').style.display = 'none'; }
 function arCalApply() {
-  const me = arMe(), raw = compassDeg != null && Date.now() - arOrientAt < AR_ORIENT_MS ? compassDeg : null, pk = arCalPick;
+  const me = arMe(), raw = arRawHeading(), pk = arCalPick;
   if (!me || raw == null || !pk) { toast('Нет GPS или компаса — калибровать не по чему'); return; }
   const ptErr = pk.p.q && pk.p.q.acc != null ? pk.p.q.acc : pk.p.approx != null ? pk.p.approx : 5;   // точка без известной точности (по подложке, с чертежа) — ±5 м, а не «точная»
-  const cur = arCal && Date.now() - arCal.at < AR_CAL_MS ? arCal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR);
+  const cur = arCal && Date.now() - arCal.at < AR_CAL_MS && arCal.src === arHdSrc() ? arCal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR);
   const r = arCalCompute(pk.az, raw, pk.d, arRtk ? Math.max(me.acc, AR_ANT_OFFSET_M) : me.acc, ptErr), was = cur;   // RTK: антенна не в камере
   if (r.err > was) { toast(`Калибровка по этой точке дала бы ±${mText(r.err, 1)}° — не лучше нынешних ±${mText(was, 1)}°. Возьмите точку дальше или дождитесь точного GPS`); return; }
-  arCal = { ...r, at: Date.now(), name: pk.name, d: pk.d, decl: magDecl }; arCalEnd(); arDraw();
+  arCal = { ...r, at: Date.now(), name: pk.name, d: pk.d, decl: magDecl, src: arHdSrc() }; arCalEnd(); arDraw();
   toast(`Курс откалиброван по «${pk.name}»: поправка ${r.off >= 0 ? '+' : '−'}${mText(Math.abs(r.off), 1)}°, точность ±${mText(r.err, 1)}°. Действует 15 минут`);
 }
 async function arOpen() {
@@ -6999,7 +7014,7 @@ async function arOpen() {
   const gen = ++arGen;                                                 // закрыли и открыли, пока ждали разрешения, — поток от старого открытия не нужен
   if (c.cam) {
     try { const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-      if (gen !== arGen) { st.getTracks().forEach(t => t.stop()); return; }
+      if (gen !== arGen || arXr.on || arXr.starting) { st.getTracks().forEach(t => t.stop()); if (gen === arGen) arOpening = false; return; }   // и если уже запускаем WebXR — камера его
       arStream = st; $('arVid').srcObject = arStream; arCamOk = true; }
     catch (e) { if (gen !== arGen) return; arStream = null; toast('Камера не открылась' + (e && e.name === 'NotAllowedError' ? ' — разрешите доступ к камере' : '') + ': показываю подписи на чёрном фоне (уровень 1)'); }
   }
@@ -7009,12 +7024,75 @@ async function arOpen() {
   clearInterval(arTimer); arDraw(); arTimer = setInterval(arDraw, AR_FPS_MS);
 }
 function arStop() { clearInterval(arTimer); arTimer = 0; if (arStream) { arStream.getTracks().forEach(t => t.stop()); arStream = null; } $('arVid').srcObject = null; arCamOk = false; }
-function arClose() { arStop(); arCalEnd(); arOpening = false; arGen++; arBox.style.display = 'none'; }
+function arClose() { arStop(); arCalEnd(); arOpening = false; arGen++; arBox.style.display = 'none'; arXrEnd(); }
 $('arX').onclick = arClose;
+function arXrEnd() { const s = arXr.s; arXr.on = false; arXr.starting = false; arXr.s = null; arBox.classList.remove('xr'); if (s) s.end().catch(() => {}); }
+async function arXrStart() {
+  if (!arXr.ok || arXr.on || arXr.starting) return;                    // двойное нажатие — один запуск
+  const gen = arGen, alive = () => gen === arGen && arBox.style.display === 'block';
+  arXr.starting = true;
+  if (arStream) { arStream.getTracks().forEach(t => t.stop()); arStream = null; } $('arVid').srcObject = null; arCamOk = false;   // камеру освободить ДО запуска: ARCore нужна та же
+  let s = null, ok = false;
+  try {
+    s = await navigator.xr.requestSession('immersive-ar', { optionalFeatures: ['dom-overlay', 'local'], domOverlay: { root: arBox } });
+    arXr.s = s;
+    s.addEventListener('end', () => { if (arXr.s !== s) return; arXr.on = false; arXr.starting = false; arXr.s = null; arBox.classList.remove('xr'); if (arBox.style.display === 'block') arClose(); });   // браузер закрыл сеанс («Назад», сбой) — выходим из камеры
+    if (!alive()) return;                                               // камеру закрыли, пока ждали
+    if (!s.domOverlayState) { toast('Этот браузер не показывает подписи поверх WebXR — остаюсь в обычной камере'); return; }
+    const ref = await s.requestReferenceSpace('local');
+    if (!alive() || arXr.s !== s) return;
+    if (ref.addEventListener) ref.addEventListener('reset', () => { arXr.n = 0; arXr.bias = null; arXr.sid++; });   // слежение сбилось — выровнять заново, старая калибровка не годится
+    Object.assign(arXr, { ref, on: true, starting: false, yaw: null, bias: null, n: 0, t0: 0, decl0: magDecl, pitch: 0, hfov: AR_HFOV }); arXr.sid++;
+    arBox.classList.add('xr'); ok = true;
+    const onFrame = (t, f) => {
+      if (arXr.s !== s) return;
+      const p = f.getViewerPose(arXr.ref);
+      if (p) { const o = arXrQuat(p.transform.orientation), v = p.views[0]; arXr.yaw = o.yaw; arXr.pitch = o.pitch;
+        if (v && v.projectionMatrix && v.projectionMatrix[0] > 0) arXr.hfov = 2 * Math.atan(1 / v.projectionMatrix[0]) * 180 / Math.PI;
+        const now = Date.now();
+        if (compassDeg != null && now - arOrientAt < AR_ORIENT_MS && (!arXr.n || now - arXr.t0 < AR_XR_ANCHOR_MS)) {   // выравнивание: средняя поправка «компас − поворот» за первые 2 с, дальше курс только по повороту
+          const d = angDiff(compassDeg, o.yaw);
+          if (!arXr.n) { arXr.t0 = now; arXr.bias = d; arXr.decl0 = magDecl; } else arXr.bias += angDiff(d, arXr.bias) / (arXr.n + 1);
+          arXr.n++;
+        } }
+      s.requestAnimationFrame(onFrame);
+    };
+    s.requestAnimationFrame(onFrame);
+  } catch (e) { toast('WebXR не запустился' + (e && e.message ? ': ' + e.message : '') + ' — возвращаю обычную камеру'); }
+  finally {
+    if (!ok) { arXr.starting = false; if (s && arXr.s === s) { arXr.s = null; s.end().catch(() => {}); } if (alive()) arOpen(); }   // не вышло — обычная камера обратно
+  }
+  if (ok) { if (!arTimer) arTimer = setInterval(arDraw, AR_FPS_MS); arDraw(); }   // камера могла не успеть запустить таймер (нажали WebXR, пока она открывалась)
+}
+// в Android-приложении WebXR нет: кнопка открывает сайт в браузере телефона. В ссылке — только координаты цели выноса и склонение (в браузере его не узнать); план туда не уходит
+function arXrLink() {
+  const t = stake && stake.ll, d = magDeclOk && isFinite(magDecl) ? ',' + magDecl.toFixed(1) : '';
+  return APK_BASE + (t ? `#ar=${t.lat.toFixed(7)},${t.lng.toFixed(7)}${d}` : '');
+}
+function arXrBtnShow() { const b = $('arXrBtn'); if (!b) return; b.style.display = arXr.ok || NATIVE ? '' : 'none'; b.textContent = NATIVE ? 'Браузер' : 'WebXR'; b.title = NATIVE ? 'Открыть в браузере — там есть WebXR (Chrome на телефонах с AR)' : 'Камера по WebXR: подписи не дрожат'; }
+$('arXrBtn').onclick = () => {
+  if (!NATIVE) { arXrStart(); return; }
+  const U = window.Capacitor.Plugins && window.Capacitor.Plugins.Updater;
+  if (!U || !U.open) { toast('Обновите приложение — в этой версии открыть браузер нельзя'); return; }
+  U.open({ url: arXrLink() }).then(() => toast('Открыл сайт в браузере (WebXR — в Chrome на телефонах с AR). План остался здесь: в браузере только цель, точек для «Курс» там нет')).catch(e => toast((e && e.message) || 'Не удалось открыть браузер'));
+};
+try { if (!NATIVE && navigator.xr && navigator.xr.isSessionSupported) navigator.xr.isSessionSupported('immersive-ar').then(v => { arXr.ok = !!v; arXrBtnShow(); }).catch(() => {}); } catch (e) { /* нет WebXR — уровень 2/4, как раньше */ }
+arXrBtnShow();
+// пришли из приложения по ссылке (#ar=широта,долгота[,склонение]): поставить вынос, взять склонение, подсказать про камеру
+function arFromLink() {
+  const m = /^#ar=(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)(?:,(-?\d{1,2}(?:\.\d)?))?$/.exec(location.hash || ''); if (!m) return;
+  const lat = +m[1], lng = +m[2], dec = m[3] != null ? +m[3] : null; history.replaceState(null, '', location.pathname + location.search);
+  if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) return;
+  if (dec != null && Math.abs(dec) <= 60) { magDecl = dec; magDeclOk = true; magDeclAt = L.latLng(lat, lng); }   // склонение от приложения: в браузере модели магнитного поля нет
+  map.setView([lat, lng], Math.max(map.getZoom(), 17), { animate: false }); startStake([lat, lng], 'Цель из приложения');
+  toast('Цель из приложения. Меню → «Камера»' + (arXr.ok ? ', затем «WebXR»' : '') + '. Точек плана для «Курс» здесь нет');
+}
+setTimeout(arFromLink, 0);                                              // после загрузки всего кода
+addEventListener('hashchange', arFromLink);                            // браузер открыл ссылку в уже открытой вкладке
 $('arCalBtn').onclick = () => (arCalMode ? arCalEnd() : arCalStart());
 $('arCalNo').onclick = arCalEnd;
 $('arCalGo').onclick = arCalApply;
-document.addEventListener('visibilitychange', () => { if (document.hidden && arBox.style.display === 'block' && !arOpening) arClose(); });   // свернули — камера не работает в фоне
+document.addEventListener('visibilitychange', () => { if (document.hidden && arBox.style.display === 'block' && !arOpening && !arXr.on) arClose(); });   // свернули — камера не работает в фоне
 // мышь: где курсор над картой (null — ушёл с карты или сенсор)
 let deskCursor = null, hoverAt = null, hoverRaf = 0;
 function aimAt() { return deskCursor && deskOn() ? deskCursor : map.getCenter(); }
