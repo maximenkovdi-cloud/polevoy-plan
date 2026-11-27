@@ -137,7 +137,7 @@
   @keyframes recPulse { 50% { box-shadow:0 0 0 7px rgba(198,40,40,.25), var(--shadow); } }
   #fabCompass { position:absolute; left:10px; top:calc(var(--topH, 92px) + 96px); z-index:1000; width:52px; height:52px; }
   body.glove #fabCompass { width:62px; height:62px; top:calc(var(--topH, 92px) + 112px); }
-  #fabCompass svg { transition:transform .15s linear; }
+  #fabCompass svg { transition:transform .1s ease-out; }   /* короткий переход: датчик шлёт часто, длинный отставал бы */
   #fabUndo { position:absolute; left:10px; top:calc(var(--topH, 92px) + 160px); z-index:1000; }   /* «Вернуть» — слева, под компасом: правый столбец короче */
   body.glove #fabUndo { top:calc(var(--topH, 92px) + 186px); }
   /* низкий экран (телефон боком): «Вернуть» — рядом с компасом, а не под ним, чтобы не наезжать на масштаб внизу */
@@ -248,9 +248,9 @@
   .list .item.danger { color:#c62828; font-weight:600; }
   .list .h { font-weight:700; color:var(--ink); opacity:.75; }
   .list .item .sw { margin-left:auto; flex:none; width:44px; height:26px; border-radius:13px; background:var(--line); position:relative; transition:background .15s; }
-  .list .item .sw::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.35); transition:left .15s; }
+  .list .item .sw::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.35); transition:transform .15s; }
   .list .item .sw.on { background:var(--accent); }
-  .list .item .sw.on::after { left:21px; }
+  .list .item .sw.on::after { transform:translateX(18px); }   /* сдвиг — видеокартой, без пересчёта раскладки */
   .list .item .chk { margin-left:auto; font-size:18px; color:var(--accent); }
 
   /* ── формы ── */
@@ -314,6 +314,10 @@
   .sym.sel svg { filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 3px var(--accent)); }
   .sym.wait::after { content:''; position:absolute; left:50%; top:50%; width:30px; height:30px; margin:-15px 0 0 -15px; border:2px dashed #ef6c00; border-radius:50%; pointer-events:none; }
   .sym.sel::before { content:''; position:absolute; left:50%; top:50%; width:38px; height:38px; margin:-19px 0 0 -19px; border:3px solid var(--accent); border-radius:50%; animation:selRing 1.4s ease-in-out infinite; pointer-events:none; }
+  @media (prefers-reduced-motion: reduce) {                            /* в настройках телефона «убрать анимацию»: кольцо и цвет остаются, пульсации нет */
+    .sym.sel::before, #fabTrack.rec, #recLine .dot { animation:none; }
+    #fabTrack.rec { box-shadow:0 0 0 4px rgba(198,40,40,.35), var(--shadow); }
+  }
   @keyframes selRing { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.45; transform:scale(1.12); } }
   .gtxt { pointer-events:none; fill:#1b5e20; font-weight:400; font-style:italic; font-family:var(--draft); font-variant-numeric: tabular-nums;
     paint-order: stroke; stroke:var(--halo); stroke-width:3.5px; stroke-linejoin:round; }
@@ -1370,7 +1374,9 @@ $('coordSeg').onclick = e => {
   if (!c) return;
   coordMode = c; setPref('coords', c); updateInfo(); layout();
 };
-map.on('move zoomend', updateInfo);
+let infoFrame = 0;
+const updateInfoSoon = () => { if (!infoFrame) infoFrame = setTimeout(() => { infoFrame = 0; updateInfo(); }, 33); };   // как у резинки: не на каждом кадре сдвига
+map.on('move', updateInfoSoon); map.on('moveend zoomend', updateInfo);
 
 // Масштаб «1:N»: размер экранного пикселя — ~0,16 мм на телефоне и ~0,26 мм на компьютере; точнее — калибровкой по линейке
 const PX_MM_DEFAULT = matchMedia('(pointer: coarse)').matches ? 0.159 : 0.2646;
@@ -1992,7 +1998,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 108;
+const APP_BUILD = 109;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -2522,7 +2528,7 @@ $('satLine').onclick = () => {
 /* ───────────── Кнопка GPS, как в «Тактической карте»: слежение → слежение с компасом (карта вращается) → выкл. ───────────── */
 
 let gpsView = 'off';                                 // 'off' | 'follow' | 'compass'
-let compassDeg = null, mapBearing = null, ringOn = pref('ring', false), compassTick = 0;
+let compassDeg = null, mapBearing = null, ringOn = pref('ring', false), compassTick = 0, compassRot = 0;   // compassRot — накопленный угол стрелки кнопки (без скачка через север)
 const GPS_VIEW_TEXT = { follow: 'Карта следует за вами', compass: 'Слежение с компасом — карта повёрнута по телефону', off: 'Слежение выключено' };
 const COMPASS_SMOOTH = 0.25, COMPASS_MS = 50;       // сглаживание стрелки и не чаще 20 раз в секунду
 const angDiff = (a, b) => ((a - b + 540) % 360) - 180;
@@ -2659,7 +2665,8 @@ addEventListener('deviceorientationabsolute', e => {
 // Деления через 5°, цифры через 30°; красная линия — куда смотрит телефон; внизу — азимут в градусах и тысячных
 function drawCompass() {
   const b = mapBearing || 0;
-  $('fabCompass').querySelector('svg').style.transform = `rotate(${-b}deg)`;   // стрелка кнопки показывает север
+  compassRot += ((-b - compassRot) % 360 + 540) % 360 - 180;            // через север — коротким путём, а не почти полным кругом назад
+  $('fabCompass').querySelector('svg').style.transform = `rotate(${compassRot.toFixed(1)}deg)`;   // стрелка кнопки показывает север
   const ring = $('ring');
   ring.style.display = ringOn ? 'block' : 'none';
   if (!ringOn) return;
@@ -9418,6 +9425,8 @@ async function backupMenu() {
 
 const xml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
 // photoDir — при выгрузке с фото: путь к снимкам внутри архива (в описании объекта — картинки)
+// цвет для KML — всегда 6 цифр: #abc → aabbcc, #aabbccdd → aabbcc; слово (red) или мусор — тёмно-серый, как у линии без цвета
+function kmlHex(c) { const h = String(c || '').replace('#', ''); if (/^[0-9a-f]{6}([0-9a-f]{2})?$/i.test(h)) return h.slice(0, 6); if (/^[0-9a-f]{3,4}$/i.test(h)) return h.slice(0, 3).split('').map(x => x + x).join(''); return '111111'; }
 function toKml(photoDir) {
   const desc = o => photoDir && o.photos && o.photos.length ? `<description><![CDATA[${o.photos.map(id => `<img src="${photoDir}${photoFile(id)}" width="480"/>`).join('<br/>')}]]></description>` : '';
   const ext = o => '<ExtendedData>' + Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<Data name="${k}"><value>${xml(v)}</value></Data>`).join('') + '</ExtendedData>';
@@ -9428,7 +9437,7 @@ function toKml(photoDir) {
   const lns = data.lines.map(l => {
     const s = LINES[l.type] || LINES.plain;
     const hex = l.color || (netColors && NET_KIND[l.type] && NET_HEX[NET_KIND[l.type]]) || (s.color === REL ? REL_HEX : s.color === VEG ? VEG_HEX : s.color) || '#111111';
-    const color = hex.replace('#', ''), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
+    const color = kmlHex(hex), kmlColor = 'ff' + color.slice(4, 6) + color.slice(2, 4) + color.slice(0, 2);
     return `<Placemark><name>${xml(l.caption || s.name)}</name>${desc(l)}${ext({ tk_id: l.id, tk_photos: l.photos ? JSON.stringify(l.photos) : '', tk_no: l.no, tk_type: l.type, tk_caption: l.caption, tk_count: l.count, tk_pk0: l.pk0, tk_pkdir: l.pkDir, tk_state: l.state, tk_attr: l.attr ? JSON.stringify(l.attr) : '', tk_hs: l.hs ? JSON.stringify(l.hs) : '', tk_color: l.color })}` +
       `<Style><LineStyle><color>${kmlColor}</color><width>3</width></LineStyle></Style>` +
       `<LineString><tessellate>1</tessellate>${l.hs && l.latlngs.every((_, i) => l.hs[i] && hasH(l.hs[i].h)) ? '<altitudeMode>absolute</altitudeMode>' : ''}<coordinates>${(s.closed ? l.latlngs.concat([l.latlngs[0]]) : l.latlngs).map((a, i) => { const z = l.hs && l.hs[s.closed ? i % l.latlngs.length : i]; return a[1] + ',' + a[0] + ',' + (z && hasH(z.h) ? Number(z.h) : 0); }).join(' ')}</coordinates></LineString></Placemark>`;
