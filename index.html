@@ -2003,7 +2003,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 117;
+const APP_BUILD = 118;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -8925,14 +8925,15 @@ function cp1251(str, dxf) {
   const extra = { 0x401: 0xA8, 0x451: 0xB8, 0x2116: 0xB9, 0x2013: 0x96, 0x2014: 0x97, 0x2026: 0x85, 0xAB: 0xAB, 0xBB: 0xBB, 0xB0: 0xB0, 0xB1: 0xB1,
     0x201C: 0x93, 0x201D: 0x94, 0x2018: 0x91, 0x2019: 0x92, 0x201E: 0x84, 0xA0: 0xA0, 0xA7: 0xA7, 0xB7: 0xB7, 0x20AC: 0x88,
     0x404: 0xAA, 0x454: 0xBA, 0x406: 0xB2, 0x456: 0xB3, 0x407: 0xAF, 0x457: 0xBF, 0x490: 0xA5, 0x491: 0xB4, 0x40E: 0xA1, 0x45E: 0xA2 };
-  const out = [];
+  let out = new Uint8Array(str.length + 64), len = 0;                  // байты сразу; растёт, только если встретились \U+ (их 7 байт на символ)
+  const put = b => { if (len >= out.length) { const t = new Uint8Array(out.length * 2); t.set(out); out = t; } out[len++] = b; };
   for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i);
-    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length && str.charCodeAt(i + 1) >= 0xDC00 && str.charCodeAt(i + 1) <= 0xDFFF) { out.push(0x3F); i++; continue; }   // эмодзи и т. п.: в DXF их не записать
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length && str.charCodeAt(i + 1) >= 0xDC00 && str.charCodeAt(i + 1) <= 0xDFFF) { put(0x3F); i++; continue; }   // эмодзи и т. п.: в DXF их не записать
     const b = c < 128 ? c : c >= 0x410 && c <= 0x44F ? c - 0x350 : extra[c];
-    if (b != null) out.push(b);
-    else if (dxf) for (const ch of '\\U+' + c.toString(16).toUpperCase().padStart(4, '0')) out.push(ch.charCodeAt(0));
-    else out.push(0x3F); }
-  return new Uint8Array(out);
+    if (b != null) put(b);
+    else if (dxf) for (const ch of '\\U+' + c.toString(16).toUpperCase().padStart(4, '0')) put(ch.charCodeAt(0));
+    else put(0x3F); }
+  return out.subarray(0, len);
 }
 // отметки вершин линии для 3D: известные — как есть, между ними — по длине, на концах — ближайшая; ни одной — null (линия 2D)
 function lineZs(l) {
@@ -8993,9 +8994,13 @@ function dxfFrame(box, ent, useLayer) {
   const toM = (mx, my) => [x0 + mx * k, y0 + my * k];
   const [e0, n0] = toM(R.l + cross, R.b + cross), [e1, n1] = toM(R.r - cross, R.t - cross);
   const stampBox = { x0: R.r - FR.stampW - cross, y0: R.b, x1: R.r, y1: R.b + FR.stampH + nh + cross };   // штамп с примечаниями — без крестов
-  const busy = (mx, my) => { const a = toM(mx - cross - 0.5, my - cross - 0.5), b = toM(mx + cross + 0.5, my + cross + 0.5); return dxfBoxes.some(t => t.x0 < b[0] && t.x1 > a[0] && t.y0 < b[1] && t.y1 > a[1]); };   // крест не рисуем поверх подписи
+  let cell = null; const ck = (cx, cy) => cx + ',' + cy;                  // рамки текстов по ячейкам шага сетки: на 5000 точек — без секундных пауз; строим при первом кресте (подписи сетки уже есть)
+  const mkCell = () => { cell = new Map(); for (const t of dxfBoxes) for (let cx = Math.floor(t.x0 / step); cx <= Math.floor(t.x1 / step); cx++) for (let cy = Math.floor(t.y0 / step); cy <= Math.floor(t.y1 / step); cy++) { const kk = ck(cx, cy); if (!cell.has(kk)) cell.set(kk, []); cell.get(kk).push(t); } };
+  const busy = (mx, my) => { if (!cell) mkCell(); const a = toM(mx - cross - 0.5, my - cross - 0.5), b = toM(mx + cross + 0.5, my + cross + 0.5);
+    for (let cx = Math.floor(a[0] / step); cx <= Math.floor(b[0] / step); cx++) for (let cy = Math.floor(a[1] / step); cy <= Math.floor(b[1] / step); cy++) for (const t of cell.get(ck(cx, cy)) || []) if (t.x0 < b[0] && t.x1 > a[0] && t.y0 < b[1] && t.y1 > a[1]) return true;
+    return false; };   // крест не рисуем поверх подписи
   if (((e1 - e0) / step + 1) * ((n1 - n0) / step + 1) <= GRID_MAX) {
-    for (let e = Math.ceil(e0 / step) * step; e <= e1; e += step) { const t = `Y ${Math.round(e)}`, mx = (e - x0) / k + 1; if (mx + t.length * 2.5 * DXF_CHAR_W < R.r - 1) text(lg, mx, R.t - 4.5, 2.5, t); }   // у верхней рамки, против линии сетки; не за рамку
+    for (let e = Math.ceil(e0 / step) * step; e <= e1; e += step) { const t = `Y ${Math.round(e)}`, mx = (e - x0) / k + 1; if (mx + t.length * 2.5 * DXF_CHAR_W < R.r - 1 && mx > R.l + 2 + 12 * 2.5 * DXF_CHAR_W) text(lg, mx, R.t - 4.5, 2.5, t); }   // и не в углу, где подписи X   // у верхней рамки, против линии сетки; не за рамку
     for (let n = Math.ceil(n0 / step) * step; n <= n1; n += step) if ((n - y0) / k > R.b + 4 && !((n - y0) / k < stampBox.y1 && R.l + 1.5 + 12 * 2.5 * DXF_CHAR_W > stampBox.x0)) text(lg, R.l + 1.5, (n - y0) / k + 1, 2.5, `X ${Math.round(n)}`);   // у левой рамки
     for (let e = Math.ceil(e0 / step) * step; e <= e1; e += step) for (let n = Math.ceil(n0 / step) * step; n <= n1; n += step) {   // кресты — после подписей: обходят и их
       const mx = (e - x0) / k, my = (n - y0) / k;
@@ -9079,7 +9084,7 @@ function dxfStr(v) {
   return n > DXF_STR_MAX ? t.slice(0, cut) + '…' : t;
 }
 // рамка видимого текста (TEXT или видимый ATTRIB) в метрах чертежа — с запасом на поворот: круг вокруг середины
-let dxfBoxes = [];
+let dxfBoxes = [], dxfLbl = [];                                         // dxfLbl — места подписей уже поставленных точек
 function dxfTxtBox(kv) {
   if (kv[1] !== 'TEXT' && kv[1] !== 'ATTRIB') return;
   const g = c => { for (let i = 2; i < kv.length; i += 2) if (kv[i] === c) return kv[i + 1]; return null; };
@@ -9101,10 +9106,66 @@ function dxfFreeSide(p) {
   const dirs = [];
   for (const nb of (dxfVtx && dxfVtx.get(dxfVKey(p.lat, p.lng))) || []) dirs.push(planeInverse(L.latLng(p.lat, p.lng), L.latLng(nb)).dir);
   const quads = [{ n: true, e: true, az: 45 }, { n: true, e: false, az: 315 }, { n: false, e: true, az: 135 }, { n: false, e: false, az: 225 }];
-  if (!dirs.length) return quads[0];
-  let best = quads[0], bs = -1;
-  for (const q of quads) { const sc = Math.min(...dirs.map(d => Math.abs(angDiff(d, q.az)))); if (sc > bs + 1) { bs = sc; best = q; } }
-  return best;
+  if (!dirs.length) return quads;
+  return quads.map(q => ({ q, sc: Math.min(...dirs.map(d => Math.abs(angDiff(d, q.az)))) })).sort((a, b) => b.sc - a.sc).map(o => o.q);   // все четверти — от свободной к занятой
+}
+// знак экрана (SVG 24×24, на бумаге SYM_MM) → фигуры для блока DXF: ломаные (с толщиной пера), круги, залитые многоугольники, тексты.
+// Дуги и кривые — ломаной; белая заливка (маска на экране) в DXF не нужна. Координаты — в единицах знака, центр (12, 12), ось Y вниз.
+function symShapes(svg) {
+  const out = [], doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${svg}</svg>`, 'image/svg+xml');
+  const paint = v => v && v !== 'none' && v !== 'transparent' && !/^(#fff(fff)?|white)$/i.test(v) && !/^var\(--(symBg|halo|panel|bg)\)$/.test(v);   // белое — маска, не рисуем
+  const inh = (e, a) => { for (let x = e; x && x.getAttribute; x = x.parentNode) { const v = x.getAttribute(a); if (v != null) return v; } return null; };
+  const num = (e, a, d = 0) => { const v = parseFloat(e.getAttribute(a)); return isFinite(v) ? v : d; };
+  for (const e of doc.querySelectorAll('path, circle, ellipse, rect, line, polyline, polygon, text')) {
+    const fill = paint(inh(e, 'fill') ?? 'currentColor') && e.tagName !== 'line' && e.tagName !== 'polyline', stroke = paint(inh(e, 'stroke')), w = parseFloat(inh(e, 'stroke-width')) || 1;
+    const tag = e.tagName;
+    if (tag === 'circle' || tag === 'ellipse') { const r = tag === 'circle' ? num(e, 'r') : (num(e, 'rx') + num(e, 'ry')) / 2; if (r > 0) out.push({ k: 'c', cx: num(e, 'cx'), cy: num(e, 'cy'), r, w: stroke ? w : 0, fill }); continue; }
+    if (tag === 'text') { const t = (e.textContent || '').trim(); if (t) out.push({ k: 't', x: num(e, 'x'), y: num(e, 'y'), h: (parseFloat(inh(e, 'font-size')) || 8) * 0.72, s: t, mid: inh(e, 'text-anchor') === 'middle' }); continue; }
+    let rings = [];
+    if (tag === 'rect') { const x = num(e, 'x'), y = num(e, 'y'), W = num(e, 'width'), H = num(e, 'height'); rings = [{ pts: [[x, y], [x + W, y], [x + W, y + H], [x, y + H]], closed: true }]; }
+    else if (tag === 'line') rings = [{ pts: [[num(e, 'x1'), num(e, 'y1')], [num(e, 'x2'), num(e, 'y2')]], closed: false }];
+    else if (tag === 'polyline' || tag === 'polygon') { const v = (e.getAttribute('points') || '').trim().split(/[\s,]+/).map(Number), pts = []; for (let i = 0; i + 1 < v.length; i += 2) pts.push([v[i], v[i + 1]]); rings = [{ pts, closed: tag === 'polygon' }]; }
+    else rings = symPath(e.getAttribute('d') || '');
+    for (const r of rings) if (r.pts.length >= 2 && r.pts.every(p => isFinite(p[0]) && isFinite(p[1]))) out.push({ k: 'p', pts: r.pts, closed: r.closed, w: stroke ? w : 0, fill: fill && r.closed && r.pts.length >= 3 });
+  }
+  return out;
+}
+// путь SVG → кольца точек; дуги (A) и кривые (Q T C S) — ломаной по 8 отрезков
+function symPath(d) {
+  const tok = d.match(/[a-zA-Z]|-?(?:\d+\.?\d*|\.\d+)(?:e-?\d+)?/g) || [], rings = [];
+  let i = 0, cmd = '', x = 0, y = 0, sx = 0, sy = 0, cur = null, qx = null, qy = null, cx2 = null, cy2 = null;
+  const n = () => parseFloat(tok[i++]), start = () => { cur = { pts: [[x, y]], closed: false }; rings.push(cur); }, to = (nx, ny) => { if (!cur) start(); cur.pts.push([nx, ny]); x = nx; y = ny; };
+  const bez = (pts) => { for (let k = 1; k <= 8; k++) { const t = k / 8, m = 1 - t; if (pts.length === 3) to(m * m * pts[0][0] + 2 * m * t * pts[1][0] + t * t * pts[2][0], m * m * pts[0][1] + 2 * m * t * pts[1][1] + t * t * pts[2][1]);
+    else to(m * m * m * pts[0][0] + 3 * m * m * t * pts[1][0] + 3 * m * t * t * pts[2][0] + t * t * t * pts[3][0], m * m * m * pts[0][1] + 3 * m * m * t * pts[1][1] + 3 * m * t * t * pts[2][1] + t * t * t * pts[3][1]); } };
+  while (i < tok.length) {
+    if (/[a-zA-Z]/.test(tok[i])) cmd = tok[i++];
+    const rel = cmd === cmd.toLowerCase(), C = cmd.toUpperCase(), ox = rel ? x : 0, oy = rel ? y : 0;
+    if (C === 'Z') { if (cur) { cur.closed = true; x = sx; y = sy; cur = null; } cmd = ''; continue; }
+    if (C === 'M') { x = ox + n(); y = oy + n(); sx = x; sy = y; start(); cmd = rel ? 'l' : 'L'; qx = cx2 = null; continue; }
+    if (C === 'L') { to(ox + n(), oy + n()); qx = cx2 = null; continue; }
+    if (C === 'H') { to(ox + n(), y); qx = cx2 = null; continue; }
+    if (C === 'V') { to(x, oy + n()); qx = cx2 = null; continue; }
+    if (C === 'Q') { const a = [ox + n(), oy + n()], b = [ox + n(), oy + n()]; qx = a[0]; qy = a[1]; bez([[x, y], a, b]); cx2 = null; continue; }
+    if (C === 'T') { const a = qx == null ? [x, y] : [2 * x - qx, 2 * y - qy], b = [ox + n(), oy + n()]; qx = a[0]; qy = a[1]; bez([[x, y], a, b]); cx2 = null; continue; }
+    if (C === 'C') { const a = [ox + n(), oy + n()], b = [ox + n(), oy + n()], c = [ox + n(), oy + n()]; cx2 = b[0]; cy2 = b[1]; bez([[x, y], a, b, c]); qx = null; continue; }
+    if (C === 'S') { const a = cx2 == null ? [x, y] : [2 * x - cx2, 2 * y - cy2], b = [ox + n(), oy + n()], c = [ox + n(), oy + n()]; cx2 = b[0]; cy2 = b[1]; bez([[x, y], a, b, c]); qx = null; continue; }
+    if (C === 'A') {                                                   // дуга эллипса: из концов — в центр (SVG 1.1, прил. F.6), ломаной
+      let rx = Math.abs(n()), ry = Math.abs(n()); const ph = n() * Math.PI / 180, fa = n(), fs = n(), ex = ox + n(), ey = oy + n();
+      if (!rx || !ry) { to(ex, ey); continue; }
+      const c = Math.cos(ph), s = Math.sin(ph), dx = (x - ex) / 2, dy = (y - ey) / 2, x1 = c * dx + s * dy, y1 = -s * dx + c * dy;
+      const L = x1 * x1 / (rx * rx) + y1 * y1 / (ry * ry); if (L > 1) { rx *= Math.sqrt(L); ry *= Math.sqrt(L); }
+      const sg = fa === fs ? -1 : 1, q = Math.max(0, (rx * rx * ry * ry - rx * rx * y1 * y1 - ry * ry * x1 * x1) / (rx * rx * y1 * y1 + ry * ry * x1 * x1)), k = sg * Math.sqrt(q);
+      const cxp = k * rx * y1 / ry, cyp = -k * ry * x1 / rx, ccx = c * cxp - s * cyp + (x + ex) / 2, ccy = s * cxp + c * cyp + (y + ey) / 2;
+      const ang = (ux, uy, vx, vy) => Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+      const t1 = ang(1, 0, (x1 - cxp) / rx, (y1 - cyp) / ry); let dt = ang((x1 - cxp) / rx, (y1 - cyp) / ry, (-x1 - cxp) / rx, (-y1 - cyp) / ry);
+      if (!fs && dt > 0) dt -= 2 * Math.PI; else if (fs && dt < 0) dt += 2 * Math.PI;
+      const N = Math.max(4, Math.ceil(Math.abs(dt) / (Math.PI / 8)));
+      for (let j = 1; j <= N; j++) { const t = t1 + dt * j / N; to(j === N ? ex : ccx + rx * Math.cos(t) * c - ry * Math.sin(t) * s, j === N ? ey : ccy + rx * Math.cos(t) * s + ry * Math.sin(t) * c); }
+      qx = cx2 = null; continue;
+    }
+    i++;                                                               // неизвестная команда — пропускаем число, не зависаем
+  }
+  return rings;
 }
 function toDxf() {
   const L = [], put = (...kv) => { for (let i = 0; i < kv.length; i += 2) L.push(String(kv[i]), String(kv[i + 1])); };
@@ -9116,19 +9177,23 @@ function toDxf() {
   const useLayer = (name, kind) => { if (!layers.has(name)) layers.set(name, dxfColorOfLayer(name, kind)); return name; };
   // сущности — сначала, чтобы знать слои и блоки
   const E = [], ent = (...kv) => { for (let i = 0; i < kv.length; i += 2) E.push(String(kv[i]), kv[i] === 1 ? dxfStr(kv[i + 1]) : String(kv[i + 1]).replace(/[\r\n]+/g, ' ')); dxfTxtBox(kv); };
-  dxfBoxes = []; dxfVtxBuild();   // перевод строки в значении сломал бы файл
+  dxfBoxes = []; dxfVtxBuild(); dxfLbl = [];   // перевод строки в значении сломал бы файл
   const blocks = new Set(), blkType = new Map(), ltypes = new Map();
   const ATTRS = [['НОМЕР', 0], ['ОТМ_ПОДП', 0], ['ОТМ_НИЗ', 0], ['ОТМ', 1], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]; отметку видно подписью с запятой (ГОСТ Р 21.101 п. 5.4), а ОТМ — то же число с точкой для программ рельефа
   const okLL = a => a && isFinite(+a[0]) && isFinite(+a[1]);              // NaN/Infinity в одной точке испортили бы весь файл (AutoCAD не откроет)
   for (const p of data.points.filter(q => okLL([q.lat, q.lng]))) {
     // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
     const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : '') + (approxNote(p) ? '_ПРИБЛ' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
-    const blk = String(codeOf(p.type) || 'POINT').toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31) || 'POINT';   // без типа — не падаем
-    blocks.add(blk); if (!blkType.has(blk)) blkType.set(blk, p.type);
+    const ps0 = POINTS[p.type], vh = ps0 && ps0.svgFor ? '_' + [...ps0.svgFor(p)].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7).toString(36).slice(0, 5) : '';   // буква покрытия и т. п. — свой блок
+    const blk = (String(codeOf(p.type) || 'POINT').toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31 - vh.length) || 'POINT') + vh.toUpperCase();   // без типа — не падаем
+    blocks.add(blk); if (!blkType.has(blk)) blkType.set(blk, p);   // по первой точке кода — её знак (тип и атрибуты)
     ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z, ...(p.rot && isFinite(+p.rot) ? [50, (-Number(p.rot)).toFixed(1)] : []));   // поворот: на экране — по часовой, в DXF — против
     const val = { НОМЕР: p.no || '', ОТМ_ПОДП: H == null ? '' : planNum(H, 2), ОТМ_НИЗ: /^w_/.test(p.type) && wellBottom(p) != null ? planNum(wellBottom(p), 2) : '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
       ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : !p.q && p.approx != null ? f3(p.approx) : '' };
-    const q = dxfFreeSide(p), sx = q.e ? 1 : -1, d0 = DXF_TEXT_M;      // четверть без линий: подписи туда, не поперёк трубы
+    const d0 = DXF_TEXT_M, vis = ATTRS.filter(a => !a[1]).map(a => String(val[a[0]] || '')), lw = Math.max(1, ...vis.map(t => t.length)) * d0 * DXF_CHAR_W + 0.6 * d0, lh = vis.filter(Boolean).length * 1.2 * d0 + 0.4 * d0;
+    const rectOf = q => { const x0 = q.e ? +x : +x - lw, y0 = q.n ? +y : +y - lh; return { x0, y0, x1: x0 + lw, y1: y0 + lh }; };
+    const order = dxfFreeSide(p), q = order.find(o => { const r = rectOf(o); return !dxfLbl.some(t => t.x0 < r.x1 && t.x1 > r.x0 && t.y0 < r.y1 && t.y1 > r.y0); }) || order[0], sx = q.e ? 1 : -1;   // и не на подписи соседних точек
+    dxfLbl.push(rectOf(q));      // четверть без линий: подписи туда, не поперёк трубы
     ATTRS.forEach(([tag, inv], k) => { const ax = (Number(x) + sx * 0.6 * d0).toFixed(3), ay = (Number(y) + (q.n ? 0.4 + (2 - k) * 1.2 : -0.4 - (k + 1) * 1.2) * d0).toFixed(3);
       ent(0, 'ATTRIB', 8, lay, 10, ax, 20, ay, 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE, ...(q.e ? [] : [72, 2, 11, ax, 21, ay, 31, z])); });
     ent(0, 'SEQEND', 8, lay);
@@ -9153,7 +9218,7 @@ function toDxf() {
     }
   }
   if (!isFinite(box[0]) || !isFinite(box[2])) box.splice(0, 4, 0, 0, 100, 100);
-  else if (pref('dxfFrame', true)) dxfFrame(box, ent, useLayer);                                   // рамка листа и штамп — на своих слоях
+  else if (pref('dxfFrame', true)) { for (const b of dxfBoxes) { box[0] = Math.min(box[0], b.x0); box[1] = Math.min(box[1], b.y0); box[2] = Math.max(box[2], b.x1); box[3] = Math.max(box[3], b.y1); } dxfFrame(box, ent, useLayer); }   // лист — с учётом подписей                                   // рамка листа и штамп — на своих слоях
   const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2, vh = Math.max(box[3] - box[1], (box[2] - box[0]) / 1.5, 20) * 1.1;
   put(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1009', 9, '$DWGCODEPAGE', 3, 'ANSI_1251', 9, '$INSUNITS', 70, 6,
     9, '$EXTMIN', 10, f3(box[0]), 20, f3(box[1]), 30, 0, 9, '$EXTMAX', 10, f3(box[2]), 20, f3(box[3]), 30, 0,
@@ -9176,11 +9241,20 @@ function toDxf() {
   put(0, 'SECTION', 2, 'BLOCKS');
   for (const blk of blocks) {
     put(0, 'BLOCK', 8, '0', 2, blk, 70, 2, 10, 0, 20, 0, 30, 0, 3, blk);
-    const km = DXF_M_PER_MM;                                             // знак — в мм листа, как на экране
-    const ty = blkType.get(blk) || '';
-    if (/^w_/.test(ty)) { const r = 0.9 * km, c = r * Math.SQRT1_2; put(0, 'CIRCLE', 8, '0', 10, 0, 20, 0, 30, 0, 40, f3(r), 0, 'LINE', 8, '0', 10, f3(-c), 20, f3(c), 30, 0, 11, f3(c), 21, f3(-c), 31, 0); }   // колодец: кружок Ø1,8 мм с косой чертой
-    else if (ty === 'spot') { const r = 0.25 * km; put(0, 'POLYLINE', 8, '0', 66, 1, 10, 0, 20, 0, 30, 0, 70, 1, 40, f3(r), 41, f3(r), 0, 'VERTEX', 8, '0', 10, f3(-r / 2), 20, 0, 30, 0, 42, 1, 0, 'VERTEX', 8, '0', 10, f3(r / 2), 20, 0, 30, 0, 42, 1, 0, 'SEQEND', 8, '0'); }   // отметка высоты: закрашенная точка Ø0,5 мм
-    else put(0, 'CIRCLE', 8, '0', 10, 0, 20, 0, 30, 0, 40, f3(0.5 * km));           // прочие — кружок (заменяются своими блоками ГКИНП в офисе)
+    const km = DXF_M_PER_MM, tp = blkType.get(blk), ps = tp && (POINTS[tp.type] || POINTS.mark), svg = ps ? (ps.svgFor ? ps.svgFor(tp) : ps.svg) : '';
+    const u = SYM_MM / 24 * km, BX = v => f3((v - 12) * u), BY = v => f3(-(v - 12) * u);   // знак 24 ед. = SYM_MM мм листа; ось Y — вверх
+    let shapes = []; try { shapes = svg ? symShapes(svg) : []; } catch (e) { shapes = []; }
+    const ring = (r, w) => put(0, 'POLYLINE', 8, '0', 66, 1, 10, 0, 20, 0, 30, 0, 70, 1, 40, f3(w), 41, f3(w), 0, 'VERTEX', 8, '0', 10, f3(-r), 20, 0, 30, 0, 42, 1, 0, 'VERTEX', 8, '0', 10, f3(r), 20, 0, 30, 0, 42, 1, 0, 'SEQEND', 8, '0');   // круг с толщиной: две вершины с выпуклостью 1
+    for (const sh of shapes) {
+      if (sh.k === 'c') { const ox = BX(sh.cx), oy = BY(sh.cy), r = sh.r * u;
+        const at = (rr, w) => put(0, 'POLYLINE', 8, '0', 66, 1, 10, 0, 20, 0, 30, 0, 70, 1, 40, f3(w), 41, f3(w), 0, 'VERTEX', 8, '0', 10, f3(+ox - rr), 20, oy, 30, 0, 42, 1, 0, 'VERTEX', 8, '0', 10, f3(+ox + rr), 20, oy, 30, 0, 42, 1, 0, 'SEQEND', 8, '0');
+        if (sh.fill) at(r / 2, r); if (sh.w) at(r, sh.w * u); }   // залитый — «бублик» до центра; обвод — линией пера
+      else if (sh.k === 'p') {
+        if (sh.fill) for (let i = 1; i + 1 < sh.pts.length; i++) { const A = sh.pts[0], B = sh.pts[i], C = sh.pts[i + 1]; put(0, 'SOLID', 8, '0', 10, BX(A[0]), 20, BY(A[1]), 30, 0, 11, BX(B[0]), 21, BY(B[1]), 31, 0, 12, BX(C[0]), 22, BY(C[1]), 32, 0, 13, BX(C[0]), 23, BY(C[1]), 33, 0); }   // заливка — веером треугольников
+        if (sh.w) { put(0, 'POLYLINE', 8, '0', 66, 1, 10, 0, 20, 0, 30, 0, 70, sh.closed ? 1 : 0, 40, f3(sh.w * u), 41, f3(sh.w * u)); for (const q of sh.pts) put(0, 'VERTEX', 8, '0', 10, BX(q[0]), 20, BY(q[1]), 30, 0); put(0, 'SEQEND', 8, '0'); } }
+      else if (sh.k === 't') put(0, 'TEXT', 8, '0', 10, BX(sh.x), 20, BY(sh.y), 30, 0, 40, f3(sh.h * u), 1, dxfStr(sh.s), 7, DXF_STYLE, ...(sh.mid ? [72, 1, 11, BX(sh.x), 21, BY(sh.y), 31, 0] : []));
+    }
+    if (!shapes.length) ring(0.5 * km, 0);                            // знак не разобрался — кружок, как раньше
     ATTRS.forEach(([tag, inv], k) => put(0, 'ATTDEF', 8, '0', 10, f3(0.6 * DXF_TEXT_M), 20, f3((0.4 - k * 1.2) * DXF_TEXT_M), 30, 0, 40, DXF_TEXT_M, 1, '', 3, tag, 2, tag, 70, inv, 7, DXF_STYLE));
     put(0, 'ENDBLK', 8, '0');
   }
