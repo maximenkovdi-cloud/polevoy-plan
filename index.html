@@ -1999,7 +1999,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 111;
+const APP_BUILD = 112;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -10108,6 +10108,10 @@ async function readZip(u8) {
   // Отказ сразу, без распаковки (несжатые записи могут ссылаться на одно и то же — памяти это не добавляет)
   const packed = list.filter(e => e.method === 8 && e.csize > 0).sort((a, b) => a.start - b.start);
   for (let i = 1; i < packed.length; i++) if (packed[i].start < packed[i - 1].start + packed[i - 1].csize) throw new Error('записи архива перекрываются — похоже на «архивную бомбу», файл не открываю');
+  // несжатые записи: каждая — своим куском файла, поэтому вместе они не больше самого файла (своя полная копия — всегда так). Больше — значит много записей
+  // смотрят в один кусок: в памяти это ничего, но при восстановлении каждое «фото» запишется отдельно и забьёт память телефона
+  let stored = 0; for (const e of list) if (e.method === 0) stored += e.csize;
+  if (stored > u8.length) throw new Error('записи архива ссылаются на одни и те же данные — похоже на подделку, файл не открываю');
   for (const e of list) {
     const raw = u8.subarray(e.start, e.start + e.csize);
     if (e.method === 0) out[e.name] = raw;
