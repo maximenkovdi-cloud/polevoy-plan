@@ -1552,7 +1552,7 @@ function gpsFeed(p) {
   $('gpsLine').dataset.st = spoof ? 'spoof' : noSat ? 'bad' : acc <= RTK_FIX_M ? 'fix' : acc < 1 ? 'float' : acc > 15 ? 'bad' : 'phone';
   const H = normalHeight(gps.lat, gps.lng, gps.alt);
   $('gpsText').textContent = gpsPlaqueText(acc, accText); $('gpsLine').title = (spoof ? 'подмена? ' : '') + `GPS ±${accText} м${rtk}` + (H != null ? ` · H ${H.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} м` : '') +
-    (acc > 15 ? ' — подождите на открытом месте' : '');
+    (acc > 15 ? ' — подождите на открытом месте' : '') + (H != null && rxLive() && rxFix.geoidPhone ? ' · ' + RX_GEOID_TXT : '');
   $('fabMe').classList.add('on');
 }
 function startGps() {
@@ -1992,7 +1992,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 106;
+const APP_BUILD = 107;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -2198,7 +2198,7 @@ function nmeaParse(line) {
   const sd = s => { const v = num(s); return v != null && v >= 0 ? v : null; };
   if (kind === 'GGA') {
     const lat = nmeaDeg(p[2], p[3]), lng = nmeaDeg(p[4], p[5]), alt = num(p[9]), sep = num(p[11]) || 0;
-    return { kind, q: Number(p[6]) || 0, lat, lng, sats: Number(p[7]) || 0, hdop: sd(p[8]), hEll: alt == null ? null : alt + sep };
+    return { kind, q: Number(p[6]) || 0, lat, lng, sats: Number(p[7]) || 0, hdop: sd(p[8]), hEll: alt == null ? null : alt + sep, noSep: num(p[11]) == null };   // noSep — приёмник не передал поле геоида (поправку возьмёт rxLine)
   }
   if (kind === 'GST') return { kind, sLat: sd(p[6]), sLon: sd(p[7]), sAlt: sd(p[8]) };
   return null;
@@ -2215,34 +2215,39 @@ const RX = NATIVE && ((window.Capacitor.Plugins && window.Capacitor.Plugins.Rece
 const RX_STALE_MS = 5000, RX_GST_MS = 10000, RX_SILENT_MS = 10000;
 const RX_Q = { 0: 'нет решения', 1: 'автономно', 2: 'DGPS', 4: 'FIX', 5: 'FLOAT' };
 let rxCfg = pref('rx', { address: '', name: '', host: '', port: 2101, mount: '', user: '', pass: '', init: '', auto: false });
-let rxFix = null, rxGst = null, rxStateNow = { bt: 'off', ntrip: 'off', msg: '', rtcm: 0 }, rxWasLive = false, rxOnAt = 0;
+let rxFix = null, rxGst = null, rxStateNow = { bt: 'off', ntrip: 'off', msg: '', rtcm: 0 }, rxWasLive = false, rxOnAt = 0, rxGeoidWarned = false;
+const RX_GEOID_TXT = 'Приёмник не передал поправку геоида — отметка может отличаться на ~14 м. Сверьте: Меню → Отметки → «Встать на репер и привязать», или там же «уже отметка», если приёмник даёт отметку';
 function rxLive() { return !!(rxFix && rxFix.q > 0 && Date.now() - rxFix.at < RX_STALE_MS); }
 function rxLine(line) {
   const n = nmeaParse(line); if (!n) return;
   if (n.kind === 'GST') { rxGst = { ...n, at: Date.now() }; return; }
   const gst = rxGst && Date.now() - rxGst.at < RX_GST_MS ? rxGst : null;
-  rxFix = { q: n.q, sats: n.sats, at: Date.now() }; renderRx();
+  // приёмник не дал поле геоида: в поле высоты у одних приёмников — над уровнем моря, у других — над эллипсоидом. Угадывать нельзя
+  // (ошибка в любую сторону — на величину геоида, ~14 м), поэтому высоту не трогаем, а в режиме «над эллипсоидом» честно предупреждаем: сверить с репером
+  const hEll = n.hEll, geoidPhone = !!(n.noSep && hEll != null && hgt.src !== 'normal');
+  rxFix = { q: n.q, sats: n.sats, at: Date.now(), geoidPhone }; renderRx();
   if (!n.q || n.lat == null || n.lng == null) return;
   rxWasLive = true;
-  gpsFeed({ timestamp: Date.now(), coords: { latitude: n.lat, longitude: n.lng, accuracy: rxAccuracy(n.q, n.hdop, gst), altitude: n.hEll, altitudeAccuracy: gst && gst.sAlt != null ? gst.sAlt : null } });
+  if (geoidPhone && !rxGeoidWarned) { rxGeoidWarned = true; toast(RX_GEOID_TXT); }
+  gpsFeed({ timestamp: Date.now(), coords: { latitude: n.lat, longitude: n.lng, accuracy: rxAccuracy(n.q, n.hdop, gst), altitude: hEll, altitudeAccuracy: gst && gst.sAlt != null ? gst.sAlt : null } });
 }
 function rxStatusHtml() {
   const c = rxStateNow, bt = { off: 'не подключён', connecting: 'подключаюсь…', on: 'подключён', error: 'нет связи, пробую снова' }[c.bt] || c.bt;
   const net = { off: rxCfg.host ? 'выключены' : 'не настроены', connecting: 'подключаюсь…', on: `идут, получено ${Math.round((c.rtcm || 0) / 1024)} КБ`, error: 'нет связи' }[c.ntrip] || c.ntrip;
   const silent = c.bt === 'on' && !rxFix && Date.now() - rxOnAt > RX_SILENT_MS;
   const pos = rxLive() ? `${RX_Q[rxFix.q] || 'решение ' + rxFix.q} · спутников ${rxFix.sats}` : c.bt === 'on' && rxFix && !rxFix.q ? 'связь есть, спутников не видит' + (rxFix.sats ? ` (${rxFix.sats})` : '') : silent ? 'нет данных: включите вывод NMEA (GGA) на Bluetooth' : '—';
-  return `<div>Приёмник: <b>${esc(bt)}</b></div><div>Координаты: <b>${esc(pos)}</b></div><div>Поправки: <b>${esc(net)}</b></div>${c.msg && c.bt !== 'on' || c.ntrip === 'error' ? `<div class="hint">${esc(rxHumanError(c.msg))}</div>` : ''}`;
+  return `<div>Приёмник: <b>${esc(bt)}</b></div><div>Координаты: <b>${esc(pos)}</b></div><div>Поправки: <b>${esc(net)}</b></div>${rxLive() && rxFix.geoidPhone ? `<div class="hint">⚠ ${esc(RX_GEOID_TXT)}</div>` : ''}${c.msg && c.bt !== 'on' || c.ntrip === 'error' ? `<div class="hint">${esc(rxHumanError(c.msg))}</div>` : ''}`;
 }
 const rxHumanError = m => /read failed|socket|timeout|closed|refused|Service discovery/i.test(m || '') ? 'Приёмник не отвечает. Проверьте, что он включён, рядом и отключён от eField' : m;
 function renderRx() {
   const el = $('rxStatus'); if (el) el.innerHTML = rxStatusHtml();
   let b = $('rxBadge');
   if (!b && RX) { b = document.createElement('span'); b.id = 'rxBadge'; b.textContent = '📡'; b.style.marginRight = '4px'; $('gpsText').before(b); }
-  if (b) { b.hidden = rxStateNow.bt !== 'on'; b.title = 'Приёмник подключён по Bluetooth'; }
+  if (b) { const gp = rxLive() && rxFix.geoidPhone; b.hidden = rxStateNow.bt !== 'on'; b.textContent = gp ? '📡⚠' : '📡'; b.title = 'Приёмник подключён по Bluetooth' + (gp ? '. ' + RX_GEOID_TXT : ''); }
 }
 async function rxConnect() {
   if (!rxCfg.address) { toast('Выберите приёмник'); return false; }
-  rxOnAt = Date.now(); rxFix = null;
+  rxOnAt = Date.now(); rxFix = null; rxGeoidWarned = false;
   try { await RX.connect({ address: rxCfg.address, host: rxCfg.host, port: Number(rxCfg.port) || 2101, mount: rxCfg.mount, user: rxCfg.user, pass: rxCfg.pass, init: rxCfg.init }); return true; }
   catch (e) { toast('Не подключается: ' + (e.message || e)); return false; }
 }
