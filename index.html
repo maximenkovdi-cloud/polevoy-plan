@@ -30,7 +30,7 @@
   body { --veg:#2e7d32; } body.sun { --veg:#1b5e20; } body.night { --veg:#81c784; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { height:100%; margin:0; overflow:hidden; background:var(--bg);   /* повёрнутая карта больше экрана — страница не должна прокручиваться */ font:var(--fs)/1.35 system-ui, "Segoe UI", Roboto, sans-serif; color:var(--ink); }
-  #map { position:absolute; inset:0; background:var(--bg); }
+  #map { position:absolute; top:0;right:0;bottom:0;left:0; background:var(--bg); }
   .leaflet-tile-pane { opacity:var(--baseOp, .7); }
   .sat-tiles .leaflet-tile { width:257px !important; height:257px !important; }   /* снимок: кусок на 1 px шире — без светлых швов на экранах с дробным масштабом */
   body.day .leaflet-tile-pane { filter: saturate(.6); }
@@ -216,7 +216,7 @@
   .rubber-lbl span { position:absolute; transform:translate(-50%, -150%); white-space:nowrap; font:700 14px/1 var(--draft); color:var(--ink); background:var(--panel); border:1px solid var(--ink); padding:3px 6px; border-radius:10px; }
 
   /* ── нижние листы ── */
-  #sheet { position:absolute; inset:0; z-index:2000; background:rgba(0,0,0,.38); display:none; }
+  #sheet { position:absolute; top:0;right:0;bottom:0;left:0; z-index:2000; background:rgba(0,0,0,.38); display:none; }
   #sheet .panel { position:absolute; left:0; right:0; bottom:0; max-height:82%; overflow:auto; background:var(--panel); color:var(--ink); border-radius:18px 18px 0 0; padding:10px 12px calc(20px + env(safe-area-inset-bottom)); }
   .grab { width:40px; height:4px; border-radius:2px; background:var(--line); margin:0 auto 10px; }
   .sh-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
@@ -359,6 +359,22 @@
   #cmd b { font-size:13px; color:var(--muted); }
   #cmdIn { flex:1; min-width:120px; font:700 16px/1.3 system-ui, sans-serif; border:1px solid var(--line); border-radius:8px; padding:6px 8px; background:var(--bg, #fff); color:var(--ink); text-transform:uppercase; }
   #cmdHint { flex-basis:100%; font-size:12.5px; color:var(--muted); min-height:1em; }
+  #ar { position:fixed; top:0;right:0;bottom:0;left:0; z-index:1900; background:#000; display:none; overflow:hidden; touch-action:none; }
+  #ar video { position:absolute; top:0;right:0;bottom:0;left:0; width:100%; height:100%; object-fit:cover; }
+  #ar svg.ov { position:absolute; top:0;right:0;bottom:0;left:0; width:100%; height:100%; pointer-events:none; }
+  #ar .bar { position:absolute; left:8px; right:8px; top:calc(8px + env(safe-area-inset-top)); display:flex; gap:8px; align-items:flex-start; }
+  #ar .lvl { flex:1; background:rgba(20,24,30,.78); color:#fff; border-radius:12px; padding:7px 10px; font:600 13px/1.35 system-ui, sans-serif; }
+  #ar .lvl b { font-size:14px; }
+  #ar .x { flex:none; min-width:48px; min-height:48px; border-radius:24px; border:0; background:rgba(20,24,30,.78); color:#fff; font-size:24px; }
+  #ar .calbar { position:absolute; left:8px; right:8px; bottom:calc(84px + env(safe-area-inset-bottom)); background:rgba(20,24,30,.86); color:#fff; border-radius:12px; padding:9px 10px; font:600 14px/1.35 system-ui, sans-serif; display:none; }
+  #ar .calbar .row { display:flex; gap:8px; margin-top:8px; }
+  #ar .calbar button { flex:1; min-height:48px; border-radius:10px; border:0; font:700 15px system-ui, sans-serif; }
+  #ar .calbar .go { background:#2e7d32; color:#fff; } #ar .calbar .go:disabled { background:#555; color:#bbb; }
+  #ar .calbar .no { background:#eee; color:#222; }
+  #ar .cb { flex:none; min-height:48px; border-radius:24px; border:0; background:rgba(20,24,30,.78); color:#fff; font:700 14px system-ui, sans-serif; padding:0 14px; }
+  #ar .warn { position:absolute; left:8px; right:8px; bottom:calc(8px + env(safe-area-inset-bottom)); background:rgba(183,28,28,.9); color:#fff; border-radius:12px; padding:8px 10px; font:700 13px/1.35 system-ui, sans-serif; text-align:center; }
+  #ar .msg { position:absolute; left:16px; right:16px; top:40%; color:#fff; text-align:center; font:600 16px/1.4 system-ui, sans-serif; background:rgba(20,24,30,.78); border-radius:12px; padding:12px; display:none; }
+  #ar text { font:700 13px system-ui, sans-serif; paint-order:stroke; stroke:rgba(0,0,0,.75); stroke-width:3px; fill:#fff; }
   kbd { font:700 .92em system-ui, sans-serif; border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:1px 7px; background:var(--panel); color:var(--ink); white-space:nowrap; }   /* клавиши в справке режима «компьютер» */
 </style>
 </head>
@@ -1358,7 +1374,7 @@ map.on('move zoomend', updateInfo);
 
 // Масштаб «1:N»: размер экранного пикселя — ~0,16 мм на телефоне и ~0,26 мм на компьютере; точнее — калибровкой по линейке
 const PX_MM_DEFAULT = matchMedia('(pointer: coarse)').matches ? 0.159 : 0.2646;
-let PX_MM = pref('pxmm', PX_MM_DEFAULT);
+let PX_MM = (v => v > 0.05 && v < 1 ? v : PX_MM_DEFAULT)(Number(pref('pxmm', PX_MM_DEFAULT)));   // размер пикселя, мм: 0 или мусор из копии сломали бы масштаб
 const NICE_M = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000];
 const SCALES = [200, 500, 1000, 2000, 5000, 10000, 25000];
 function metersPerPx() {
@@ -1976,7 +1992,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 103;
+const APP_BUILD = 104;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -2261,7 +2277,7 @@ const RX_NETS = {
     near: { text: 'ближайшая станция (порт по округу)', port: r => RX_FD_PORT.prinnet[r.fd] || 2105, mount: 'NEAREST_RTCM32' },
     vrs: { text: 'виртуальная станция VRS (порт по округу)', port: r => RX_FD_PORT.prinnet[r.fd] || 2105, mount: 'VIRTUAL_RTCM32' },
     region: { text: 'станции области (выбрать станцию)', port: RX_REG_PORT, mount: '' } } },
-  eft: { name: 'EFT-CORS', host: 'ntrip.eftgroup.ru', modes: {
+  eft: { name: 'EFT-CORS', host: 'ntrip.eftgroup.ru', alt: 'bs.caster.corsnet.ru', modes: {   // alt — резервный адрес «для регионов с перебоями» (eft-cors.ru, новость об альтернативном канале)
     near: { text: 'ближайшая станция (вся Россия)', port: () => 2103, mount: '' },
     region: { text: 'станции области (выбрать станцию)', port: RX_REG_PORT, mount: '' } } },
   smartnet: { name: 'SmartNet', host: 'rtcm.smartnetrtk.ru', modes: {
@@ -2307,6 +2323,7 @@ function rxNetFields(net, mode, reg) {
   return `<div><label for="rx_net">Сеть поправок</label><select id="rx_net"><option value="">свой сервер — вписать вручную</option>${Object.entries(RX_NETS).map(([id, x]) => `<option value="${id}"${id === net ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
     ${n ? `<div><label for="rx_mode">Как подключаться</label><select id="rx_mode">${Object.entries(n.modes).map(([id, m]) => `<option value="${id}"${id === (mode || 'near') ? ' selected' : ''}>${esc(m.text)}</option>`).join('')}</select></div>
     <div><label for="rx_reg">Регион работ</label><select id="rx_reg">${RX_REGIONS.map(r => `<option value="${r.code}"${r.code === reg ? ' selected' : ''}>${r.code} — ${esc(r.name)}</option>`).join('')}</select></div>
+    ${n.alt ? `<div class="hint">Если не подключается из-за перебоев связи — ${esc(n.name)} советует резервный адрес <b>${esc(n.alt)}</b> (новость на eft-cors.ru): впишите его в «Сервер поправок», порт и логин оставьте прежними. Не помогло — уточните порт в поддержке сети.</div>` : ''}
     <div class="hint">Адрес, порт и точка подключения заполнятся сами — по справочнику на ноябрь 2026; если сеть сменила адрес, поправьте вручную.
       Ближайшая станция и VRS выбираются сетью сами. Если порт зависит от области или округа, а вы уехали туда, где нужен другой, — приложение предложит сменить.</div>` : ''}`;
 }
@@ -2466,6 +2483,7 @@ function rxRegionWanted() {
   const dCur = rxDistToRegion(me, cur.code), dNear = rxDistToRegion(me, near.code);
   if (dCur < RX_REG_MIN_KM * 1000 || dNear > dCur * RX_REG_MARGIN) return null;   // у границы — не дёргаем
   const np = rxPreset(rxCfg.net, rxCfg.mode, near);
+  if (!np) return null;                                                 // у сети нет настроек для соседнего округа
   return np.port !== p.port ? { near, cur, port: np.port, old: p.port, mount: np.mount } : null;   // тот же порт (тот же округ) — менять нечего
 }
 // не мешать работе: пока открыто окно (замер, карточка, другой вопрос), идёт рисование или вынос — подсказку откладываем
@@ -3919,7 +3937,7 @@ function editStreetMark(p, s) {
     const next = { ...a };
     if (s.frac) for (const k of ['top', 'bot']) {
       const n = v[k] === '' ? '' : parseNum(v[k]);
-      if (n !== '' && isNaN(n)) { toast('Отметка — это число, например 120.62'); return false; }
+      if (n !== '' && !isFinite(n)) { toast('Отметка — это число, например 120.62'); return false; }
       next[k] = n;
     } else next.cover = v.cover;
     p.attr = next;
@@ -3943,7 +3961,7 @@ function editBuilding(line, isNew) {
     if ('purpose' in v) next.purpose = v.purpose;
     for (const k of ['hFloor', 'hBlind']) {
       const n = v[k] === '' ? '' : parseNum(v[k]);
-      if (n !== '' && isNaN(n)) { toast('Отметка — это число, например 16.98'); return false; }
+      if (n !== '' && !isFinite(n)) { toast('Отметка — это число, например 16.98'); return false; }
       next[k] = n;
     }
     line.attr = next;
@@ -3973,7 +3991,7 @@ function editRelief(line, isNew) {
     for (const k of ['h', 'width', 'top', 'bot']) {
       if (!(k in v)) continue;
       const n = v[k] === '' ? '' : parseNum(v[k]);
-      if (n !== '' && isNaN(n)) { toast('Нужно число, например 117.4'); return false; }
+      if (n !== '' && !isFinite(n)) { toast('Нужно число, например 117.4'); return false; }
       next[k] = n;
     }
     if ('flip' in v) next.flip = v.flip === '1';
@@ -4011,7 +4029,7 @@ function editRoad(line, isNew) {
     for (const k of ['width', 'hLow', 'hHigh']) {
       if (!(k in v)) continue;
       const n = v[k] === '' ? '' : parseNum(v[k]);
-      if (n !== '' && isNaN(n)) { toast('Нужно число, например 12.96'); return false; }
+      if (n !== '' && !isFinite(n)) { toast('Нужно число, например 12.96'); return false; }
       next[k] = n;
     }
     if (spec.stairs && !(next.width > 0)) { toast('Ширина — больше нуля, в метрах'); return false; }
@@ -6539,6 +6557,7 @@ if (window.ResizeObserver) new ResizeObserver(() => { const t = $('toast'); if (
 let backAt = 0;
 window.androidBack = () => {
   const vis = id => { const e = $(id); return !!e && getComputedStyle(e).display !== 'none'; };
+  if (vis('ar')) { if (arCalMode) arCalEnd(); else arClose(); return 'handled'; }   // наведение — сначала оно                        // камера AR — поверх всего
   if (vis('sheet')) { $('sheet').dispatchEvent(new MouseEvent('click', { bubbles: true })); return 'handled'; }   // как касание мимо окна: «Нет» в вопросах
   if (vis('card')) { hideCard(); return 'handled'; }
   if (lineChoose) { chooseEnd(); return 'handled'; }
@@ -6627,7 +6646,7 @@ function sketchThin(pts, tol) {                                       // упр�
 function sketchStart() {
   setMode(null); hideCard(); if (sketch) return;
   const host = map.getContainer(), ov = document.createElement('div'), svg = document.createElementNS(NS, 'svg');
-  ov.style.cssText = 'position:absolute;inset:0;z-index:1000;touch-action:none;cursor:crosshair'; svg.style.cssText = 'width:100%;height:100%;overflow:visible';
+  ov.style.cssText = 'position:absolute;top:0;right:0;bottom:0;left:0;z-index:1000;touch-action:none;cursor:crosshair'; svg.style.cssText = 'width:100%;height:100%;overflow:visible';
   ov.appendChild(svg); host.appendChild(ov);
   L.DomEvent.disableClickPropagation(ov); L.DomEvent.disableScrollPropagation(ov);
   for (const t of ['pointerdown', 'pointermove', 'pointerup', 'touchstart', 'touchmove', 'mousedown', 'mousemove']) L.DomEvent.on(ov, t, L.DomEvent.stopPropagation);
@@ -6739,11 +6758,13 @@ const shown = id => { const e = $(id); return !!e && e.style.display !== 'none' 
 function keyAct(e) {
   const k = e.key, ctrl = e.ctrlKey || e.metaKey, typing = isTyping(e.target), sheetOpen = shown('sheet');
   if (k === 'Escape') {
+    if (shown('ar')) { if (arCalMode) arCalEnd(); else arClose(); return true; }
     if (sheetOpen) { const no = $('askNo') || $('sheetPanel').querySelector('[data-close]'); if (no) no.click(); else closeSheet(); return true; }
     const back = shown('card') || lineChoose || (shiftJob && $('shiftBar')) || pickTool || (typeof cal !== 'undefined' && cal && shown('calBar')) || mode || (shown('stake') && $('stakeStop'));
     if (back) { window.androidBack(); return true; }                     // тот же порядок, что у «Назад» (без «нажмите ещё раз — свернётся»)
     return false;
   }
+  if (shown('ar')) return false;                                     // камера AR открыта — клавиши карте не нужны
   if (lineChoose || pickTool) return false;                            // идёт выбор линии или засечка — Enter, Del, Ctrl+Z не трогают съёмку
   if (typing || sheetOpen) return false;                               // в поле ввода и в открытом окне — клавиши его
   if (k === 'F1' || (k === '?' && !ctrl)) { keysHelp(); return true; }
@@ -6830,6 +6851,146 @@ $('cmdIn').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); if (cmdRun($('cmdIn').value)) cmdClose(); return; }
 });
 $('cmdIn').addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('cmdIn')) cmdClose(); }, 150));
+/* ───────────── AR, уровень 1–2: камера с подписями (подсказка «где примерно», не разбивка) ─────────────
+   Положение — GPS (или RTK-приёмник), направление камеры — компас телефона. Ошибка курса × расстояние = боковой сдвиг:
+   5° на 20 м ≈ 1,7 м. Поэтому у каждого объекта — круг ошибки, а на экране — уровень и точность. Копать по AR нельзя
+   (СП 45.13330 п. 11.19, СП 341.1325800 п. 13.1.7) — подтверждение трассоискателем или шурфом. */
+const AR_CAL_MS = 15 * 60 * 1000, AR_CAL_MIN_M = 10, AR_CAL_FLOOR = 3, AR_CAL_PICK = 25;   // калибровка живёт 15 мин; вешка не ближе 10 м; после неё курс не точнее ±3° (наведение, рука, уход компаса у металла); окно поиска — не уже 25°
+const AR_R_M = 150, AR_HFOV = 50, AR_EYE_M = 1.5, AR_COURSE_ERR = 8, AR_FPS_MS = 66, AR_DECL_ERR = 20, AR_ORIENT_MS = 10000;   // + склонение не получено (в России обычно до 15°, в Арктике и на аномалиях — больше 20°); компас молчит дольше 10 с — курса нет (в руке он обновляется постоянно)   // радиус показа, гориз. угол камеры (портрет), высота глаз, ошибка курса без калибровки, ~15 кадров/с
+// что умеет устройство — проверка функций, а не моделей; на неизвестном устройстве — тихо нижний уровень
+function arCaps() {
+  const md = typeof navigator !== 'undefined' && navigator.mediaDevices;
+  return { geo: !!(typeof navigator !== 'undefined' && navigator.geolocation), orient: typeof window !== 'undefined' && ('ondeviceorientationabsolute' in window || 'DeviceOrientationEvent' in window),
+    cam: !!(md && md.getUserMedia), xr: !!(typeof navigator !== 'undefined' && navigator.xr) };
+}
+// уровень: 0 — только карта; 1 — стрелка (GPS + компас); 2 — камера с подписями
+function arLevel(c, heading, camOk) { if (!c.geo || !c.orient || heading == null) return 0; return c.cam && camOk ? 2 : 1; }
+// круг ошибки на расстоянии d: ошибка положения + боковой сдвиг от ошибки курса
+function arErrM(d, posAcc, courseErr) { return (isFinite(posAcc) && posAcc > 0 ? posAcc : 5) + d * Math.tan((courseErr || AR_COURSE_ERR) * Math.PI / 180); }
+// калибровка: поправка = азимут на вешку − показание компаса; точность — atan(ошибка положения / расстояние до вешки), не лучше AR_CAL_FLOOR
+function arCalCompute(azTarget, heading, baseM, posErr, ptErr) {
+  const pe = Math.hypot(isFinite(posErr) && posErr > 0 ? posErr : 5, isFinite(ptErr) && ptErr > 0 ? ptErr : 0);   // телефон и точка плана
+  const e = Math.atan2(pe, Math.max(baseM, 0.01)) * 180 / Math.PI;
+  return { off: angDiff(azTarget, heading), err: Math.max(AR_CAL_FLOOR, Math.round(e * 10) / 10) };
+}
+// проекция точки на экран камеры: rel — угол от направления камеры (°, + вправо), elev — угол над горизонтом, pitch — наклон камеры вверх
+function arProject(rel, elev, pitch, W, H, hfov) {
+  const f = (W / 2) / Math.tan((hfov || AR_HFOV) * Math.PI / 360);
+  if (Math.abs(rel) >= 89) return null;
+  return { x: W / 2 + Math.tan(rel * Math.PI / 180) * f, y: H / 2 - Math.tan((elev - pitch) * Math.PI / 180) * f, f };
+}
+let arGen = 0, arCal = null, arCalMode = false, arCalPick = null;   // { off, err, at, name, d } — поправка курса; режим наведения; точка под перекрестием
+let arTilt = { beta: 90, gamma: 0 }, arStream = null, arTimer = 0, arCamOk = false, arOrientAt = 0, arOpening = false;
+addEventListener('deviceorientationabsolute', e => { if (e.beta != null) { arTilt = { beta: e.beta, gamma: e.gamma || 0 }; arOrientAt = Date.now(); } });
+const arBox = document.createElement('div'); arBox.id = 'ar';
+arBox.innerHTML = '<video id="arVid" autoplay playsinline muted></video><svg class="ov" id="arSvg"></svg><div class="bar"><div class="lvl" id="arLvl"></div><button class="cb" id="arCalBtn">Курс</button><button class="x" id="arX" aria-label="Закрыть камеру">×</button></div>'
+  + '<div class="calbar" id="arCalBar"><div id="arCalTxt"></div><div class="row"><button class="no" id="arCalNo">Отмена</button><button class="go" id="arCalGo" disabled>Совместить</button></div></div>'
+  + '<div class="msg" id="arMsg"></div><div class="warn">Подсказка, не разбивка. Копать по картинке нельзя — сеть подтверждают трассоискателем или шурфом (СП 45 п. 11.19)</div>';
+document.body.appendChild(arBox);
+function arMe() { return gps && Date.now() - gps.at < AIM_STALE_MS ? { ll: L.latLng(gps.lat, gps.lng), acc: gps.acc, src: rxLive() ? 'приёмник' : 'GPS' } : null; }
+// камера смотрит вверх на (pitch): телефон вертикально — 0°, наклон к земле — минус
+const arLandscape = () => Math.abs(((screen.orientation && screen.orientation.angle) || 0) % 180) === 90;
+function arPitch() { return arTilt.beta - 90; }                         // телефон вертикально (портрет): beta 90° — камера на горизонт
+function arDraw() {
+  const svg = $('arSvg'), W = arBox.clientWidth, H = arBox.clientHeight, c = arCaps(), me = arMe();
+  const hdRaw = compassDeg != null && Date.now() - arOrientAt < AR_ORIENT_MS ? compassDeg : null;   // старый курс — не курс
+  const cal = arCal && Date.now() - arCal.at < AR_CAL_MS ? arCal : null;   // калибровка поглощает и склонение
+  const hd = hdRaw == null ? null : (hdRaw + (cal ? cal.off - (magDecl - cal.decl) : 0) + 360) % 360;   // компас уже содержит склонение: его прирост после калибровки вычитаем
+  const courseErr = cal ? cal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR), lvl = arLevel(c, hd, arCamOk);
+  const calTxt = cal ? ` (калибровка по «${esc(cal.name)}», ${Math.max(1, Math.round((Date.now() - cal.at) / 60000))} мин назад)` : arCal ? ' — калибровка устарела, нажмите «Курс»' : magDeclOk ? ' (без калибровки — «Курс»)' : ' — склонение неизвестно, нажмите «Курс»';
+  const accTxt = a => mText(a, a < 1 ? 2 : 1);
+  $('arLvl').innerHTML = `<b>Уровень ${lvl}: ${lvl === 2 ? 'камера + компас' : lvl === 1 ? 'стрелка: GPS + компас (камеры нет)' : 'нет компаса — только карта'}</b><br>`
+    + (me ? `Точность ±${accTxt(arErrM(20, me.acc, courseErr))} м на 20 м · курс ±${Number.isInteger(courseErr) ? courseErr : mText(courseErr, 1)}°${calTxt} · ${esc(me.src)} ±${accTxt(isFinite(me.acc) && me.acc > 0 ? me.acc : 5)} м` : 'Нет свежего GPS — подписи не рисую');
+  const why = !me ? 'Жду GPS. Без своего положения подписи легли бы не туда — выйдите на открытое место.' : arLandscape() ? 'Держите телефон вертикально: в альбомной ориентации направление камеры считается неверно.'
+    : hd == null ? (compassDeg != null ? 'Компас давно не обновлялся — пошевелите телефон или покачайте его восьмёркой.' : 'Компас телефона не отвечает — направление неизвестно. Покачайте телефон восьмёркой или откройте на устройстве с компасом.') : '';
+  $('arMsg').style.display = why ? 'block' : 'none'; $('arMsg').textContent = why;
+  if (why) { svg.innerHTML = ''; if (arCalMode) { arCalPick = null; $('arCalGo').disabled = true; $('arCalGo').textContent = 'Совместить'; $('arCalTxt').textContent = why; } return; }
+  const pitch = arPitch(), sw = me.ll, gam = gammaAt(sw), zone = zoneOf(sw.lng), o = planeXY(sw, zone), k = gkScale(sw);
+  const items = [], P = (ll, near) => {                                 // объект → экран
+    const d = groundDist(sw, ll); if (d > AR_R_M || d < 0.3) return null;
+    const az = (planeInverse(sw, L.latLng(ll)).dir + gam + 360) % 360, rel = angDiff(az, hd);
+    const pr = arProject(rel, -Math.atan2(AR_EYE_M, d) * 180 / Math.PI, pitch, W, H); return pr ? { ...pr, d, rel } : { d, rel, off: true };
+  };
+  let s = '';
+  for (const l of data.lines) {                                         // линии: куски по ~2 м в радиусе показа
+    let path = '', prev = null;
+    for (let i = 0; i + 1 < l.latlngs.length + ((LINES[l.type] || {}).closed ? 1 : 0); i++) {
+      const a = L.latLng(l.latlngs[i]), b = L.latLng(l.latlngs[(i + 1) % l.latlngs.length]), pa = planeXY(a, zone), pb = planeXY(b, zone);
+      if (segPx(o, pa, pb) > AR_R_M * k) { prev = null; continue; }      // отрезок далеко — не считаем
+      const n = Math.min(60, Math.max(1, Math.ceil(Math.hypot(pb.x - pa.x, pb.y - pa.y) / k / 2)));
+      for (let j = 0; j <= n; j++) { const q = P([a.lat + (b.lat - a.lat) * j / n, a.lng + (b.lng - a.lng) * j / n]);
+        if (q && !q.off && q.x > -W && q.x < 2 * W && q.y > -H && q.y < 2 * H) { path += (prev ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); prev = q; } else prev = null; }
+    }
+    if (path) { const col = l.color || (LINES[l.type] || {}).color || '#ffeb3b'; s += `<path d="${path}" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="7" stroke-linejoin="round"/><path d="${path}" fill="none" stroke="${esc(col)}" stroke-width="4" stroke-linejoin="round"/>`; }
+  }
+  for (const p of data.points) { const q = P([p.lat, p.lng]); if (q && !q.off && q.x > -40 && q.x < W + 40 && q.y > -40 && q.y < H + 40) items.push({ q, p, t: pointLabel(p) || ((POINTS[p.type] || POINTS.mark).name + (p.no ? ' № ' + p.no : '')) }); }
+  items.sort((a, b) => b.q.d - a.q.d);                                  // ближние — поверх дальних
+  for (const { q, t, p } of items) {
+    const r = Math.max(6, Math.min(W, arErrM(q.d, me.acc, courseErr) / q.d * q.f));   // круг ошибки на этом расстоянии
+    s += `<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="${r.toFixed(1)}" fill="rgba(255,235,59,.12)" stroke="#ffeb3b" stroke-width="2" stroke-dasharray="6 5"/><circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="5" fill="#ffeb3b" stroke="#000" stroke-width="1.5"/>`
+      + (arCalMode ? '' : `<text x="${(q.x + 9).toFixed(1)}" y="${(q.y - 8).toFixed(1)}">${esc(t)} · ${esc(distText(q.d))}</text>`);   // при наведении подписи не налезают на перекрестие — имя точки в кнопке внизу
+  }
+  if (stake && stake.ll) {                                             // цель выноса: на экране — кольцо, за краем — стрелка с расстоянием
+    const q = P(stake.ll), d = groundDist(sw, stake.ll);
+    if (q && !q.off && q.x > 0 && q.x < W) s += `<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="16" fill="none" stroke="#ff6d00" stroke-width="4"/><text x="${(q.x + 20).toFixed(1)}" y="${(q.y + 5).toFixed(1)}">цель · ${esc(distText(d))}</text>`;
+    else { const rel = angDiff((planeInverse(sw, stake.ll).dir + gam + 360) % 360, hd), right = rel > 0, x = right ? W - 30 : 30, y = H / 2;
+      s += `<path d="M${x} ${y - 26}L${right ? x + 22 : x - 22} ${y}L${x} ${y + 26}Z" fill="#ff6d00" stroke="#000" stroke-width="2"/><text x="${right ? x - 8 : x + 8}" y="${y + 46}" text-anchor="${right ? 'end' : 'start'}">цель ${esc(distText(d))} · ${right ? 'правее' : 'левее'} ${Math.round(Math.abs(rel))}°</text>`; }
+  }
+  if (arCalMode) {                                                      // наведение: перекрестие и ближайшая к нему точка 10–150 м
+    arCalPick = null;
+    const win = Math.min(40, Math.max(AR_CAL_PICK, courseErr + 5)), cands = [];
+    for (const p of data.points) {
+      const d = groundDist(sw, [p.lat, p.lng]); if (d < AR_CAL_MIN_M || d > AR_R_M) continue;
+      const az = (planeInverse(sw, L.latLng(p.lat, p.lng)).dir + gam + 360) % 360, rel = angDiff(az, hd);
+      if (Math.abs(rel) <= win) cands.push({ p, d, az, rel, name: pointLabel(p) || ((POINTS[p.type] || POINTS.mark).name + (p.no ? ' № ' + p.no : '')) });
+    }
+    cands.sort((a, b) => Math.abs(a.rel) - Math.abs(b.rel));
+    const amb = cands.length > 1 && Math.abs(cands[1].rel) <= courseErr;   // вторая точка тоже в пределах ошибки компаса — не понять, на какую из них вы смотрите
+    if (cands.length && !amb) arCalPick = cands[0];
+    if (arCalPick) { const q = P([arCalPick.p.lat, arCalPick.p.lng]); if (q && !q.off) s += `<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="13" fill="none" stroke="#000" stroke-width="6"/><circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="13" fill="none" stroke="#76ff03" stroke-width="3"/>`; }   // эту точку совместим
+    s += `<path d="M${W / 2 - 26} ${H / 2}H${W / 2 - 6}M${W / 2 + 6} ${H / 2}H${W / 2 + 26}M${W / 2} ${H / 2 - 26}V${H / 2 - 6}M${W / 2} ${H / 2 + 6}V${H / 2 + 26}" stroke="#000" stroke-width="5"/><path d="M${W / 2 - 26} ${H / 2}H${W / 2 - 6}M${W / 2 + 6} ${H / 2}H${W / 2 + 26}M${W / 2} ${H / 2 - 26}V${H / 2 - 6}M${W / 2} ${H / 2 + 6}V${H / 2 + 26}" stroke="#76ff03" stroke-width="2.5"/>`;
+    $('arCalTxt').textContent = amb ? `Рядом две точки («${cands[0].name}» и «${cands[1].name}») — компас не различит, на какую вы смотрите. Отойдите или наведитесь на точку, рядом с которой других нет.` : arCalPick ? `Наведите перекрестие точно на «${arCalPick.name}» (${distText(arCalPick.d)}) — вешку или пикет на местности — и нажмите «Совместить». Чем дальше точка, тем точнее курс.`
+      : 'Наведите перекрестие на известную точку плана в 10–150 м (вешка, пикет, угол здания) — она подсветится.';
+    $('arCalGo').disabled = !arCalPick; $('arCalGo').textContent = arCalPick ? 'Совместить: ' + arCalPick.name : 'Совместить';
+  }
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.innerHTML = s;
+}
+function arCalStart() { arCalMode = true; arCalPick = null; $('arCalBar').style.display = 'block'; arDraw(); }
+function arCalEnd() { arCalMode = false; arCalPick = null; $('arCalBar').style.display = 'none'; }
+function arCalApply() {
+  const me = arMe(), raw = compassDeg != null && Date.now() - arOrientAt < AR_ORIENT_MS ? compassDeg : null, pk = arCalPick;
+  if (!me || raw == null || !pk) { toast('Нет GPS или компаса — калибровать не по чему'); return; }
+  const ptErr = pk.p.q && pk.p.q.acc != null ? pk.p.q.acc : pk.p.approx != null ? pk.p.approx : 5;   // точка без известной точности (по подложке, с чертежа) — ±5 м, а не «точная»
+  const cur = arCal && Date.now() - arCal.at < AR_CAL_MS ? arCal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR);
+  const r = arCalCompute(pk.az, raw, pk.d, me.acc, ptErr), was = cur;
+  if (r.err > was) { toast(`Калибровка по этой точке дала бы ±${mText(r.err, 1)}° — не лучше нынешних ±${mText(was, 1)}°. Возьмите точку дальше или дождитесь точного GPS`); return; }
+  arCal = { ...r, at: Date.now(), name: pk.name, d: pk.d, decl: magDecl }; arCalEnd(); arDraw();
+  toast(`Курс откалиброван по «${pk.name}»: поправка ${r.off >= 0 ? '+' : '−'}${mText(Math.abs(r.off), 1)}°, точность ±${mText(r.err, 1)}°. Действует 15 минут`);
+}
+async function arOpen() {
+  if (arOpening) return;
+  const c = arCaps();
+  if (!c.geo || !c.orient) { toast('На этом устройстве нет GPS или компаса — AR недоступен, остаётся карта и «Вынос»'); return; }
+  arStop(); arOpening = true; arBox.style.display = 'block'; arCamOk = false; startGps();
+  const gen = ++arGen;                                                 // закрыли и открыли, пока ждали разрешения, — поток от старого открытия не нужен
+  if (c.cam) {
+    try { const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      if (gen !== arGen) { st.getTracks().forEach(t => t.stop()); return; }
+      arStream = st; $('arVid').srcObject = arStream; arCamOk = true; }
+    catch (e) { if (gen !== arGen) return; arStream = null; toast('Камера не открылась' + (e && e.name === 'NotAllowedError' ? ' — разрешите доступ к камере' : '') + ': показываю подписи на чёрном фоне (уровень 1)'); }
+  }
+  if (gen !== arGen) return;
+  arOpening = false;
+  if (arBox.style.display !== 'block') { arStop(); return; }            // закрыли, пока ждали разрешения
+  clearInterval(arTimer); arDraw(); arTimer = setInterval(arDraw, AR_FPS_MS);
+}
+function arStop() { clearInterval(arTimer); arTimer = 0; if (arStream) { arStream.getTracks().forEach(t => t.stop()); arStream = null; } $('arVid').srcObject = null; arCamOk = false; }
+function arClose() { arStop(); arCalEnd(); arOpening = false; arGen++; arBox.style.display = 'none'; }
+$('arX').onclick = arClose;
+$('arCalBtn').onclick = () => (arCalMode ? arCalEnd() : arCalStart());
+$('arCalNo').onclick = arCalEnd;
+$('arCalGo').onclick = arCalApply;
+document.addEventListener('visibilitychange', () => { if (document.hidden && arBox.style.display === 'block' && !arOpening) arClose(); });   // свернули — камера не работает в фоне
 // мышь: где курсор над картой (null — ушёл с карты или сенсор)
 let deskCursor = null, hoverAt = null, hoverRaf = 0;
 function aimAt() { return deskCursor && deskOn() ? deskCursor : map.getCenter(); }
@@ -7007,11 +7168,11 @@ async function loadMyMap() {
 }
 function openMyMaps() {
   const rows = myMaps.map(m => `<div class="meas-row"><span style="flex:1;min-width:0"><b>${esc(m.name)}</b><br><span style="color:var(--muted)">${esc(m.file || '')} · ${mbText(m.size || 0)} · ${m.kind === 'tiff' ? `снимок GeoTIFF ${m.w}×${m.h} · ${esc(m.crsName || 'система не задана')}` : `масштабы ${m.minzoom}–${m.maxzoom} · ${esc(String(m.format || '').toUpperCase())}`}</span></span>
-    <button class="btn" data-mop="${m.id}">${(MY_MAP_OPS.find(o => o[0] === (m.op != null ? m.op : 1)) || MY_MAP_OPS[0])[1]}</button>
-    <button class="btn" data-mshow="${m.id}">Показать</button><button class="x" data-mdel="${m.id}" aria-label="Удалить">🗑</button></div>`).join('');
+    <button class="btn" data-mop="${esc(m.id)}">${(MY_MAP_OPS.find(o => o[0] === (m.op != null ? m.op : 1)) || MY_MAP_OPS[0])[1]}</button>
+    <button class="btn" data-mshow="${esc(m.id)}">Показать</button><button class="x" data-mdel="${esc(m.id)}" aria-label="Удалить">🗑</button></div>`).join('');
   const drows = myDxf.map(m => `<div class="meas-row"><span style="flex:1;min-width:0"><b>📐 ${esc(m.name)}</b><br><span style="color:var(--muted)">${esc(m.file || '')} · ${mbText(m.size || 0)} · ${esc(m.crsName || '')} · ${m.n ? m.n.lines + ' ' + plural(m.n.lines, 'линия', 'линии', 'линий') + ', ' + m.n.texts + ' ' + plural(m.n.texts, 'подпись', 'подписи', 'подписей') : ''}</span></span>
-    <button class="btn" data-dop="${m.id}">${(DXF_OPS.find(o => o[0] === (m.op != null ? m.op : 1)) || DXF_OPS[0])[1]}</button>
-    <button class="btn" data-dshow="${m.id}">Показать</button><button class="x" data-ddel="${m.id}" aria-label="Удалить">🗑</button></div>`).join('');
+    <button class="btn" data-dop="${esc(m.id)}">${(DXF_OPS.find(o => o[0] === (m.op != null ? m.op : 1)) || DXF_OPS[0])[1]}</button>
+    <button class="btn" data-dshow="${esc(m.id)}">Показать</button><button class="x" data-ddel="${esc(m.id)}" aria-label="Удалить">🗑</button></div>`).join('');
   showSheet(`<div class="sh-head"><b>Мои карты</b><button class="x" data-close>×</button></div>
     <div class="row2"><button class="btn primary" id="mLoad">＋ Карта или снимок (MBTiles, GeoTIFF)</button><button class="btn primary" id="mDxf">＋ Чертёж (DXF)</button></div>
     <div class="hint" style="margin:6px 0 10px"><b>Карта MBTiles</b> — растровые плитки из SAS.Planet, QGIS, MOBAC. <b>Снимок GeoTIFF</b> — ортофото, скан с привязкой (СК-42, UTM, WGS-84 — определяется сам, иначе спрошу). <b>Чертёж DXF</b> — топоплан или проект из AutoCAD, nanoCAD, GeoniCS, КРЕДО
@@ -7948,6 +8109,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'rain', icon: '☂', text: 'Дождь: касание карты не ставит точку', on: rainOn, check: true },
   { id: 'desk', icon: '🖱', text: 'Режим «компьютер»: мышь и клавиатура' + (deskPref === 'auto' ? ' (сам — при мыши)' : ''), on: deskOn(), check: true },
   ...(deskOn() ? [{ id: 'keyshelp', icon: '⌨', text: 'Клавиши и мышь — справка (F1)' }] : []),
+  { id: 'ar', icon: '📷', text: 'Камера: объекты плана поверх (AR — подсказка)' },
   { header: 'Объект' },
   { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || ((projectList().find(p => p.id === projectId) || {}).name) || 'без названия') + ' — сменить, новый' },
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
@@ -8061,6 +8223,7 @@ const MENU = {
   voice: () => { voiceOn = !voiceOn; setPref('voice', voiceOn); if (voiceOn) say('В допуске, плюс-минус 2 сантиметра'); toast(voiceOn ? 'Результат измерения будет озвучен' : 'Без голоса'); },
   desk: () => { const next = deskOn() ? 'off' : 'on'; deskPref = (next === 'on') === deskAuto() ? 'auto' : next; setPref('desk', deskPref); if (next === 'off') deskCursorOff(); deskApply(); toast(deskOn() ? 'Режим «компьютер» включён: F1 — клавиши' : 'Режим «компьютер» выключен'); },
   keyshelp: () => keysHelp(),
+  ar: () => { closeSheet(); arOpen(); },
   glove: () => { gloveOn = !gloveOn; setPref('glove', gloveOn); document.body.classList.toggle('glove', gloveOn); toast(gloveOn ? 'Крупные кнопки включены' : 'Обычные кнопки'); },
   rain: () => { rainOn = !rainOn; setPref('rain', rainOn); toast(rainOn ? 'Дождь: точки ставятся только кнопками — капли и мокрая перчатка не наставят лишнего' : 'Касание карты снова ставит точку'); },
   kmz: () => exportKmz(),
@@ -8426,7 +8589,7 @@ const photoGet = id => photoTx('readonly', st => st.get(id));
 const photoPut = rec => photoTx('readwrite', st => st.put(rec));
 // направление съёмки — по компасу телефона, если он есть
 let heading = null;
-addEventListener('deviceorientationabsolute', e => { if (e.alpha != null) heading = Math.round((360 - e.alpha) % 360); });
+addEventListener('deviceorientationabsolute', e => { if (e.alpha != null) heading = Math.round(360 - e.alpha) % 360; });   // округлить, потом по кругу: 359,7° — это 0°, а не 360°
 const photoInput = document.createElement('input');
 photoInput.type = 'file'; photoInput.accept = 'image/*'; photoInput.setAttribute('capture', 'environment'); photoInput.style.display = 'none';
 document.body.appendChild(photoInput);
@@ -8438,6 +8601,15 @@ function takePhoto() {
       const file = photoInput.files[0];
       if (!file) { resolve(null); return; }
       try { resolve(await shrinkPhoto(file)); } catch (e) { toast('Не удалось обработать фото'); resolve(null); }
+    };
+    photoInput.oncancel = () => {                                      // отменили съёмку или камера запрещена (с AR-подсказкой приложение просит разрешение на камеру)
+      ask('Фото не снято. Взять снимок из галереи? Если камера не открывается — разрешите её: Настройки Android → Приложения → Полевой план → Разрешения → Камера', 'Из галереи').then(ok => {
+        if (!ok) { resolve(null); return; }
+        const g = document.createElement('input'); g.type = 'file'; g.accept = 'image/*';   // без capture — галерея, разрешение на камеру не нужно
+        g.onchange = async () => { const f = g.files[0]; if (!f) { resolve(null); return; } try { resolve(await shrinkPhoto(f)); } catch (e) { toast('Не удалось обработать фото'); resolve(null); } };
+        g.oncancel = () => resolve(null);
+        g.click();
+      });
     };
     photoInput.click();
   });
@@ -8678,6 +8850,7 @@ const DXF_STYLE = 'GOST';                                              // сти
 // Рамка листа и штамп для DXF (слои «РАМКА», «ШТАМП» — их можно отключить). Формат — наименьший из А4…А0, куда план
 // входит в масштабе 1:500 над штампом; не входит и в А0 — рамка по размеру плана. Штамп — 185×55 мм, графы по ГОСТ Р 21.101 (форма 3)
 const SHEETS = [['А4', 297, 210], ['А3', 420, 297], ['А2', 594, 420], ['А1', 841, 594], ['А0', 1189, 841]];
+const DXF_CHAR_W = 0.7;                                                 // средняя ширина буквы isocpeur с пробелами, доля высоты (проверено в AutoCAD 2027: ~0,66 — берём с запасом)
 const FR = { left: 20, other: 5, gap: 10, stampW: 185, stampH: 55, noteH: 22 };   // поля и штамп, мм листа
 const GRID_MM = 100;                                                   // координатная сетка — через 10 см (50 м на 1:500)
 const GRID_MAX = 5000, SHEET_MAX_MM = 5000;                             // больше — сбойная точка или две зоны: сетку и рамку не рисуем
@@ -8699,7 +8872,7 @@ function dxfFrame(box, ent, useLayer) {
     for (const [mx, my] of [[ax, ay], [bx, ay], [bx, by], [ax, by]]) { const [x, y] = P(mx, my); ent(0, 'VERTEX', 8, lay, 10, x, 20, y, 30, 0); } ent(0, 'SEQEND', 8, lay); };
   const line = (lay, ax, ay, bx, by) => { const [x1, y1] = P(ax, ay), [x2, y2] = P(bx, by); ent(0, 'LINE', 8, lay, 10, x1, 20, y1, 30, 0, 11, x2, 21, y2, 31, 0); };
   const text = (lay, mx, my, hmm, s, maxMm) => { if (!s) return; let t = String(s);
-    const fit = maxMm ? Math.floor(maxMm / (hmm * 0.62)) : 999; if (t.length > fit) t = t.slice(0, Math.max(1, fit - 1)) + '…';
+    const fit = maxMm ? Math.floor(maxMm / (hmm * DXF_CHAR_W)) : 999; if (t.length > fit) t = t.slice(0, Math.max(1, fit - 1)) + '…';
     const [x, y] = P(mx, my); ent(0, 'TEXT', 8, lay, 10, x, 20, y, 30, 0, 40, f3(hmm * k), 1, t, 7, DXF_STYLE); };
   rect(lf, 0, 0, sh.W, sh.H);                                          // граница листа — тонкая
   const R = { l: FR.left, b: FR.other, r: sh.W - FR.other, t: sh.H - FR.other };
@@ -8740,7 +8913,10 @@ function dxfFrame(box, ent, useLayer) {
   const notes = [`Система координат: ${planeName()}. Система высот: ${heightsText()}.`,
     [m.receiver ? 'Приёмник ' + m.receiver + (m.serial ? ', зав. № ' + m.serial : '') : '', m.verif ? 'поверка ' + m.verif : '', m.ntrip ? 'поправки: ' + m.ntrip : ''].filter(Boolean).join('; '),
     `Высота антенны ${mText(antH, 3)} м. Съёмка «Полевой план», сборка ${APP_BUILD}, ${day}.`].filter(Boolean);
-  notes.forEach((t, i) => text(ls, X(0), Y(55 + 3 + (notes.length - 1 - i) * 4.5), 2.2, t, FR.stampW));
+  const NOTE_H = 2.2, NOTE_STEP = 3.6, NOTE_MAX = 5, per = Math.floor(FR.stampW / (NOTE_H * DXF_CHAR_W));   // переносим по словам, а не обрезаем: «без привязки к реперу» терять нельзя
+  const lines = notes.flatMap(t => t.split(' ').reduce((acc, w) => { const last = acc[acc.length - 1]; if (last != null && (last + ' ' + w).length <= per) acc[acc.length - 1] = last + ' ' + w; else acc.push(w); return acc; }, []));
+  if (lines.length > NOTE_MAX) { lines.length = NOTE_MAX; lines[NOTE_MAX - 1] = lines[NOTE_MAX - 1].slice(0, per - 1) + '…'; }   // больше 5 строк не помещается над штампом
+  lines.forEach((t, i) => text(ls, X(0), Y(55 + 3 + (lines.length - 1 - i) * NOTE_STEP), NOTE_H, t, FR.stampW));
   // общая граница чертежа — по листу
   box.splice(0, 4, x0, y0, x0 + sh.W * k, y0 + sh.H * k);
   return sh;
@@ -9762,7 +9938,7 @@ function parseKml(text) {
       const [lng, lat] = c0;
       const type = POINTS[ext.tk_type] ? ext.tk_type : 'mark';
       add.points.push({ id: objId(ext.tk_id), type, lat, lng, name: ext.tk_type ? (ext.tk_name || '') : name,
-        h: ext.tk_h != null && ext.tk_h !== '' ? Number(ext.tk_h) : null, note: ext.tk_note || '', ...readExtras(ext) });
+        h: ext.tk_h != null && ext.tk_h !== '' && isFinite(Number(ext.tk_h)) ? Number(ext.tk_h) : null, note: ext.tk_note || '', ...readExtras(ext) });
     } else if (ls) {
       const type = LINES[ext.tk_type] ? ext.tk_type : 'plain';
       let latlngs = coords(ls).map(c => [c[1], c[0]]), attr;
@@ -9968,18 +10144,22 @@ const GridLayer = L.Layer.extend({
     const fh = fontPx + 2;
     const PAD = 3;                                                     // запас на нижние выносные элементы букв и белую обводку
     const doneX = new Set(), doneY = new Set();
+    // плашки поверх карты (верхняя строка, нижняя панель, масштаб, кнопки, авторство) — подпись под ними не видна, не ставим
+    const mr = m.getContainer().getBoundingClientRect(), ui = [...document.querySelectorAll('#top, #bar, #scale, #fabs, .leaflet-control-zoom, .leaflet-control-attribution, #fabCompass, #fabUndo, #fabRedo, #fabPlus')]
+      .map(e => e.getBoundingClientRect()).filter(b => b.width > 0 && b.height > 0).map(b => ({ x: b.left - mr.left, y: b.top - mr.top, w: b.width, h: b.height }));
+    const underUi = q => ui.some(u => q.x < u.x + u.w && q.x + q.w > u.x && q.y < u.y + u.h && q.y + q.h > u.y);
     for (const { c, deg, x, y } of labels.slice().sort((p, q) => p.y - q.y)) {   // X — с запада (слева), одна на линию
       if (doneX.has(x)) continue;
       const cc = m.layerPointToContainerPoint(c), sx = 'X – ' + lbl(x, fullX), wx = textWidth(sx, fontPx, true) + 2;
       const bx = { x: cc.x + gap - PAD, y: cc.y - 3 - fh - PAD, w: wx + 2 * PAD, h: fh + 2 * PAD + 2 };
-      if (cc.x < 0 || cc.x + gap + wx > size.x || cc.y < fh + 4 || hits(bx, null)) continue;
+      if (cc.x < 0 || cc.x + gap + wx > size.x || cc.y < fh + 4 || underUi(bx) || hits(bx, null)) continue;
       t(`translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(${deg.toFixed(2)})`, sx); doneX.add(x);
     }
     for (const { c, deg, x, y } of labels.slice().sort((p, q) => p.x - q.x)) {   // Y — с юга (снизу), одна на линию
       if (doneY.has(y)) continue;
       const cc = m.layerPointToContainerPoint(c), sy = 'Y – ' + lbl(y, fullY), wy = textWidth(sy, fontPx, true) + 2;
       const by = { x: cc.x - 3 - fh - PAD, y: cc.y - gap - wy - PAD, w: fh + 2 * PAD + 2, h: wy + 2 * PAD };
-      if (cc.y > size.y || cc.y - gap - wy < 0 || cc.x < fh + 4 || hits(by, null)) continue;
+      if (cc.y > size.y || cc.y - gap - wy < 0 || cc.x < fh + 4 || underUi(by) || hits(by, null)) continue;
       t(`translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(${(deg - 90).toFixed(2)})`, sy); doneY.add(y);
     }
   }
