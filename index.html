@@ -1999,7 +1999,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 112;
+const APP_BUILD = 113;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -10063,7 +10063,7 @@ function parseKml(text) {
 }
 // чтение ZIP/KMZ: { имя → Uint8Array }; сжатые записи распаковывает сам браузер (deflate-raw)
 // пределы распаковки ZIP (защита от «архивной бомбы», см. readZip)
-const ZIP_TOTAL_MAX = 300 * (1 << 20), ZIP_BIG = 50 * (1 << 20), ZIP_RATIO_MAX = 200;
+const ZIP_TOTAL_MAX = 300 * (1 << 20), ZIP_BIG = 50 * (1 << 20), ZIP_RATIO_MAX = 200, ZIP_PHOTO_RATIO = 20, ZIP_PHOTO_MIN = 64 * 1024;   // фото: снимок почти не сжимается — сжатое в 20 раз и больше (от 64 КБ) не фото
 async function readZip(u8) {
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), dec = new TextDecoder();
   let eocd = -1;
@@ -10073,13 +10073,15 @@ async function readZip(u8) {
   // Распакованного всего — не больше 300 МБ; отдельный файл больше 50 МБ, сжатый сильнее чем в 200 раз, — подделка (снимки и KML
   // так не жмутся). Несжатые записи не считаем: это куски уже прочитанного файла, памяти они не добавляют (полная копия с фото — вся такая)
   let total = 0;
-  const inflate = async raw => {
+  const inflate = async (raw, name) => {
+    const photo = /(^|\/)photo_[^/]*\.jpe?g$/i.test(name || '');
     const reader = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader(), parts = [];
     let size = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length; total += value.length;
+      if (photo && size > ZIP_PHOTO_MIN && size > raw.length * ZIP_PHOTO_RATIO) { await reader.cancel().catch(() => {}); throw new Error(`копия повреждена или подделана: «${name}» сжато так, как настоящие снимки не сжимаются`); }
       if (total > ZIP_TOTAL_MAX || (size > ZIP_BIG && size > raw.length * ZIP_RATIO_MAX)) { await reader.cancel().catch(() => {}); throw new Error('архив распаковывается в слишком большой объём — похоже на испорченный файл'); }
       parts.push(value);
     }
@@ -10115,7 +10117,7 @@ async function readZip(u8) {
   for (const e of list) {
     const raw = u8.subarray(e.start, e.start + e.csize);
     if (e.method === 0) out[e.name] = raw;
-    else if (e.method === 8) out[e.name] = await inflate(raw);
+    else if (e.method === 8) out[e.name] = await inflate(raw, e.name);
   }
   return out;
 }
