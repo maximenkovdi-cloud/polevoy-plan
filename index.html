@@ -1992,7 +1992,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 107;
+const APP_BUILD = 108;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -6861,7 +6861,7 @@ $('cmdIn').addEventListener('blur', () => setTimeout(() => { if (document.active
    5° на 20 м ≈ 1,7 м. Поэтому у каждого объекта — круг ошибки, а на экране — уровень и точность. Копать по AR нельзя
    (СП 45.13330 п. 11.19, СП 341.1325800 п. 13.1.7) — подтверждение трассоискателем или шурфом. */
 const AR_CAL_MS = 15 * 60 * 1000, AR_CAL_MIN_M = 10, AR_CAL_FLOOR = 3, AR_CAL_PICK = 25;   // калибровка живёт 15 мин; вешка не ближе 10 м; после неё курс не точнее ±3° (наведение, рука, уход компаса у металла); окно поиска — не уже 25°
-const AR_R_M = 150, AR_HFOV = 50, AR_EYE_M = 1.5, AR_COURSE_ERR = 8, AR_FPS_MS = 66, AR_DECL_ERR = 20, AR_ORIENT_MS = 10000;   // + склонение не получено (в России обычно до 15°, в Арктике и на аномалиях — больше 20°); компас молчит дольше 10 с — курса нет (в руке он обновляется постоянно)   // радиус показа, гориз. угол камеры (портрет), высота глаз, ошибка курса без калибровки, ~15 кадров/с
+const AR_R_M = 150, AR_HFOV = 50, AR_EYE_M = 1.5, AR_COURSE_ERR = 8, AR_FPS_MS = 66, AR_DECL_ERR = 20, AR_DEPTH_MAX = 30, AR_RTK_OUT_M = 0.08, AR_ANT_OFFSET_M = 0.5, AR_ORIENT_MS = 10000;   // + склонение не получено (в России обычно до 15°, в Арктике и на аномалиях — больше 20°); компас молчит дольше 10 с — курса нет (в руке он обновляется постоянно)   // радиус показа, гориз. угол камеры (портрет), высота глаз, ошибка курса без калибровки, ~15 кадров/с
 // что умеет устройство — проверка функций, а не моделей; на неизвестном устройстве — тихо нижний уровень
 function arCaps() {
   const md = typeof navigator !== 'undefined' && navigator.mediaDevices;
@@ -6869,7 +6869,15 @@ function arCaps() {
     cam: !!(md && md.getUserMedia), xr: !!(typeof navigator !== 'undefined' && navigator.xr) };
 }
 // уровень: 0 — только карта; 1 — стрелка (GPS + компас); 2 — камера с подписями
-function arLevel(c, heading, camOk) { if (!c.geo || !c.orient || heading == null) return 0; return c.cam && camOk ? 2 : 1; }
+function arLevel(c, heading, camOk, rtk) { if (!c.geo || !c.orient || heading == null) return 0; const l = c.cam && camOk ? 2 : 1; return l === 2 && rtk ? 4 : l; }   // 4 — положение от RTK-приёмника (уровень 3 — WebXR, его нет в WebView)
+// глубина подземной сети — подписью у линии (сама линия — в плане, на поверхности: нарисованная «на глубине» поверх земли казалась бы ближе, чем лежит)
+function arDepthTxt(l) {
+  if (!['indexed', 'cable'].includes((LINES[l.type] || {}).kind)) return '';   // ЛЭП и воздушная связь — не под землёй
+  const v = [...(l.tdep || []), ...(l.tdep && l.tdep.some(hasH) ? [] : [l.attr && l.attr.depth])].filter(hasH).map(Number).filter(d => d > 0 && d < AR_DEPTH_MAX);
+  if (!v.length) return '';
+  const a = Math.min(...v), b = Math.max(...v);
+  return 'глуб. ' + (b - a < 0.05 ? mText(a, 1) : mText(a, 1) + '–' + mText(b, 1)) + ' м';
+}
 // круг ошибки на расстоянии d: ошибка положения + боковой сдвиг от ошибки курса
 function arErrM(d, posAcc, courseErr) { return (isFinite(posAcc) && posAcc > 0 ? posAcc : 5) + d * Math.tan((courseErr || AR_COURSE_ERR) * Math.PI / 180); }
 // калибровка: поправка = азимут на вешку − показание компаса; точность — atan(ошибка положения / расстояние до вешки), не лучше AR_CAL_FLOOR
@@ -6881,11 +6889,11 @@ function arCalCompute(azTarget, heading, baseM, posErr, ptErr) {
 // проекция точки на экран камеры: rel — угол от направления камеры (°, + вправо), elev — угол над горизонтом, pitch — наклон камеры вверх
 function arProject(rel, elev, pitch, W, H, hfov) {
   const f = (W / 2) / Math.tan((hfov || AR_HFOV) * Math.PI / 360);
-  if (Math.abs(rel) >= 89) return null;
+  if (Math.abs(rel) >= 89 || Math.abs(elev - pitch) >= 89) return null;   // и по вертикали: за 90° тангенс меняет знак — точка прыгнула бы вверх
   return { x: W / 2 + Math.tan(rel * Math.PI / 180) * f, y: H / 2 - Math.tan((elev - pitch) * Math.PI / 180) * f, f };
 }
 let arGen = 0, arCal = null, arCalMode = false, arCalPick = null;   // { off, err, at, name, d } — поправка курса; режим наведения; точка под перекрестием
-let arTilt = { beta: 90, gamma: 0 }, arStream = null, arTimer = 0, arCamOk = false, arOrientAt = 0, arOpening = false;
+let arTilt = { beta: 90, gamma: 0 }, arStream = null, arTimer = 0, arCamOk = false, arOrientAt = 0, arOpening = false, arRtk = false;
 addEventListener('deviceorientationabsolute', e => { if (e.beta != null) { arTilt = { beta: e.beta, gamma: e.gamma || 0 }; arOrientAt = Date.now(); } });
 const arBox = document.createElement('div'); arBox.id = 'ar';
 arBox.innerHTML = '<video id="arVid" autoplay playsinline muted></video><svg class="ov" id="arSvg"></svg><div class="bar"><div class="lvl" id="arLvl"></div><button class="cb" id="arCalBtn">Курс</button><button class="x" id="arX" aria-label="Закрыть камеру">×</button></div>'
@@ -6901,11 +6909,14 @@ function arDraw() {
   const hdRaw = compassDeg != null && Date.now() - arOrientAt < AR_ORIENT_MS ? compassDeg : null;   // старый курс — не курс
   const cal = arCal && Date.now() - arCal.at < AR_CAL_MS ? arCal : null;   // калибровка поглощает и склонение
   const hd = hdRaw == null ? null : (hdRaw + (cal ? cal.off - (magDecl - cal.decl) : 0) + 360) % 360;   // компас уже содержит склонение: его прирост после калибровки вычитаем
-  const courseErr = cal ? cal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR), lvl = arLevel(c, hd, arCamOk);
+  const fixNow = !!(me && me.src === 'приёмник' && isFinite(me.acc) && me.acc > 0);
+  arRtk = fixNow && me.acc <= (arRtk ? AR_RTK_OUT_M : RTK_FIX_M);   // гистерезис: войти при ≤5 см, выйти при >8 см — уровень не мигает
+  const rtk = arRtk, posAcc = me ? (rtk ? Math.max(me.acc, AR_ANT_OFFSET_M) : me.acc) : null;   // антенна на вехе или рюкзаке — не в камере: запас 0,5 м
+  const courseErr = cal ? cal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR), lvl = arLevel(c, hd, arCamOk, rtk);
   const calTxt = cal ? ` (калибровка по «${esc(cal.name)}», ${Math.max(1, Math.round((Date.now() - cal.at) / 60000))} мин назад)` : arCal ? ' — калибровка устарела, нажмите «Курс»' : magDeclOk ? ' (без калибровки — «Курс»)' : ' — склонение неизвестно, нажмите «Курс»';
   const accTxt = a => mText(a, a < 1 ? 2 : 1);
-  $('arLvl').innerHTML = `<b>Уровень ${lvl}: ${lvl === 2 ? 'камера + компас' : lvl === 1 ? 'стрелка: GPS + компас (камеры нет)' : 'нет компаса — только карта'}</b><br>`
-    + (me ? `Точность ±${accTxt(arErrM(20, me.acc, courseErr))} м на 20 м · курс ±${Number.isInteger(courseErr) ? courseErr : mText(courseErr, 1)}°${calTxt} · ${esc(me.src)} ±${accTxt(isFinite(me.acc) && me.acc > 0 ? me.acc : 5)} м` : 'Нет свежего GPS — подписи не рисую');
+  $('arLvl').innerHTML = `<b>Уровень ${lvl}: ${lvl === 4 ? 'камера + компас + RTK' + (cal ? '' : ' — положение точное, ошибка в курсе и наклоне: нажмите «Курс»') : lvl === 2 ? 'камера + компас' : lvl === 1 ? 'стрелка: GPS + компас (камеры нет)' : 'нет компаса — только карта'}</b><br>`
+    + (me ? `Точность ±${accTxt(arErrM(20, posAcc, courseErr))} м на 20 м · курс ±${Number.isInteger(courseErr) ? courseErr : mText(courseErr, 1)}°${calTxt} · ${esc(me.src)} ±${accTxt(isFinite(me.acc) && me.acc > 0 ? me.acc : 5)} м` : 'Нет свежего GPS — подписи не рисую');
   const why = !me ? 'Жду GPS. Без своего положения подписи легли бы не туда — выйдите на открытое место.' : arLandscape() ? 'Держите телефон вертикально: в альбомной ориентации направление камеры считается неверно.'
     : hd == null ? (compassDeg != null ? 'Компас давно не обновлялся — пошевелите телефон или покачайте его восьмёркой.' : 'Компас телефона не отвечает — направление неизвестно. Покачайте телефон восьмёркой или откройте на устройстве с компасом.') : '';
   $('arMsg').style.display = why ? 'block' : 'none'; $('arMsg').textContent = why;
@@ -6918,20 +6929,21 @@ function arDraw() {
   };
   let s = '';
   for (const l of data.lines) {                                         // линии: куски по ~2 м в радиусе показа
-    let path = '', prev = null;
+    let path = '', prev = null, lab = null;
     for (let i = 0; i + 1 < l.latlngs.length + ((LINES[l.type] || {}).closed ? 1 : 0); i++) {
       const a = L.latLng(l.latlngs[i]), b = L.latLng(l.latlngs[(i + 1) % l.latlngs.length]), pa = planeXY(a, zone), pb = planeXY(b, zone);
       if (segPx(o, pa, pb) > AR_R_M * k) { prev = null; continue; }      // отрезок далеко — не считаем
       const n = Math.min(60, Math.max(1, Math.ceil(Math.hypot(pb.x - pa.x, pb.y - pa.y) / k / 2)));
       for (let j = 0; j <= n; j++) { const q = P([a.lat + (b.lat - a.lat) * j / n, a.lng + (b.lng - a.lng) * j / n]);
-        if (q && !q.off && q.x > -W && q.x < 2 * W && q.y > -H && q.y < 2 * H) { path += (prev ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); prev = q; } else prev = null; }
+        if (q && !q.off && q.x > -W && q.x < 2 * W && q.y > -H && q.y < 2 * H) { path += (prev ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); prev = q; if (q.x > 10 && q.x < W - 10 && q.y > 60 && q.y < H - 140 && (!lab || q.d < lab.d)) lab = q; } else prev = null; }
     }
-    if (path) { const col = l.color || (LINES[l.type] || {}).color || '#ffeb3b'; s += `<path d="${path}" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="7" stroke-linejoin="round"/><path d="${path}" fill="none" stroke="${esc(col)}" stroke-width="4" stroke-linejoin="round"/>`; }
+    if (path) { const col = l.color || (LINES[l.type] || {}).color || '#ffeb3b'; s += `<path d="${path}" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="7" stroke-linejoin="round"/><path d="${path}" fill="none" stroke="${esc(col)}" stroke-width="4" stroke-linejoin="round"/>`;
+      const dt = arCalMode ? '' : arDepthTxt(l); if (dt && lab) { const rt = lab.x > W / 2; s += `<text x="${(lab.x + (rt ? -8 : 8)).toFixed(1)}" y="${(lab.y + 22).toFixed(1)}"${rt ? ' text-anchor="end"' : ''}>${esc(dt)}</text>`; } }   // у правого края — выравнивание вправо, чтобы не уйти за экран   // глубина — у ближней видимой точки линии
   }
   for (const p of data.points) { const q = P([p.lat, p.lng]); if (q && !q.off && q.x > -40 && q.x < W + 40 && q.y > -40 && q.y < H + 40) items.push({ q, p, t: pointLabel(p) || ((POINTS[p.type] || POINTS.mark).name + (p.no ? ' № ' + p.no : '')) }); }
   items.sort((a, b) => b.q.d - a.q.d);                                  // ближние — поверх дальних
   for (const { q, t, p } of items) {
-    const r = Math.max(6, Math.min(W, arErrM(q.d, me.acc, courseErr) / q.d * q.f));   // круг ошибки на этом расстоянии
+    const r = Math.max(6, Math.min(W, arErrM(q.d, posAcc, courseErr) / q.d * q.f));   // круг ошибки на этом расстоянии
     s += `<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="${r.toFixed(1)}" fill="rgba(255,235,59,.12)" stroke="#ffeb3b" stroke-width="2" stroke-dasharray="6 5"/><circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="5" fill="#ffeb3b" stroke="#000" stroke-width="1.5"/>`
       + (arCalMode ? '' : `<text x="${(q.x + 9).toFixed(1)}" y="${(q.y - 8).toFixed(1)}">${esc(t)} · ${esc(distText(q.d))}</text>`);   // при наведении подписи не налезают на перекрестие — имя точки в кнопке внизу
   }
@@ -6967,7 +6979,7 @@ function arCalApply() {
   if (!me || raw == null || !pk) { toast('Нет GPS или компаса — калибровать не по чему'); return; }
   const ptErr = pk.p.q && pk.p.q.acc != null ? pk.p.q.acc : pk.p.approx != null ? pk.p.approx : 5;   // точка без известной точности (по подложке, с чертежа) — ±5 м, а не «точная»
   const cur = arCal && Date.now() - arCal.at < AR_CAL_MS ? arCal.err : AR_COURSE_ERR + (magDeclOk ? 0 : AR_DECL_ERR);
-  const r = arCalCompute(pk.az, raw, pk.d, me.acc, ptErr), was = cur;
+  const r = arCalCompute(pk.az, raw, pk.d, arRtk ? Math.max(me.acc, AR_ANT_OFFSET_M) : me.acc, ptErr), was = cur;   // RTK: антенна не в камере
   if (r.err > was) { toast(`Калибровка по этой точке дала бы ±${mText(r.err, 1)}° — не лучше нынешних ±${mText(was, 1)}°. Возьмите точку дальше или дождитесь точного GPS`); return; }
   arCal = { ...r, at: Date.now(), name: pk.name, d: pk.d, decl: magDecl }; arCalEnd(); arDraw();
   toast(`Курс откалиброван по «${pk.name}»: поправка ${r.off >= 0 ? '+' : '−'}${mText(Math.abs(r.off), 1)}°, точность ±${mText(r.err, 1)}°. Действует 15 минут`);
