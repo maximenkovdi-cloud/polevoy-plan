@@ -2008,7 +2008,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 126;
+const APP_BUILD = 127;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -2793,6 +2793,7 @@ function planSizes() {
   document.documentElement.style.setProperty('--lblPx', LBL_PX.toFixed(2) + 'px');
 }
 function drawPoints() {
+  if (usymOn) usymRegister();                                          // свои знаки и пришедшие с чужим планом — в каталог до рисования
   planSizes();
   pointLayer.clearLayers();
   pointMarkers = [];
@@ -4831,6 +4832,7 @@ if (TRACK_N) TRACK_N.points({ from: 0 }).then(r => {
 function codeToType(code) {
   const c = String(code || '').trim().toLowerCase(); if (!c) return null;
   for (const [t, v] of Object.entries(codeMap)) if (String(v).toLowerCase() === c && (POINTS[t] || LINES[t])) return t;
+  for (const sp of Object.values(POINTS)) if (sp.user && sp.ucode && String(sp.ucode).toLowerCase() === c) return sp.id;   // свой знак — по его коду
   if (POINTS[c] || LINES[c]) return c;
   const byName = [...Object.values(POINTS), ...Object.values(LINES)].find(s => s.name.toLowerCase() === c);
   return byName ? byName.id : null;
@@ -4900,6 +4902,7 @@ function surveyImport() {
     const dupNo = placed.filter(r => before.has(String(r.no))).length;   // номера совпали с уже снятыми — скажем
     const R = surveyBuild(placed);
     let l0 = nextNo(data.lines); for (const l of R.lines) l.no = l0++;
+    for (const p of R.pts) if (/^u_/.test(p.type)) usymStamp(p);          // свой знак — вид с собой
     data.points.push(...R.pts); data.lines.push(...R.lines); save(); redrawAll();
     map.fitBounds(L.latLngBounds(placed.map(p => [p.lat, p.lng])).pad(0.2));
     showSheet(`<div class="sh-head"><b>Съёмка загружена</b><button class="x" data-close>×</button></div><div class="form">
@@ -5664,7 +5667,7 @@ function journalSheet() {
 const RELIEF_DEFAULT = new Set(['spot', 'mark', 'pit', 'mound', 'ss_long', 'ss_temp']);   // точки съёмочной сети — центр у земли
 const RELIEF_DUP_M = 0.1, RELIEF_DUP_DH = 0.05;                         // две точки ближе 10 см с разницей отметок больше 5 см — ошибка для поверхности
 let reliefTypes = pref('reliefTypes', {}) || {};                         // своё «в рельеф» по коду (таблица кодов бригады): { тип: true / false }
-function reliefTypeDef(t) { return reliefTypes[t] === true || reliefTypes[t] === false ? reliefTypes[t] : RELIEF_DEFAULT.has(t); }
+function reliefTypeDef(t) { if (reliefTypes[t] === true || reliefTypes[t] === false) return reliefTypes[t]; const us = typeof POINTS !== 'undefined' && POINTS[t] && POINTS[t].user ? POINTS[t] : null; return us ? us.urelief === true : RELIEF_DEFAULT.has(t); }   // свой знак — «рельеф» из его настроек, галочка в таблице кодов сильнее
 function reliefOf(p) { return p.relief === true || p.relief === false ? p.relief : reliefTypeDef(p.type); }
 function inRelief(p) { return reliefOf(p) && pointH(p) != null; }
 // совпадающие в плане точки рельефа с разными отметками (GeoniCS, «проверка ошибок поверхности»)
@@ -6459,6 +6462,7 @@ function addAt(ll, meas, src) {
     if (spoof && (src === 'tap' || src === 'center')) { pt.wait = new Date().toISOString(); if (snap) pt.waitSnap = true; }   // на глаз при подмене — доснять по GPS; привязана к чужому объекту — его не двигать      // н1, н2… — следующий свободный
     if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll, ...(hz.src === 'gnss' ? { ant: antH } : {}) }; }
     if (rxTest && (src === 'gps' || src === 'measure')) { pt.test = true; pt.name = pt.name || 'ТЕСТ'; }   // снята по имитации приёмника — не настоящая
+    if (/^u_/.test(pt.type)) usymStamp(pt);                            // свой знак — вид с собой
     if (mode.code && LINES[mode.code.type]) { codeVertex(pt); setMode(mode); return null; }   // съёмка по кодам: линейный код — вершина своей линии
     data.points.push(pt); lastPlacedId = pt.id;
     save(); drawPoints();
@@ -7550,6 +7554,7 @@ $('btnLine').onclick = () => { setMode({ kind: 'line', type: GENERIC.line, latln
 function changeType(kind, obj, id) {
   if (kind === 'point') {
     obj.type = id;
+    if (/^u_/.test(id)) usymStamp(obj); else if (obj.attr && obj.attr.usym) { const { usym, ...rest } = obj.attr; obj.attr = rest; }   // свой знак — вид с собой; сменили на обычный — снимок прочь
     if (obj.color && id !== GENERIC.point) delete obj.color;
     const s = POINTS[id];
     const pa = s.pipe ? pipeAngle(L.latLng(obj.lat, obj.lng)) : null;
@@ -9064,6 +9069,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
   { id: 'check', icon: '✓', text: 'Проверка перед сдачей' },
   { id: 'linepts', icon: '⋯', text: 'Линия по снятым точкам (по номерам: 12, 13, 15–18)' },
+  { id: 'usyms', icon: '✚', text: 'Свои знаки: фигура и буква (нет в каталоге)' },
   { id: 'codes', icon: '⌁', text: 'Съёмка по кодам: линии и знаки строятся сами (бордюр, ограда, здание по 3 углам)' },
   { id: 'journal', icon: '☰', text: `Журнал съёмки: ${data.points.length} ${plural(data.points.length, 'точка', 'точки', 'точек')}, фильтры` },
   { id: 'contours', icon: '〰', text: ctOn ? `Горизонтали: показаны, сечение ${mText(ctStep(), ctStep() < 1 ? 2 : 1)} м` : 'Горизонтали по точкам рельефа' },
@@ -9231,6 +9237,7 @@ const MENU = {
   planscale: () => openList('Масштаб плана', [500, 1000, 2000].map(v => ({ id: String(v), icon: '⊡', text: `1:${v}` + (v === 500 ? ' — исполнительная съёмка, сети' : v === 1000 ? ' — посёлки, промплощадки' : ' — незастроенная территория'), on: v === planScale, radio: true })), v => setPlanScale(Number(v))),
   journal: () => journalSheet(),
   codes: () => codeStart(),
+  usyms: () => usymSheet(),
   linepts: () => lineFromPoints(),
   relief: () => reliefSheet(),
   contours: () => contourSheet(),
@@ -10039,7 +10046,7 @@ function toDxf() {
   for (const p of data.points.filter(q => okLL([q.lat, q.lng]))) {
     // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
     const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : pref('dxfRelLayers', false) ? (reliefOf(p) ? '_РЕЛЬЕФ' : '_СИТ') : '') + (approxNote(p) ? '_ПРИБЛ' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
-    const ps0 = POINTS[p.type], vh = ps0 && ps0.svgFor ? '_' + [...ps0.svgFor(p)].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7).toString(36).slice(0, 5) : '';   // буква покрытия и т. п. — свой блок
+    const ps0 = POINTS[p.type], hs5 = t => '_' + [...t].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7).toString(36).slice(0, 5), vh = ps0 && ps0.svgFor ? hs5(ps0.svgFor(p)) : ps0 && ps0.user ? hs5(ps0.svg) : '';   // буква покрытия и т. п. — свой блок
     const blk = (String(codeOf(p.type) || 'POINT').toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31 - vh.length) || 'POINT') + vh.toUpperCase();   // без типа — не падаем
     blocks.add(blk); if (!blkType.has(blk)) blkType.set(blk, p);   // по первой точке кода — её знак (тип и атрибуты)
     ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z, ...(p.rot && isFinite(+p.rot) ? [50, (-Number(p.rot)).toFixed(1)] : []));   // поворот: на экране — по часовой, в DXF — против
@@ -10937,7 +10944,7 @@ function toMifMid() {
 const field = (s, sep) => String(s == null ? '' : s).replace(sep === ',' ? /(\d),(\d)/g : /(?!)/g, '$1.$2').replace(sep === ',' ? /[,;]/g : /;/g, sep === ',' ? ' ' : ',').replace(/\s+/g, ' ').trim();   // в файле через запятую десятичная запятая подписей («глуб. 1,25») — снова точка, а не пробел
 // Коды знаков под классификатор пользователя (КРЕДО, Civil 3D): pref 'codes' { тип: код }; не задан — код приложения
 let codeMap = pref('codes', {}) || {};
-const codeOf = type => codeMap[type] || type;
+const codeOf = type => codeMap[type] || (POINTS[type] && POINTS[type].ucode) || type;   // свой знак — свой код
 const cleanCode = s => String(s || '').trim().replace(/[\s;,]+/g, '_').slice(0, 40);
 // Каталог для КРЕДО, GeoniCS, Панорамы: «№;X;Y;H;код;описание» — точки и все вершины линий (номер линии.номер вершины).
 // coded — полевое кодирование КРЕДО: у вершин линии «код-номер» и команда p (начать), e (закончить), o (замкнуть) —
@@ -10967,6 +10974,83 @@ function catalogMenu() {
   $('catCoded').onclick = () => { closeSheet(); download(`catalog_kody_${today()}.txt`, new Blob([toCatalog(true)], { type: 'text/plain' }), 'text/plain'); };
   $('catPlain').onclick = () => { closeSheet(); download(`catalog_${today()}.txt`, new Blob([toCatalog()], { type: 'text/plain' }), 'text/plain'); };
   $('catCodes').onclick = () => codesMenu();
+}
+var usymOn = false;                                                     // таблица своих знаков прочитана (var — без «мёртвой зоны» при ранних вызовах drawPoints)
+/* ───────────── Свои знаки (как «Расширение топодерева» GeoniCS, но без шаблонов): фигура + буква + код. Хранятся в настройках телефона (pref userSyms), как таблица кодов;
+   у каждой точки такого знака — снимок вида в attr.usym: на другом телефоне без таблицы она рисуется и уходит в DXF тем же блоком. ───────────── */
+const USYM_SHAPES = [['circle', 'Кружок'], ['square', 'Квадрат'], ['triangle', 'Треугольник'], ['diamond', 'Ромб'], ['cross', 'Крест']];
+const USYM_MAX = 60;
+function usymClean(d) {                                                // из файла и настроек — только то, что нужно, без мусора
+  if (!d || typeof d !== 'object') return null;
+  const id = /^u_[a-z0-9]{2,12}$/.test(String(d.id || '')) ? String(d.id) : null; if (!id) return null;
+  return { id, name: String(d.name || 'Свой знак').slice(0, 60), code: cleanCode(d.code || '').slice(0, 20), shape: USYM_SHAPES.some(s => s[0] === d.shape) ? d.shape : 'circle',
+    fill: d.fill === true, letter: String(d.letter || '').replace(/[<>&"']/g, '').slice(0, 3), relief: d.relief === true };
+}
+function usymSvg(d) {
+  const st = `stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"`, f = d.fill ? 'currentColor' : '#fff';
+  const body = d.shape === 'square' ? `<rect x="5" y="5" width="14" height="14" fill="${f}" ${st}/>` : d.shape === 'triangle' ? `<path d="M12 4 20.5 19H3.5Z" fill="${f}" ${st}/>`
+    : d.shape === 'diamond' ? `<path d="M12 3 21 12 12 21 3 12Z" fill="${f}" ${st}/>` : d.shape === 'cross' ? `<path d="M12 4V20M4 12H20" fill="none" ${st}/>` : `<circle cx="12" cy="12" r="7.5" fill="${f}" ${st}/>`;
+  const txt = d.letter ? `<text x="12" y="${d.shape === 'triangle' ? 16.5 : 15.3}" font-size="${d.letter.length > 1 ? 7 : 9}" text-anchor="middle" font-family="Arial" font-weight="700" fill="${d.fill ? '#fff' : 'currentColor'}">${esc(d.letter)}</text>` : '';
+  return body + txt;
+}
+let userSyms = (pref('userSyms', []) || []).map(usymClean).filter(Boolean);
+// знаки в каталог: группа «Свои знаки»; плюс знаки, пришедшие с точками из чужого плана (по снимку attr.usym), — без записи в настройки
+function usymRegister() {
+  const own = POINT_GROUPS.find(g => g.id === 'own_pts');
+  const defs = new Map(userSyms.map(d => [d.id, d]));
+  for (const p of data.points) if (/^u_/.test(p.type) && !defs.has(p.type) && p.attr && p.attr.usym) { const d = usymClean({ ...p.attr.usym, id: p.type }); if (d) defs.set(d.id, { ...d, foreign: true }); }
+  for (const id of Object.keys(POINTS)) if (/^u_/.test(id) && !defs.has(id)) delete POINTS[id];
+  const items = [...defs.values()].map(d => ({ id: d.id, name: d.name + (d.foreign ? ' (из плана)' : ''), svg: usymSvg(d), user: true, ucode: d.code, urelief: d.relief }));
+  for (const it of items) POINTS[it.id] = it;
+  if (own) own.items = items; else if (items.length) POINT_GROUPS.push({ id: 'own_pts', title: 'Свои знаки', items });
+  // код и «рельеф» — у знака в каталоге (ucode, urelief); таблицы кодов бригады и умолчаний рельефа не трогаем
+}
+function usymSave() { setPref('userSyms', userSyms); usymRegister(); }
+// снимок вида — в точку: другой телефон без таблицы нарисует то же
+function usymStamp(p) { const d = userSyms.find(x => x.id === p.type); if (d) p.attr = { ...(p.attr || {}), usym: { name: d.name, code: d.code, shape: d.shape, fill: d.fill, letter: d.letter, relief: d.relief } }; }
+function usymSheet() {
+  usymRegister();
+  const used = id => data.points.filter(p => p.type === id).length;
+  showSheet(`<div class="sh-head"><b>Свои знаки: ${userSyms.length}</b><button class="x" data-close>×</button></div><div class="form">
+    <div class="hint" style="margin:2px 0 8px">Знак, которого нет в каталоге: фигура и буква. Хранится в телефоне, как таблица кодов; точки несут свой вид с собой — на другом телефоне и в DXF они такие же. Появляется в «Знак…» → «Свои знаки».</div>
+    <div class="list">${userSyms.map(d => `<div class="item" data-us="${esc(d.id)}" style="min-height:48px">${symbolSvg(usymSvg(d), 28)}<span style="flex:1;margin-left:8px"><b>${esc(d.name)}</b>${d.code ? ` · код ${esc(d.code)}` : ''}${d.relief ? ' · в рельеф' : ''}<br><small style="color:var(--muted)">точек: ${used(d.id)}</small></span></div>`).join('') || '<div class="hint">Пока своих знаков нет.</div>'}</div>
+    <button class="btn primary" id="usNew" style="width:100%;margin-top:8px"${userSyms.length >= USYM_MAX ? ' disabled' : ''}>＋ Новый знак</button>
+    <div class="row2" style="margin-top:6px"><button class="btn" id="usOut"${userSyms.length ? '' : ' disabled'}>Выгрузить таблицу</button><button class="btn" id="usIn">Загрузить таблицу</button></div>
+    <div class="hint">Таблицу можно передать бригаде: файл .json — «Загрузить таблицу» на другом телефоне.</div></div>`);
+  $('usNew').onclick = () => usymEdit(null);
+  document.querySelectorAll('#sheetPanel [data-us]').forEach(r => r.onclick = () => usymEdit(userSyms.find(d => d.id === r.dataset.us)));
+  $('usOut').onclick = () => download(`svoi_znaki_${today()}.json`, new Blob([JSON.stringify({ kind: 'polevoy-userSyms', v: 1, syms: userSyms }, null, 1)], { type: 'application/json' }), 'application/json');
+  $('usIn').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
+    inp.onchange = async () => { const f = inp.files[0]; if (!f) return; let j; try { j = JSON.parse(await f.text()); } catch (e) { toast('Это не таблица знаков (нужен .json из «Выгрузить таблицу»)'); return; }
+      const list = (Array.isArray(j) ? j : j && j.syms || []).map(usymClean).filter(Boolean);
+      if (!list.length) { toast('В файле нет знаков'); return; }
+      let add = 0, upd = 0; for (const d of list) { const k = userSyms.findIndex(x => x.id === d.id); if (k >= 0) { userSyms[k] = d; upd++; } else if (userSyms.length < USYM_MAX) { userSyms.push(d); add++; } }
+      usymSave(); drawPoints(); toast(`Знаки: добавлено ${add}, обновлено ${upd}`); usymSheet(); };
+    inp.click(); };
+}
+function usymEdit(d0) {
+  const d = d0 ? { ...d0 } : { id: 'u_' + uid().replace(/[^a-z0-9]/gi, '').toLowerCase().slice(-8), name: '', code: '', shape: 'circle', fill: false, letter: '', relief: false };
+  openForm(d0 ? 'Свой знак' : 'Новый знак', [
+    { key: 'name', label: 'Название', value: d.name, placeholder: 'Пожарный водоём, шлагбаум…' },
+    { key: 'letter', label: 'Буква на знаке (до 3)', value: d.letter, placeholder: 'ПВ', half: true },
+    { key: 'code', label: 'Код (съёмка по кодам, DXF)', value: d.code, placeholder: 'ПВ', half: true },
+    { key: 'shape', label: 'Фигура', type: 'select', value: d.shape, options: USYM_SHAPES, half: true },
+    { key: 'fill', label: 'Заливка', type: 'select', value: d.fill ? '1' : '0', options: [['0', 'нет'], ['1', 'да']], half: true },
+    { key: 'relief', label: 'В рельеф по умолчанию', type: 'select', value: d.relief ? '1' : '0', options: [['0', 'нет'], ['1', 'да (отметка — земля)']],
+      hint: d0 ? 'Удалить — очистите название и сохраните (точки останутся, станут простыми).' : '' }
+  ], v => {
+    if (!v.name.trim()) {
+      if (!d0) { toast('Нужно название'); return false; }
+      userSyms = userSyms.filter(x => x.id !== d.id); usymSave();
+      for (const p of data.points) if (p.type === d.id) { p.type = GENERIC.point; p.name = p.name || d.name; }
+      save(); drawPoints(); toast(`Знак «${d.name}» удалён`); setTimeout(usymSheet, 0); return;
+    }
+    const nd = usymClean({ ...d, name: v.name.trim(), letter: v.letter.trim(), code: v.code.trim(), shape: v.shape, fill: v.fill === '1', relief: v.relief === '1' });
+    if (!nd) { toast('Не получилось сохранить знак'); return false; }
+    const k = userSyms.findIndex(x => x.id === nd.id); if (k >= 0) userSyms[k] = nd; else userSyms.push(nd);
+    usymSave(); for (const p of data.points) if (p.type === nd.id) usymStamp(p);   // точки — с новым видом
+    save(); drawPoints(); toast(`Знак «${nd.name}» сохранён`); setTimeout(usymSheet, 0);
+  });
 }
 // таблица «знак → свой код»: знаки этого плана — сразу для правки, все знаки — через файл (заполнить в Excel и загрузить)
 function codesMenu() {
@@ -11050,7 +11134,7 @@ function parseKml(text) {
       const c0 = coords(pt)[0];
       if (!c0) throw new Error('нет координат');
       const [lng, lat] = c0;
-      const type = POINTS[ext.tk_type] ? ext.tk_type : 'mark';
+      const type = POINTS[ext.tk_type] || (/^u_[a-z0-9]{2,12}$/.test(String(ext.tk_type || '')) && /usym/.test(String(ext.tk_attr || ''))) ? ext.tk_type : 'mark';   // свой знак со снимком вида — не терять
       add.points.push({ id: objId(ext.tk_id), type, lat, lng, name: ext.tk_type ? (ext.tk_name || '') : name,
         h: ext.tk_h != null && ext.tk_h !== '' && isFinite(Number(ext.tk_h)) ? Number(ext.tk_h) : null, note: ext.tk_note || '', ...readExtras(ext) });
     } else if (ls) {
@@ -11417,6 +11501,7 @@ function rasterMenu() {
 
 /* ───────────── Старт ───────────── */
 
+usymOn = true; usymRegister();
 ready = true; updateAim(); if (ctOn) ctSoon();                                            // вторая строка вверху — сразу, не дожидаясь движения карты
 loadGeoid().catch(() => { /* без сети и кэша — попробуем при съёмке */ });
 if (NATIVE) { startGnss(); startGps(); checkUpdate(); if (RX && rxCfg.auto) rxConnect(); }   // в Android-приложении спутники и GPS включаются сразу, проверяется обновление
