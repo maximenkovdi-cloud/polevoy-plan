@@ -199,6 +199,7 @@
   /* телефон боком: панель съёмки — одной строкой кнопок и не под столбиком кнопок справа, чтобы карте осталось место */
   @media (max-height:520px) { #mode { right:92px; padding:6px 8px 8px; } #mode .hd { margin-bottom:4px; } #mode .btns { grid-template-columns:repeat(5, 1fr); } #mode .btns .btn { min-height:40px; padding-top:6px; padding-bottom:6px; } }
   #mode .quick { display:flex; gap:6px; overflow-x:auto; flex:1; min-width:0; }
+  #mode.codes .hd { flex-wrap:wrap; } #mode.codes .title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; } #mode.codes .quick { order:3; flex-basis:100%; }   /* съёмка по кодам: ряд кодов — своей строкой, во всю ширину */
   #mode .quick button { flex:none; display:flex; align-items:center; gap:4px; min-height:40px; padding:4px 10px; border:1px solid var(--line); border-radius:22px; background:var(--panel); color:var(--ink); font-size:12px; max-width:150px; }
   #mode .quick button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #mode .quick button.on { border:2px solid var(--accent); font-weight:700; }
@@ -311,6 +312,7 @@
   .sym .lbl { position:absolute; left:24px; top:-2px; white-space:nowrap; font:italic var(--lblPx, 12.5px)/1 var(--draft); color:var(--sym); letter-spacing:.01em;
     text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo), 0 0 3px var(--halo); }
   .sym .lbl.off { display:none; }
+  .codetip { font-weight:700; padding:2px 6px; }
   .ctl span { position:absolute; left:0; top:0; white-space:nowrap; font-style:italic; font-family:var(--draft); color:var(--rel); line-height:1; text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo), 0 0 3px var(--halo); pointer-events:none; }   /* цифры горизонталей */
   .sym .lbl.frac { display:flex; flex-direction:column; align-items:center; line-height:1.05; }
   .sym .lbl.frac .t { border-bottom:1px solid currentColor; padding:0 1px; font-style:italic; }
@@ -2006,7 +2008,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 123;
+const APP_BUILD = 124;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -3663,7 +3665,7 @@ function showCard(kind, obj) {
   card.onclick = e => {
     const act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
     if (act === 'close') hideCard();
-    if (act === 'relief' && kind === 'point') { const v = !reliefOf(obj); if (v === RELIEF_DEFAULT.has(obj.type)) delete obj.relief; else obj.relief = v; save(); showCard(kind, obj); return; }
+    if (act === 'relief' && kind === 'point') { const v = !reliefOf(obj); if (v === reliefTypeDef(obj.type)) delete obj.relief; else obj.relief = v; save(); showCard(kind, obj); return; }
     const sw = e.target.closest('[data-color]');
     if (sw) {                                                         // смена цвета; выбранный цвет запоминается для новых простых точек и линий
       const c = sw.dataset.color;
@@ -5476,7 +5478,9 @@ function journalSheet() {
 // по умолчанию в рельеф — отметка высоты, точка (пикет), яма, бугор; остальное — нет. Своё решение — p.relief = true / false (как сняли, так и решили)
 const RELIEF_DEFAULT = new Set(['spot', 'mark', 'pit', 'mound', 'ss_long', 'ss_temp']);   // точки съёмочной сети — центр у земли
 const RELIEF_DUP_M = 0.1, RELIEF_DUP_DH = 0.05;                         // две точки ближе 10 см с разницей отметок больше 5 см — ошибка для поверхности
-function reliefOf(p) { return p.relief === true || p.relief === false ? p.relief : RELIEF_DEFAULT.has(p.type); }
+let reliefTypes = pref('reliefTypes', {}) || {};                         // своё «в рельеф» по коду (таблица кодов бригады): { тип: true / false }
+function reliefTypeDef(t) { return reliefTypes[t] === true || reliefTypes[t] === false ? reliefTypes[t] : RELIEF_DEFAULT.has(t); }
+function reliefOf(p) { return p.relief === true || p.relief === false ? p.relief : reliefTypeDef(p.type); }
 function inRelief(p) { return reliefOf(p) && pointH(p) != null; }
 // совпадающие в плане точки рельефа с разными отметками (GeoniCS, «проверка ошибок поверхности»)
 function reliefDups(pts) {
@@ -5500,7 +5504,7 @@ function reliefSheet() {
     let inside = false; const P = g.box; for (let i = 0, j = P.length - 1; i < P.length; j = i++) if ((P[i][0] > p.lat) !== (P[j][0] > p.lat) && p.lng < (P[j][1] - P[i][1]) * (p.lat - P[i][0]) / (P[j][0] - P[i][0]) + P[i][1]) inside = !inside; return inside; };
   const pick = (g, a, b) => withH.filter(p => inBox(g, p) && (!g.type || p.type === g.type) && (g.show === 'all' || (g.show === 'in') === reliefOf(p)) && pointH(p) >= a && pointH(p) <= b);
   const list = bad ? [] : pick(f, lo, hi);
-  const dups = reliefDups(inR), odd = inR.filter(p => !RELIEF_DEFAULT.has(p.type)), shown = list.slice(0, JOURNAL_MAX);
+  const dups = reliefDups(inR), odd = inR.filter(p => !reliefTypeDef(p.type)), shown = list.slice(0, JOURNAL_MAX);
   showSheet(`<div class="sh-head"><b>Точки рельефа: ${inR.length} из ${withH.length}</b><button class="x" data-close>×</button></div><div class="form">
     <div class="hint" style="margin:2px 0 8px">В горизонтали идут только отмеченные ✓. По умолчанию — отметки высот, пикеты, точки съёмочной сети, ямы и бугры (отметка — по дну и по верху); люк, опора, угол здания — нет: их отметка не про землю. Точки без отметки здесь не показаны.</div>
     ${dups.length ? `<div class="hint" style="color:#c62828;margin-bottom:6px">⚠ Совпадают в плане, а отметки разные: ${dups.length} ${plural(dups.length, 'пара', 'пары', 'пар')} — ${dups.slice(0, 4).map(d => '№ ' + esc(String(d[0].no || '?')) + ' и № ' + esc(String(d[1].no || '?'))).join(', ')}${dups.length > 4 ? '…' : ''}. Одну из каждой пары исключите.</div>` : ''}
@@ -5524,10 +5528,10 @@ function reliefSheet() {
   const refilter = () => { reliefFlt = read(); again(); };
   $('rfType').onchange = refilter; $('rfShow').onchange = refilter; $('rfMin').onchange = () => setTimeout(refilter, 250); $('rfMax').onchange = () => setTimeout(refilter, 250);
   const setAll = v => { const g = read(), a = g.hMin === '' ? -Infinity : parseNum(g.hMin), b = g.hMax === '' ? Infinity : parseNum(g.hMax); if (Number.isNaN(a) || Number.isNaN(b)) { toast('Отметка — число, например 120,5'); return; }
-    const L2 = pick(g, a, b); for (const p of L2) { if (v === null || v === RELIEF_DEFAULT.has(p.type)) delete p.relief; else p.relief = v; } save(); reliefFlt = g; again(); toast(`${v === true ? 'Включено' : v === false ? 'Исключено' : 'Как по знаку'}: ${L2.length}`); };
+    const L2 = pick(g, a, b); for (const p of L2) { if (v === null || v === reliefTypeDef(p.type)) delete p.relief; else p.relief = v; } save(); reliefFlt = g; again(); toast(`${v === true ? 'Включено' : v === false ? 'Исключено' : 'Как по знаку'}: ${L2.length}`); };
   $('rfOn').onclick = () => setAll(true); $('rfOff').onclick = () => setAll(false); $('rfDef').onclick = () => setAll(null);
   $('rfRows').onchange = e => { const id = e.target.dataset && e.target.dataset.rid, p = id && data.points.find(q => q.id === id); if (!p) return;
-    if (e.target.checked === RELIEF_DEFAULT.has(p.type)) delete p.relief; else p.relief = e.target.checked; save(); again(); };   // предупреждения и счётчики — сразу
+    if (e.target.checked === reliefTypeDef(p.type)) delete p.relief; else p.relief = e.target.checked; save(); again(); };   // предупреждения и счётчики — сразу
 }
 /* ───────────── Горизонтали по точкам рельефа (ГКИНП, зн. 329, пп. 447–456): строятся в телефоне, в план не пишутся — только на экран и в DXF ─────────────
    Треугольники — по точкам «в рельеф» и вершинам с отметками линий рельефа (бровки, подошвы, обрывы, подпорные стенки); их стороны — структурные, горизонталь через них не перескакивает.
@@ -5990,7 +5994,7 @@ let mode = null;          // { kind: 'point'|'line', type, latlngs, temp }
 // действие панели съёмки по его имени (из «⋯» и крестика) — тем же путём, что и кнопки
 function modeAct(act) { const b = document.createElement('button'); b.dataset.act = act; b.hidden = true; $('modeBtns').appendChild(b); b.click(); b.remove(); }
 $('modeMore').onclick = () => { if (!mode) return; openList('Ещё', mode.more.map(([a, t, c]) => ({ id: a, icon: '', text: t, ...(a === 'snap' ? { on: snapOn, check: true } : a === 'ortho' ? { on: orthoOn, check: true } : {}) })), act => modeAct(act)); };
-$('modeX').onclick = () => { if (!mode) return; if (mode.kind === 'line') modeAct('cancel'); else setMode(null); };
+$('modeX').onclick = () => { if (!mode) return; if (mode.code) finishMode(); else if (mode.kind === 'line') modeAct('cancel'); else setMode(null); };   // съёмка по кодам — как «Готово»: предупредит о начатых линиях
 function setBarState() {
   $('btnMap').classList.toggle('on', !mode);
   $('btnPoint').classList.toggle('on', !!mode && mode.kind === 'point');
@@ -6004,6 +6008,7 @@ function setMode(m) {
   if (m && lineChoose) chooseEnd();
   if (!m && pickTool) { pickTool = null; pickLayer.clearLayers(); $('pick').style.display = 'none'; }   // вышли из съёмки — инструмент закрыть
   if (mode && mode.temp && (!m || m !== mode)) { map.removeLayer(mode.temp); mode.temp = null; }
+  if (codeLayer && !(m && m.code)) { codeLayer.remove(); codeLayer = null; }   // вышли из съёмки по кодам
   mode = m;
   if (typeof updateRubber === 'function') updateRubber();
   syncVolKeys();                                                      // громкость «−» — По GPS, «+» — Измерить
@@ -6029,7 +6034,113 @@ function setMode(m) {
     return `<button data-quick="${id}" class="${id === mode.type ? 'on' : ''}">${isPt ? symbolSvg(sp.svg, 20, netColor(id, sp.color)) : linePreview(sp, 28, 20)}<span>${esc(sp.name)}</span></button>`; }).join('');
   $('modeQuick').style.display = recent.length ? 'flex' : 'none';
   $('modeBtns').innerHTML = btns.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}">${t}</button>`).join('');
+  box.classList.toggle('codes', !!mode.code);
+  if (mode.code) {                                                       // съёмка по кодам: ряд кодов и свои действия
+    const ct = mode.code.type, csp = POINTS[ct] || LINES[ct] || {}, line = LINES[ct] ? codeOpenLine(ct) : null, pend = !!mode.code.pend[ct];
+    $('modeTitle').innerHTML = (POINTS[ct] ? symbolSvg(csp.svg, 26, csp.color) : linePreview(csp, 30, 24)) + `<span><b>${esc(codeLabel(ct))}</b>${LINES[ct] ? ` · ${line ? line.latlngs.length + ' т.' : pend ? '1 т.' : 'новая'}` : ''}</span>`;
+    $('modeTitle').title = 'Код: ' + (csp.name || ct);
+    $('modeQuick').innerHTML = codeList().concat(codeList().includes(ct) ? [] : [ct]).map(t => { const sp = POINTS[t] || LINES[t];
+      return `<button data-code="${esc(t)}" class="${t === ct ? 'on' : ''}">${POINTS[t] ? symbolSvg(sp.svg, 20, netColor(t, sp.color)) : linePreview(sp, 28, 20)}<span>${esc(codeLabel(t))}${LINES[t] && (mode.code.open[t] || mode.code.pend[t]) ? ' •' : ''}</span></button>`; }).join('') + '<button data-code="+point"><span>＋ Знак…</span></button><button data-code="+line"><span>＋ Линия…</span></button>';
+    $('modeQuick').style.display = 'flex';
+    const cb = [...gpsBtns, ...(LINES[ct] ? [['cundo', '↶ Убрать'], ['cnew', 'Новая'], ['cclose', 'Замкнуть'], ['crect', '▭ По 3 углам']] : []), ['done', 'Готово', 'primary']];
+    $('modeBtns').innerHTML = cb.map(([a, t, c]) => `<button class="btn ${c || ''}" data-act="${a}">${t}</button>`).join('');
+  }
   placePlus();
+}
+/* ───────────── Съёмка по кодам (как Field to Finish): выбрал код — точка ставится знаком, а линейный код дописывает свою линию.
+   Несколько линий открыты сразу (бордюр слева, бордюр справа, ограда): переключение кодом, без «Готово» у каждой.
+   «Новая» — следующая точка начнёт новую линию этого кода (разрыв на въезде), «Замкнуть» — замкнуть, «▭ По 3 углам» — четвёртый угол здания сам. ───────────── */
+let codeLayer = null;
+const codeLabel = t => { if (codeMap[t]) return codeMap[t]; const n = ((POINTS[t] || LINES[t] || {}).name || t).replace(/ \(.*\)$/, ''); return n.length > 18 ? n.slice(0, 17) + '…' : n; };   // свой код бригады или название (первого слова мало: «Край» у трёх видов дорог)
+// коды для кнопок: свои коды бригады, потом последние знаки и линии
+function codeList() {
+  const own = Object.keys(codeMap).filter(t => POINTS[t] || LINES[t]);
+  const rec = [...pref('recent.line', []), ...pref('recent.point', [])].filter(t => (POINTS[t] || LINES[t]) && t !== GENERIC.point && t !== GENERIC.line && !/^note_/.test(t));   // подписи и эскиз от руки — не коды съёмки
+  return [...new Set([...own, ...rec])].slice(0, 8);                   // в перчатках больше 8 кнопок — мелко
+}
+function codeStart(type) {
+  hideCard();
+  const t = type || codeList()[0] || 'r_kerb';
+  setMode({ kind: 'point', type: LINES[t] ? GENERIC.point : t, code: { type: t, open: {}, pend: {} } });
+  toast('Съёмка по кодам: выберите код внизу и снимайте — линии строятся сами');
+}
+function codeSet(t) {
+  if (!mode || !mode.code) return;
+  mode.code.type = t; mode.type = LINES[t] ? GENERIC.point : t; remember(LINES[t] ? 'line' : 'point', t); setMode(mode);
+}
+// открытая линия кода: объект в плане (с 2 вершин) или первая вершина в ожидании
+const codeOpenLine = t => mode.code.open[t] ? data.lines.find(l => l.id === mode.code.open[t]) : null;
+// вершина линейного кода — вместо точки: координаты, отметка, признаки «на глаз при подмене» и «тест» снятой точки идут в линию
+function codeVertex(pt) {
+  const c = mode.code, t = c.type, closedT = !!(LINES[t] || {}).closed, ll = [pt.lat, pt.lng], hz = pt.h != null || pt.hSrc ? { h: pt.h != null ? pt.h : null, src: pt.hSrc, ...(pt.hInfo || {}) } : null;
+  const flags = l => { if (pt.wait) l.wait = l.wait || pt.wait; if (pt.test) l.test = true; };
+  const line = codeOpenLine(t);
+  if (line) {
+    if (closedT && line.latlngs.length >= 3 && L.latLng(line.latlngs[0]).distanceTo(L.latLng(ll)) < 0.02) { delete c.open[t]; save(); redrawAll(); codeDraw(); toast(`${codeLabel(t)}: контур L${line.no} замкнут`); return; }   // снова первый угол — замкнуть, а не дублировать
+    line.latlngs.push(ll); if (hz || line.hs) { line.hs = line.hs || line.latlngs.slice(0, -1).map(() => null); line.hs.push(hz); }
+    flags(line); save(); redrawAll(); codeDraw(); toast(`${codeLabel(t)}: вершина ${line.latlngs.length}`); return;
+  }
+  const p0 = c.pend[t];
+  if (!p0) { c.pend[t] = { ll, hz, wait: pt.wait, test: pt.test }; codeDraw(); toast(`${codeLabel(t)}: начало линии — снимайте следующую точку`); return; }
+  const nl = { id: uid(), no: nextNo(data.lines), type: t, latlngs: [p0.ll, ll], caption: '', count: (LINES[t] || {}).defCount || 1, state: '' };
+  if (p0.hz || hz) nl.hs = [p0.hz, hz];
+  if (p0.wait) nl.wait = p0.wait; if (p0.test) nl.test = true; flags(nl);
+  if (nl.type === GENERIC.line) nl.color = pref('color', VIS_COLOR);
+  if (NET_LINE_KINDS.has((LINES[t] || {}).kind)) carryFrom(data.lines, nl, CARRY.net);
+  data.lines.push(nl); c.open[t] = nl.id; delete c.pend[t];
+  save(); redrawAll(); codeDraw(); toast(`${codeLabel(t)}: линия L${nl.no} начата`);
+}
+// «↶ Убрать»: последний снимок текущего кода — вершина линии или ожидающее начало
+function codeUndo() {
+  const c = mode.code, t = c.type, line = codeOpenLine(t);
+  if (line) {
+    if (line.latlngs.length <= 2) { const first = line.latlngs[0]; data.lines = data.lines.filter(l => l !== line); delete c.open[t]; c.pend[t] = { ll: first, hz: line.hs ? line.hs[0] : null, wait: line.wait, test: line.test }; }
+    else { line.latlngs.pop(); if (line.hs) line.hs.pop(); }
+    save(); redrawAll(); codeDraw(); toast(`${codeLabel(t)}: последняя точка убрана`); return;
+  }
+  if (c.pend[t]) { delete c.pend[t]; codeDraw(); toast(`${codeLabel(t)}: начало линии убрано`); return; }
+  toast('Убирать нечего: у этого кода нет открытой линии. Точку-знак — в карточке или кнопкой «Вернуть»');
+}
+// контур строения из двух углов — не контур: убрать (иначе в плане «здание» из одной стороны)
+function codeTidy(t) {
+  const line = codeOpenLine(t);
+  if (line && (LINES[t] || {}).closed && line.latlngs.length < 3) { data.lines = data.lines.filter(l => l !== line); save(); redrawAll(); toast(`${codeLabel(t)}: контур из двух углов не сохранён — снимите хотя бы три угла`); }
+}
+// первые вершины в ожидании — кружком на карте, чтобы видеть, откуда пойдёт линия
+function codeDraw() {
+  if (codeLayer) { codeLayer.remove(); codeLayer = null; }
+  if (!mode || !mode.code) return;
+  codeLayer = L.layerGroup().addTo(map);
+  for (const [t, p] of Object.entries(mode.code.pend)) L.circleMarker(p.ll, { radius: 6, color: netColor(t, (LINES[t] || {}).color), weight: 2, fillOpacity: 0.3, interactive: false }).bindTooltip(codeLabel(t), { permanent: true, direction: 'right', className: 'codetip' }).addTo(codeLayer);
+}
+function codeNew() { const t = mode.code.type; codeTidy(t); delete mode.code.open[t]; delete mode.code.pend[t]; codeDraw(); toast(`${codeLabel(t)}: следующая точка начнёт новую линию`); }
+function codeClose() {
+  const t = mode.code.type, line = codeOpenLine(t);
+  if (!line || line.latlngs.length < 3) { toast('Замкнуть можно линию из трёх точек и больше'); return; }
+  if (!(LINES[t] || {}).closed) { line.latlngs.push(line.latlngs[0].slice()); if (line.hs) line.hs.push(line.hs[0]); }   // контур строения замкнут и так
+  delete mode.code.open[t]; save(); redrawAll(); codeDraw(); toast(`${codeLabel(t)}: L${line.no} замкнута`);
+}
+// четвёртый угол по трём (здание с трёх углов): прямоугольник — третий угол на перпендикуляр ко второй стороне
+function rect4(a, b, c) {
+  const ux = b.x - a.x, uy = b.y - a.y, L2 = ux * ux + uy * uy;
+  if (!L2) return null;
+  const t = ((c.x - b.x) * -uy + (c.y - b.y) * ux) / L2, c2 = { x: b.x - uy * t, y: b.y + ux * t };
+  return { c: c2, d: { x: a.x + (c2.x - b.x), y: a.y + (c2.y - b.y) } };
+}
+function codeRect() {
+  const t = mode.code.type, line = codeOpenLine(t);
+  if (!line || line.latlngs.length !== 3) { toast('По 3 углам: снимите три угла здания подряд этим кодом, потом нажмите'); return; }
+  const z = sk42(line.latlngs[0][0], line.latlngs[0][1]).zone, def = gkDef(z);
+  const P = line.latlngs.map(a => { const [y, x] = proj4('WGS84', def, [a[1], a[0]]); return { x, y }; });   // все углы — в одной зоне (у границы зон иначе мусор)
+  const r = rect4(P[0], P[1], P[2]); if (!r) return;
+  const moved = Math.hypot(r.c.x - P[2].x, r.c.y - P[2].y);
+  const C = fromSk42(r.c.x, r.c.y, z), D = fromSk42(r.d.x, r.d.y, z);
+  line.latlngs[2] = [C.lat, C.lng]; line.latlngs.push([D.lat, D.lng]); if (line.hs) line.hs.push(null);
+  if (!(LINES[t] || {}).closed) { line.latlngs.push(line.latlngs[0].slice()); if (line.hs) line.hs.push(line.hs[0]); }
+  line.built = 'rect3';
+  delete mode.code.open[t]; save(); redrawAll(); codeDraw();
+  if (moved > 0.1) { say(`Третий угол сдвинут на ${cmSpeech(moved)}`); toast(`⚠ Прямоугольник построен, но третий угол сдвинут на ${cmText(moved)} — проверьте углы промером: дом может быть не прямоугольным`); }
+  else toast(`Прямоугольник построен: 4-й угол — сам, 3-й сдвинут на ${cmText(moved)} к прямому углу`);
 }
 // Кнопка «+», как в «Тактической карте»: двигаешь карту под крестик и ставишь знак или вершину линии туда, где крестик
 function placePlus() {
@@ -6078,6 +6189,8 @@ addEventListener('volumeKey', e => {
   if (b) { cue('tick'); b.click(); }
 });
 $('modeQuick').addEventListener('click', e => {
+  const bc = e.target.closest('[data-code]');
+  if (bc && mode && mode.code) { const v = bc.dataset.code; if (v === '+point' || v === '+line') { const m = mode; openPicker(v === '+point' ? 'point' : 'line', id => { if (mode === m) codeSet(id); }); } else codeSet(v); return; }
   const b = e.target.closest('[data-quick]');
   if (!b || !mode) return;
   if (noteSketchNow(mode, b.dataset.quick)) return;
@@ -6123,6 +6236,10 @@ $('modeBtns').addEventListener('click', e => {
   if (act === 'ortho') { orthoOn = !orthoOn; setPref('ortho', orthoOn); setMode(mode); updateRubber(); toast(orthoOn ? 'Под прямым углом: новая сторона идёт вдоль или поперёк первой стороны. Привязка к точке — важнее' : 'Под прямым углом — выключено'); }
   if (act === 'cancel' && mode.editId) { const m = mode; if (!(m.hist || []).length) setMode(null); else ask('Выйти из правки? Изменения линии не сохранятся', 'Выйти', true).then(ok => { if (ok && mode === m) setMode(null); }); return; }
   if (act === 'cancel') { const m = mode; if (m.latlngs.length < 2) setMode(null); else ask(`Бросить линию из ${m.latlngs.length} точек?`, 'Бросить', true).then(ok => { if (ok && mode === m) setMode(null); }); }
+  if (act === 'cundo') { codeUndo(); setMode(mode); }
+  if (act === 'cnew') { codeNew(); setMode(mode); }
+  if (act === 'cclose') { codeClose(); setMode(mode); }
+  if (act === 'crect') { codeRect(); setMode(mode); }
   if (act === 'done') finishMode();
 });
 let rainHintAt = 0;
@@ -6157,6 +6274,7 @@ function addAt(ll, meas, src) {
     if (spoof && (src === 'tap' || src === 'center')) { pt.wait = new Date().toISOString(); if (snap) pt.waitSnap = true; }   // на глаз при подмене — доснять по GPS; привязана к чужому объекту — его не двигать      // н1, н2… — следующий свободный
     if (hz) { if (hz.h != null) pt.h = hz.h; pt.hSrc = hz.src; pt.hInfo = { acc: hz.acc, ref: hz.ref, from: hz.from, hEll: hz.hEll, ...(hz.src === 'gnss' ? { ant: antH } : {}) }; }
     if (rxTest && (src === 'gps' || src === 'measure')) { pt.test = true; pt.name = pt.name || 'ТЕСТ'; }   // снята по имитации приёмника — не настоящая
+    if (mode.code && LINES[mode.code.type]) { codeVertex(pt); setMode(mode); return null; }   // съёмка по кодам: линейный код — вершина своей линии
     data.points.push(pt); lastPlacedId = pt.id;
     save(); drawPoints();
     if (!snap) toast((pt.type === GENERIC.point ? 'Точка поставлена' : 'Знак поставлен') + (meas ? `, ±${cmText(meas.m)}` : '') +
@@ -6527,7 +6645,7 @@ function buildMenu(kind, obj) {
   });
 }
 const lineById = id => data.lines.find(l => l.id === id);
-const BUILT_TXT = { outlet: 'выпуск из колодца по направлению и длине — конец трубы не снят', rot: 'повёрнутая копия — не снято на местности', mir: 'зеркальная копия — не снято на местности', sketch: 'от руки, на глаз — не съёмка', tape: 'по промерам рулеткой — стороны не сняты по GPS', par: 'параллельно другой линии — не снято на местности', copy: 'копия — не снято на местности' };
+const BUILT_TXT = { outlet: 'выпуск из колодца по направлению и длине — конец трубы не снят', rot: 'повёрнутая копия — не снято на местности', mir: 'зеркальная копия — не снято на местности', sketch: 'от руки, на глаз — не съёмка', tape: 'по промерам рулеткой — стороны не сняты по GPS', par: 'параллельно другой линии — не снято на местности', copy: 'копия — не снято на местности', rect3: 'по трём углам: четвёртый угол построен (прямоугольник), третий подвинут к прямому углу' };
 // новая линия по образцу: те же знак и свойства, свой номер, без съёмочных данных
 function lineLike(src, latlngs, sameType) {
   const out = { id: uid(), no: nextNo(data.lines), type: sameType ? src.type : GENERIC.line, latlngs, caption: sameType ? src.caption || '' : '', count: src.count || 1, state: sameType ? src.state || '' : '' };
@@ -6986,6 +7104,7 @@ function promerAdjust(from) {
   V.pop(); if (mode.hs) mode.hs.length = Math.min(mode.hs.length, V.length); if (mode.tdep) mode.tdep.length = Math.min(mode.tdep.length, V.length);   // последняя точка совпала с первой
 }
 function finishMode() {
+  if (mode.code) { for (const t of Object.keys(mode.code.open)) codeTidy(t); const n = Object.keys(mode.code.pend).length; setMode(null); redrawAll(); if (n) toast(`Не начаты линии из одной точки: ${n} — точка-начало без пары не сохраняется`); return; }
   if (mode.kind === 'line') {
     const closed = (LINES[mode.type] || {}).closed;
     if (mode.latlngs.length < (closed ? 3 : 2)) { toast(closed ? 'Контур строения — хотя бы три угла' : 'Нужно хотя бы две точки'); return; }
@@ -8679,6 +8798,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || ((projectList().find(p => p.id === projectId) || {}).name) || 'без названия') + ' — сменить, новый' },
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
   { id: 'check', icon: '✓', text: 'Проверка перед сдачей' },
+  { id: 'codes', icon: '⌁', text: 'Съёмка по кодам: линии и знаки строятся сами (бордюр, ограда, здание по 3 углам)' },
   { id: 'journal', icon: '☰', text: `Журнал съёмки: ${data.points.length} ${plural(data.points.length, 'точка', 'точки', 'точек')}, фильтры` },
   { id: 'contours', icon: '〰', text: ctOn ? `Горизонтали: показаны, сечение ${mText(ctStep(), ctStep() < 1 ? 2 : 1)} м` : 'Горизонтали по точкам рельефа' },
   { id: 'relief', icon: '⛰', text: `Точки рельефа: ${data.points.filter(inRelief).length} из ${data.points.filter(p => pointH(p) != null).length} — что идёт в горизонтали` },
@@ -8840,6 +8960,7 @@ const MENU = {
   export: () => exportMenu(),
   planscale: () => openList('Масштаб плана', [500, 1000, 2000].map(v => ({ id: String(v), icon: '⊡', text: `1:${v}` + (v === 500 ? ' — исполнительная съёмка, сети' : v === 1000 ? ' — посёлки, промплощадки' : ' — незастроенная территория'), on: v === planScale, radio: true })), v => setPlanScale(Number(v))),
   journal: () => journalSheet(),
+  codes: () => codeStart(),
   relief: () => reliefSheet(),
   contours: () => contourSheet(),
   redo: () => redoSheet(),
@@ -9925,7 +10046,7 @@ function checkPlan() {
   add('bad', 'Колодцы без лотков', wells.filter(p => !((p.attr || {}).lot || []).some(l => l && hasH(l.h))).map(pt), 'Нажмите колодец → «Изменить» — отметки лотков и направления');
   add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !((POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).pole) && !(POINTS[p.type] || {}).arm && !(POINTS[p.type] || {}).defect && !isCadPt(p) && pointH(p) == null).map(pt));
   { const rp = P.filter(inRelief); add('bad', 'Рельеф: точки совпадают в плане, а отметки разные', [...new Set(reliefDups(rp).flat())].map(pt), 'Меню → «Точки рельефа» — одну из пары исключите или переснимите');
-    add('warn', 'Рельеф: включены знаки, у которых отметка обычно не земля (люк, опора…)', rp.filter(p => !RELIEF_DEFAULT.has(p.type)).map(pt), 'Если отметка — по земле, всё верно; иначе — «Точки рельефа» → снять ✓'); }
+    add('warn', 'Рельеф: включены знаки, у которых отметка обычно не земля (люк, опора…)', rp.filter(p => !reliefTypeDef(p.type)).map(pt), 'Если отметка — по земле, всё верно; иначе — «Точки рельефа» → снять ✓'); }
   add('warn', 'Арматура не на сети (дальше 3 м от линии сети)', P.filter(p => (POINTS[p.type] || {}).arm && !pipeLine(p)).map(pt));
   add('info', 'Аварийные дефекты не устранены', P.filter(p => (POINTS[p.type] || {}).defect && (p.attr || {}).urgent && !(p.attr || {}).fixed).map(pt), 'Сообщите эксплуатирующей организации; ведомость — Меню → «Ведомость дефектов»');
   { const left = soList().filter(p => !p.done).length, bad = soList().filter(p => p.done && !p.done.ok).length;
@@ -10580,14 +10701,16 @@ function codesMenu() {
   const used = [...new Set([...data.points.map(p => p.type), ...data.lines.map(l => l.type)])];
   const nameOf = t => (POINTS[t] || LINES[t] || {}).name || t;
   showSheet(`<div class="sh-head"><b>Коды знаков</b><button class="x" data-close>×</button></div>
-    <div class="hint" style="margin:4px 0 10px">Код идёт в каталог, файл для Civil 3D и имя блока в DXF. Пусто — код приложения.</div>
+    <div class="hint" style="margin:4px 0 10px">Код идёт в каталог, файл для Civil 3D и имя блока в DXF, им же подписаны кнопки «Съёмки по кодам». Пусто — код приложения. «Рельеф» — идёт ли знак в горизонтали по умолчанию.</div>
     <div id="codeRows" style="max-height:45vh;overflow:auto">${used.length ? used.map(t => `<div class="meas-row"><span style="flex:1;min-width:0">${esc(nameOf(t))}<br><small style="color:var(--muted)">${esc(t)}</small></span>
-      <input data-t="${esc(t)}" value="${esc(codeMap[t] || '')}" placeholder="${esc(t)}" style="width:40%;min-height:44px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)"></div>`).join('')
+      ${POINTS[t] ? `<label style="display:flex;flex-direction:column;align-items:center;font-size:11px;color:var(--muted);margin-right:6px"><input type="checkbox" data-rel="${esc(t)}"${reliefTypeDef(t) ? ' checked' : ''} style="width:24px;height:24px">рельеф</label>` : ''}<input data-t="${esc(t)}" value="${esc(codeMap[t] || '')}" placeholder="${esc(t)}" style="width:40%;min-height:44px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)"></div>`).join('')
       : '<div class="hint">На плане пока нет знаков — коды для всех знаков можно задать файлом.</div>'}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">
       <button class="btn" id="codesOut">Выгрузить таблицу всех знаков</button><button class="btn" id="codesIn">Загрузить таблицу</button></div>
     <div class="hint" style="margin-top:6px;color:var(--muted)">Таблица — CSV «тип;код;название»: заполните столбец «код» в Excel и загрузите обратно.</div>`);
-  $('codeRows').onchange = e => { const t = e.target.dataset && e.target.dataset.t; if (!t) return;
+  $('codeRows').onchange = e => { const rt = e.target.dataset && e.target.dataset.rel;
+    if (rt) { reliefTypes = { ...reliefTypes }; if (e.target.checked === RELIEF_DEFAULT.has(rt)) delete reliefTypes[rt]; else reliefTypes[rt] = e.target.checked; setPref('reliefTypes', reliefTypes); if (ctOn) ctSoon(); toast(`«${(POINTS[rt] || {}).name || rt}»: ${e.target.checked ? 'в рельеф' : 'не в рельеф'} по умолчанию`); return; }
+    const t = e.target.dataset && e.target.dataset.t; if (!t) return;
     const v = cleanCode(e.target.value); e.target.value = v;
     codeMap = { ...codeMap }; if (v) codeMap[t] = v; else delete codeMap[t]; setPref('codes', codeMap); toast(v ? `Код «${v}»` : 'Код приложения'); };
   $('codesOut').onclick = () => download(`kody_znakov_${today()}.csv`, new Blob([cp1251(['тип;код;название', ...[...Object.values(POINTS), ...Object.values(LINES)]
