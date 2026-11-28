@@ -2008,7 +2008,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 127;
+const APP_BUILD = 128;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -3187,6 +3187,16 @@ const DRAW = {
       return;
     }
     if (spec.style === 'slope') {                                     // бровка; штрихи — на заложение (м) или 1,2 мм у низкого
+      const toe = slopeToe(a);
+      if (toe) {                                                        // откос по двум линиям: штрихи от бровки до подошвы
+        const P = line.latlngs.map(q => map.latLngToContainerPoint(q)), T = toe.map(q => map.latLngToContainerPoint(q)), Rk = slopeTicks(P, T, SLOPE_STEP_MM * MM, SLOPE_SHORT_MM * MM, SLOPE_WIDE_MM * MM);
+        segment(g, path, 0, total, w);
+        el('polyline', { points: T.map(q => q.x + ',' + q.y).join(' '), fill: 'none', stroke: 'currentColor', 'stroke-width': thin, 'stroke-dasharray': (0.15 * MM) + ' ' + (0.6 * MM), 'stroke-linecap': 'round' }, g);   // подошва — точечный пунктир (зн. 84б)
+        for (const [p, q, long] of Rk.segs) el('line', { x1: p.x, y1: p.y, x2: q.x, y2: q.y, stroke: 'currentColor', 'stroke-width': thin, 'stroke-linecap': 'round', ...(spec.strong && long ? { 'stroke-dasharray': (1.2 * MM) + ' ' + (0.4 * MM) } : {}) }, g);   // укреплённый: длинные — прерывистые (зн. 85)
+        if (a.hgt) mark(total * 0.5, String(a.hgt), 2.6);
+        if (spec.strong && a.method) placeText(g, path, total * 0.35, a.method, { dy: 3 * MM * sg, size: 2.5 * MM });   // способ укрепления: «дерн.», «бет.»
+        return;
+      }
       const ll0 = L.latLng(line.latlngs[0]), c0 = map.latLngToContainerPoint(ll0);
       const pxPerM = 10 / Math.max(1e-6, ll0.distanceTo(map.containerPointToLatLng([c0.x + 10, c0.y])));
       const len = spec.high ? Math.max(2.4, (Number(a.width) || 3) * pxPerM / MM) : 1.2;
@@ -4982,7 +4992,7 @@ function transformSheet() {
     const mv = (lat, lng) => { const c = xy(lat, lng), t = fit.T(c.x, c.y), ll = fromSk42(t.X, t.Y, zone0); return [ll.lat, ll.lng]; };
     let n = 0;
     for (const p of data.points) if (isFinite(+p.lat) && isFinite(+p.lng)) { const [la, ln] = mv(p.lat, p.lng); p.lat = la; p.lng = ln; n++; }
-    for (const l of data.lines) if (Array.isArray(l.latlngs)) l.latlngs = l.latlngs.map(a => isFinite(+a[0]) && isFinite(+a[1]) ? mv(a[0], a[1]) : a);
+    for (const l of data.lines) if (Array.isArray(l.latlngs)) { l.latlngs = l.latlngs.map(a => isFinite(+a[0]) && isFinite(+a[1]) ? mv(a[0], a[1]) : a); if (slopeToe(l.attr)) l.attr = { ...l.attr, toe: slopeToe(l.attr).map(a => mv(a[0], a[1])) }; }   // подошва откоса — тоже
     const dr = fit.n >= 2 ? fit.rot : 0;                                  // направления знаков (поворот, провода и оттяжки опор) — вместе с планом (по часовой — плюс)
     if (Math.abs(dr) > 1e-9) for (const p of data.points) {
       if (p.rot != null && isFinite(+p.rot)) p.rot = +((Number(p.rot) + dr + 360) % 360).toFixed(1);
@@ -6888,6 +6898,54 @@ function lineFromPoints() {
     }, 'Выберите знак линии'), 0);
   }, 'Дальше — знак');
 }
+// Откос по двум линиям (бровка и подошва, как в GeoniCS): штрихи от бровки до подошвы — к точке на той же доле длины (не пересекаются), длинные через короткие.
+// Единицы любые (пиксели экрана или метры DXF): step — шаг штрихов, shortK — доля короткого штриха, minLen — короче не рисуем (узкий откос).
+const SLOPE_STEP_MM = 2.0, SLOPE_SHORT_MM = 2.0, SLOPE_WIDE_MM = 30;   // ГКИНП зн. 84б: шаг 2 мм, короткий 2 мм; шире 3 см на плане — короткий в треть длинного
+function slopeTicks(top, toe, step, shortLen, wideAt) {
+  const segs = [];
+  if (!Array.isArray(top) || !Array.isArray(toe) || top.length < 2 || toe.length < 2 || !(step > 0)) return { segs };
+  const D = (a, b) => Math.hypot(a.x - b.x, a.y - b.y), t0 = top[0], t1 = top[top.length - 1];
+  if (D(t0, toe[0]) + D(t1, toe[toe.length - 1]) > D(t0, toe[toe.length - 1]) + D(t1, toe[0])) toe = toe.slice().reverse();   // подошву рисовали в обратную сторону — развернуть
+  const cum = P => { const d = [0]; for (let i = 1; i < P.length; i++) d.push(d[i - 1] + D(P[i], P[i - 1])); return d; };
+  const dt = cum(top), dq = cum(toe), Lt = dt[dt.length - 1], Lq = dq[dq.length - 1];
+  if (Lt < 1e-9 || Lq < 1e-9) return { segs };
+  const at = (P, d, s) => { let i = 1; while (i < d.length - 1 && d[i] < s) i++; const u = (s - d[i - 1]) / ((d[i] - d[i - 1]) || 1); return { x: P[i - 1].x + (P[i].x - P[i - 1].x) * u, y: P[i - 1].y + (P[i].y - P[i - 1].y) * u }; };
+  // перпендикуляр от бровки: первое пересечение с подошвой — точка и её место вдоль подошвы
+  const ray = (p, n) => { let best = null; for (let i = 1; i < toe.length; i++) { const a = toe[i - 1], b = toe[i], ex = b.x - a.x, ey = b.y - a.y, den = n.x * ey - n.y * ex; if (Math.abs(den) < 1e-12) continue;
+    const t = ((a.x - p.x) * ey - (a.y - p.y) * ex) / den, u = ((a.x - p.x) * n.y - (a.y - p.y) * n.x) / den; if (t > 1e-9 && u >= 0 && u <= 1 && (!best || t < best.t)) best = { t, q: { x: p.x + n.x * t, y: p.y + n.y * t }, s: dq[i - 1] + u * (dq[i] - dq[i - 1]) }; } return best; };
+  let k = 0, lastS = -Infinity;
+  for (let s = step / 2; s <= Lt; s += step, k++) {
+    let i = 1; while (i < dt.length - 1 && dt[i] < s) i++;
+    const a = top[i - 1], b = top[i], L = D(a, b) || 1, tx = (b.x - a.x) / L, ty = (b.y - a.y) / L, p = at(top, dt, s);
+    const sf = s / Lt * Lq, qf = at(toe, dq, sf), side = Math.sign(tx * (qf.y - p.y) - ty * (qf.x - p.x)) || 1, n = { x: -ty * side, y: tx * side };
+    const h = ray(p, n);
+    let q, sq;                                                           // по ГКИНП — перпендикулярно бровке до подошвы; нет попадания или штрих перекрестил бы прошлый — к точке на той же доле
+    if (h && h.s >= lastS && h.t < D(p, qf) * 2.5) { q = h.q; sq = h.s; } else { q = qf; sq = Math.max(sf, lastS); }
+    lastS = sq;
+    const full = D(p, q); if (full < step * 0.2) continue;              // узкое место — штрих не рисуем
+    const long = k % 2 === 0, len = long ? full : Math.min(full, wideAt && full >= wideAt ? full / 3 : shortLen);   // короткий — 2 мм; откос шире 3 см на плане — треть длинного (ГКИНП п. 132)
+    segs.push([p, { x: p.x + (q.x - p.x) * len / full, y: p.y + (q.y - p.y) * len / full }, long]);
+  }
+  return { segs };
+}
+const slopeToe = a => Array.isArray(a && a.toe) && a.toe.length >= 2 && a.toe.every(q => Array.isArray(q) && isFinite(+q[0]) && isFinite(+q[1])) ? a.toe : null;
+// подошва — по другой линии: геометрия копируется в откос; отдельную линию можно убрать
+function slopeSetToe(line) {
+  chooseLine('Коснитесь линии подошвы откоса', async toe => {
+    if (!toe || toe === line || !Array.isArray(toe.latlngs) || toe.latlngs.length < 2) { toast('Нужна другая линия — подошва'); return; }
+    line.attr = { ...(line.attr || {}), toe: toe.latlngs.map(q => [q[0], q[1]]) };
+    if (await ask(`Подошва взята из линии${toe.no ? ' L' + toe.no : ''}. Убрать отдельную линию подошвы (она теперь часть откоса)?`, 'Убрать')) data.lines = data.lines.filter(l => l !== toe);
+    save(); redrawAll(); showCard('line', line); toast('Откос по двум линиям: штрихи — от бровки до подошвы');
+  });
+}
+function slopeFlip(line) {
+  const t = slopeToe(line.attr); if (!t) return;
+  const top = line.latlngs.map(q => [q[0], q[1]]);
+  const hsTop = line.hs, hsToe = Array.isArray(line.attr.toeHs) ? line.attr.toeHs : null;
+  line.latlngs = t.map(q => [q[0], q[1]]); line.attr = { ...line.attr, toe: top }; if (hsTop) line.attr.toeHs = hsTop; else delete line.attr.toeHs;   // отметки — местами, а не прочь
+  if (hsToe && hsToe.length === line.latlngs.length) line.hs = hsToe; else delete line.hs;
+  save(); redrawAll(); showCard('line', line); toast('Бровка и подошва поменялись местами');
+}
 function buildMenu(kind, obj) {
   if (kind === 'point' && GROUP_OF[obj.type] === 'wells') {
     openList('Построения · колодец', [{ id: 'out', text: '⟶ Выпуски: трубы от колодца по направлению и длине' }, { id: 'rot', text: '↻ Повернуть знак (пальцем или по линии)' }, { id: 'move', text: '⇲ Сдвинуть или копировать' }], a => a === 'rot' ? rotateSheet(obj) : a === 'out' ? outletForm(obj) : moveForm('point', obj));
@@ -6896,12 +6954,19 @@ function buildMenu(kind, obj) {
   if (kind === 'point') { openList('Построения · знак', [{ id: 'rot', text: '↻ Повернуть знак (пальцем или по линии рядом)' }, { id: 'move', text: '⇲ Сдвинуть или копировать' }], a => a === 'rot' ? rotateSheet(obj) : moveForm('point', obj)); return; }
   const closed = !!(LINES[obj.type] || {}).closed;
   if (obj.latlngs.length < (closed ? 3 : 2)) { toast('У линии слишком мало вершин'); return; }
-  const items = [{ id: 'par', text: '∥ Параллельная линия на расстоянии' },
+  const sp0 = LINES[obj.type] || {}, isSlope = sp0.style === 'slope', isFence = sp0.kind === 'fence';
+  const items = [...(isSlope ? [{ id: 'toe', text: slopeToe(obj.attr) ? '⟂ Подошва — по другой линии (заменить)' : '⟂ Подошва — по другой линии (откос по двум линиям)' }, ...(slopeToe(obj.attr) ? [{ id: 'toeflip', text: '⇅ Бровку и подошву — поменять местами' }, { id: 'toeoff', text: '✕ Убрать подошву (штрихи — по заложению)' }] : [])] : []),
+    ...(isFence ? [{ id: 'fflip', text: '⇆ Знак ограды — на другую сторону' }] : []),
+    { id: 'par', text: '∥ Параллельная линия на расстоянии' },
     ...(closed ? [] : [{ id: 'ext', text: '⟷ Продлить или обрезать до другой линии' }, { id: 'split', text: '✂ Разрезать в крестике' }, { id: 'join', text: '⊕ Соединить с другой линией' }]),
     { id: 'rev', text: '⇄ Развернуть направление' }, { id: 'move', text: '⇲ Сдвинуть или копировать' },
     { id: 'rot', text: '⟳ Повернуть на угол' }, { id: 'mir', text: '⇋ Зеркально отразить' },
     ...(closed && obj.latlngs.length >= 4 ? [{ id: 'square', text: '∟ Выпрямить углы (дом, снятый по GPS)' }] : [])];
   openList('Построения · L' + (obj.no || ''), items, a => {
+    if (a === 'toe') slopeSetToe(obj);
+    if (a === 'toeflip') slopeFlip(obj);
+    if (a === 'toeoff') { const { toe, ...rest } = obj.attr || {}; obj.attr = rest; save(); redrawAll(); showCard('line', obj); }
+    if (a === 'fflip') { obj.attr = { ...(obj.attr || {}), flip: !(obj.attr || {}).flip }; save(); redrawAll(); showCard('line', obj); toast('Засечки и столбики — на другой стороне'); }
     if (a === 'par') parallelForm(obj);
     if (a === 'ext') chooseLine('Коснитесь линии, до которой продлить или обрезать L' + (obj.no || ''), t => extendLine(obj, t));
     if (a === 'split') splitLine(obj);
@@ -7022,6 +7087,7 @@ function reverseLine(line) {
   const n = line.latlngs.length;
   line.latlngs.reverse();
   if (line.hs) line.hs = line.latlngs.map((_, k) => line.hs[n - 1 - k] || null);
+  if (slopeToe(line.attr)) line.attr = { ...line.attr, toe: slopeToe(line.attr).slice().reverse(), ...(Array.isArray(line.attr.toeHs) ? { toeHs: line.attr.toeHs.slice().reverse() } : {}) };   // подошва откоса — в ту же сторону
   if (line.tdep) line.tdep = line.latlngs.map((_, k) => line.tdep[n - 1 - k] != null ? line.tdep[n - 1 - k] : '');
   save(); redrawAll(); showCard('line', line);
   toast(`L${line.no || ''}: начало и конец поменялись местами — ↶ вернёт`);
@@ -7065,10 +7131,12 @@ function moveForm(kind, obj) {
     if (v.act === 'copy') {
       const cp = lineLike(obj, ll2, true); cp.built = 'copy';
       if (obj.attr && obj.attr.circle) { const c = shift([obj.attr.circle.lat, obj.attr.circle.lng]); cp.attr = { ...(cp.attr || {}), circle: { ...obj.attr.circle, lat: c[0], lng: c[1] } }; }   // копия окружности — тоже окружность
+      if (slopeToe(obj.attr)) cp.attr = { ...(cp.attr || {}), toe: slopeToe(obj.attr).map(shift) };   // подошва откоса — вместе с бровкой
       data.lines.push(cp); save(); redrawAll(); showCard('line', cp); toast(`Копия L${cp.no} в ${what} — ↶ вернёт`);
     } else {
       obj.latlngs = ll2; delete obj.vol; delete obj.hs;                  // отметки были у старых мест
       if (obj.attr && obj.attr.circle) { const c = shift([obj.attr.circle.lat, obj.attr.circle.lng]); obj.attr.circle.lat = c[0]; obj.attr.circle.lng = c[1]; }
+      if (slopeToe(obj.attr)) obj.attr = { ...obj.attr, toe: slopeToe(obj.attr).map(shift) };   // подошва откоса — вместе с бровкой
       save(); redrawAll(); showCard('line', obj); toast(`L${obj.no || ''} сдвинута на ${what} — ↶ вернёт`);
     }
   }, 'Готово');
@@ -7081,14 +7149,17 @@ function transformLine(line, f, zone, act, what) {
   const sideK = (LINES[line.type] || {}).kind, flipSide = what.flip && (sideK === 'fence' || sideK === 'relief');   // засечки оград, бергштрихи, штрихи откосов — по флажку стороны
   const flipped = a => ({ ...(a || {}), flip: (a && a.flip) ? 0 : 1 });
   const circ = line.attr && line.attr.circle ? tr([line.attr.circle.lat, line.attr.circle.lng]) : null;
+  const toe2 = slopeToe(line.attr) ? xyLL(f(slopeToe(line.attr).map(a => planeXY(L.latLng(a), zone))), zone) : null;   // подошва откоса — тем же поворотом / отражением
   if (act === 'copy') {
     const cp = lineLike(line, ll2, true); cp.built = what.built;
+    if (toe2) cp.attr = { ...(cp.attr || {}), toe: toe2 };
     if (flipSide) cp.attr = flipped(cp.attr);                           // зеркало: штрихи — на зеркальную сторону
     if (circ) cp.attr = { ...(cp.attr || {}), circle: { ...line.attr.circle, lat: circ[0], lng: circ[1] } };
     data.lines.push(cp); save(); redrawAll(); showCard('line', cp); toast(`${what.copy} L${cp.no} — ↶ вернёт`);
     return;
   }
   if (flipSide) line.attr = flipped(line.attr);
+  if (toe2) line.attr = { ...line.attr, toe: toe2 };
   line.latlngs = ll2; delete line.vol; delete line.hs;                   // отметки были у старых мест
   if (circ) { line.attr.circle.lat = circ[0]; line.attr.circle.lng = circ[1]; }
   save(); redrawAll(); showCard('line', line); toast(`L${line.no || ''} ${what.move} — ↶ вернёт`);
@@ -10074,6 +10145,16 @@ function toDxf() {
     ent(0, 'POLYLINE', 8, lay, ...(lt ? [6, lt.name] : []), 66, 1, 10, 0, 20, 0, 30, 0, 70, (zs ? 8 : 0) | (sp.closed ? 1 : 0));
     l.latlngs.forEach((ll, i) => { const [x, y, zz] = xyz(ll, zs && zs[i]); ent(0, 'VERTEX', 8, lay, 10, x, 20, y, 30, zs ? zz : 0, 70, zs ? 32 : 0); });
     ent(0, 'SEQEND', 8, lay);
+    if (sp.style === 'slope' && slopeToe(l.attr)) {                     // откос по двум линиям: подошва и штрихи — линиями (тот же расчёт, что на экране, в метрах)
+      const XY = ll => { const [x, y] = xyz(ll); return { x: +x, y: +y }; }, top = l.latlngs.map(XY), toe = slopeToe(l.attr).map(XY), km = DXF_M_PER_MM;
+      const tlt = dxfLtype({}, { dash: [0.15, 0.6] }); ltypes.set(tlt.name, tlt);   // подошва — точечный пунктир, как на экране (зн. 84б)
+      ent(0, 'POLYLINE', 8, lay, 6, tlt.name, 66, 1, 10, 0, 20, 0, 30, 0, 70, 0);
+      for (const q of toe) ent(0, 'VERTEX', 8, lay, 10, f3(q.x), 20, f3(q.y), 30, 0);
+      ent(0, 'SEQEND', 8, lay);
+      const llt = sp.strong ? dxfLtype({}, { dash: [1.2, 0.4] }) : null; if (llt) ltypes.set(llt.name, llt);   // укреплённый: длинные штрихи прерывистые (зн. 85)
+      const Rk = slopeTicks(top, toe, SLOPE_STEP_MM * km, SLOPE_SHORT_MM * km, SLOPE_WIDE_MM * km);
+      for (const [p, q, long] of Rk.segs) ent(0, 'LINE', 8, lay, ...(llt && long ? [6, llt.name] : []), 10, f3(p.x), 20, f3(p.y), 30, 0, 11, f3(q.x), 21, f3(q.y), 31, 0);
+    }
     if (sp.area && l.latlngs.length >= 3) { const V = l.latlngs.map(ll => { const [x, y] = xyz(ll); return { x: +x, y: +y }; }), c = areaCentroid(V); ent(0, 'TEXT', 8, useLayer('ТОПО_ПОДПИСИ'), 10, c.x.toFixed(3), 20, c.y.toFixed(3), 30, 0, 40, DXF_TEXT_M, 1, coverOf(l), 7, DXF_STYLE, 72, 4, 11, c.x.toFixed(3), 21, c.y.toFixed(3), 31, 0); }   // буква покрытия — в середине
     const label = [sp.kind === 'building' ? buildingLabel(sp, l) : '', NET_LINE_KINDS.has(sp.kind) ? netCaption(l) : l.caption, (l.attr && l.attr.caption) || ''].filter(Boolean).join(' ');
     if (label) {                                                         // подпись — у середины самого длинного участка, вдоль него и чуть в стороне: не в точке колодца
