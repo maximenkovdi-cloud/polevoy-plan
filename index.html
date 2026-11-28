@@ -311,6 +311,7 @@
   .sym .lbl { position:absolute; left:24px; top:-2px; white-space:nowrap; font:italic var(--lblPx, 12.5px)/1 var(--draft); color:var(--sym); letter-spacing:.01em;
     text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo), 0 0 3px var(--halo); }
   .sym .lbl.off { display:none; }
+  .ctl span { position:absolute; left:0; top:0; white-space:nowrap; font-style:italic; font-family:var(--draft); color:var(--rel); line-height:1; text-shadow:0 0 2px var(--halo), 0 0 2px var(--halo), 0 0 3px var(--halo); pointer-events:none; }   /* цифры горизонталей */
   .sym .lbl.frac { display:flex; flex-direction:column; align-items:center; line-height:1.05; }
   .sym .lbl.frac .t { border-bottom:1px solid currentColor; padding:0 1px; font-style:italic; }
   .sym .lbl.frac .b { font-style:italic; }                                        /* места нет — подпись появится при приближении */
@@ -913,6 +914,7 @@ function save() {
   if (now !== lastSaved && outage) clearOutage();                     // план изменился — подсветка отключения устарела
   if (now !== lastSaved) { pushUndo(lastSaved); lastSaved = now; redoStack.length = 0; }   // новая правка — повторять больше нечего
   persist(now);
+  if (ctOn) ctSoon();                                                   // точки или линии рельефа поменялись — горизонтали следом
   showUndo();
 }
 function showUndo() {
@@ -2004,7 +2006,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 121;
+const APP_BUILD = 122;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -3494,7 +3496,7 @@ let drawnAt = null;                                                   // { zoom,
 function stretchNet(ll0, scale, pos) { if (drawnAt) L.DomUtil.setTransform(netSvg, pos, scale); }
 map.on('zoomanim', e => { if (drawnAt) stretchNet(null, map.getZoomScale(e.zoom, drawnAt.zoom), map._latLngToNewLayerPoint(drawnAt.ll, e.zoom, e.center)); });
 map.on('zoom', () => { if (drawnAt && !map._animatingZoom) stretchNet(null, map.getZoomScale(map.getZoom(), drawnAt.zoom), map.latLngToLayerPoint(drawnAt.ll)); });
-function redrawAll() { drawPoints(); drawHits(); frame(); drawSo(); }
+function redrawAll() { drawPoints(); drawHits(); frame(); drawSo(); if (ctOn) ctSoon(); }
 // длина объекта — на плане (как в КРЕДО и AutoCAD); у контура — периметр
 function lineLength(line) { return planeLength(line.latlngs, !!(LINES[line.type] || {}).closed); }
 // «на местности …» мелко рядом, если отличается от длины на плане больше чем на 1 см
@@ -3791,6 +3793,7 @@ function updateToObj() {
     html: `<svg viewBox="0 0 22 22" width="22" height="22" style="transform:rotate(${ang}deg)"><path d="M7 4l8 7-8 7" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 4l8 7-8 7" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>` }) }).addTo(toObjLayer);
 }
 map.on('zoomend', () => { if (selected) updateToObj(); });
+map.on('zoomend', () => { if (ctOn) drawContours(); });                  // толщины и цифры — в мм плана
 async function shareGo(kind, obj) {
   const t = objTarget(kind, obj), s = coordText(t).s;
   const name = kind === 'point' ? pointLabel(obj) || (POINTS[obj.type] || POINTS.mark).name : (LINES[obj.type] || LINES.plain).name + (obj.no ? ' L' + obj.no : '');
@@ -5520,6 +5523,230 @@ function reliefSheet() {
   $('rfOn').onclick = () => setAll(true); $('rfOff').onclick = () => setAll(false); $('rfDef').onclick = () => setAll(null);
   $('rfRows').onchange = e => { const id = e.target.dataset && e.target.dataset.rid, p = id && data.points.find(q => q.id === id); if (!p) return;
     if (e.target.checked === RELIEF_DEFAULT.has(p.type)) delete p.relief; else p.relief = e.target.checked; save(); again(); };   // предупреждения и счётчики — сразу
+}
+/* ───────────── Горизонтали по точкам рельефа (ГКИНП, зн. 329, пп. 447–456): строятся в телефоне, в план не пишутся — только на экран и в DXF ─────────────
+   Треугольники — по точкам «в рельеф» и вершинам с отметками линий рельефа (бровки, подошвы, обрывы, подпорные стенки); их стороны — структурные, горизонталь через них не перескакивает.
+   Сечение и «утолщать каждую N» — настройкой (по ГКИНП: 5-я при 1, 2, 5 м; 4-я при 0,5 и 2,5 м). Длинные треугольники (дальше «не соединять») выкидываются — там «белое пятно». */
+const CT_STEPS = [0.25, 0.5, 1];                                       // ГКИНП-02-033-82, п. 2.8: 0,5 — обычно; 1,0 — горный (уклоны больше 6°); 0,25 — спланированные площадки
+const CT_THICK_DEF = { 0.25: 4, 0.5: 4, 1: 5 };                       // зн. 329, п. 449: 4-я при 0,5; 5-я при 1
+const CT_STRUCT = new Set(['sl_low', 'sl_high', 'sl_strong', 'wall_v', 'wall_inc', 'wall_wood', 'cliff', 'ledge', 'gully', 'r_shoulder', 'r_kerb', 'r_nokerb']);   // по ним — структурные линии
+const CT_BEND = 0.5, CT_SMOOTH_M = 0.5, CT_W_MM = 0.13, CT_WT_MM = 0.23, CT_LBL_MM = 2.0, CT_TICK_MM = 1.0, CT_LBL_EVERY_MM = 150;   // толщины по ГКИНП (0,12–0,15 и 0,2–0,25), цифры, бергштрих, подписи — через ~15 см плана
+let ctOn = !!pref('ctOn', false), ctCache = null, ctLayer = null, ctTimer = 0;
+const ctSoon = () => { clearTimeout(ctTimer); ctTimer = setTimeout(drawContours, 2000); };   // после правки плана — перестроить, но не на каждое касание
+const ctStep = () => { const v = Number(pref('ctStep', 0.5)); return CT_STEPS.includes(v) ? v : 0.5; };
+const ctThickN = () => { const v = Number(pref('ctThick', 0)); return Number.isInteger(v) && v >= 2 && v <= 10 ? v : CT_THICK_DEF[ctStep()]; };
+const ctMaxEdge = () => { const v = Number(pref('ctMaxEdge', 25)); return v >= 5 && v <= 500 ? v : 25; };   // пикеты на 1:500 — через 15–20 м; длиннее — «белое пятно»
+// исходные данные: точки и структурные отрезки в местной системе (одна зона — по первой точке), отчёт «вошло / выпало»
+function ctInputs() {
+  const okP = p => isFinite(+p.lat) && isFinite(+p.lng), all = data.points.filter(okP), rel = all.filter(inRelief);   // битая точка не роняет ни горизонтали, ни DXF
+  const rep = { points: rel.length, noH: all.filter(p => reliefOf(p) && pointH(p) == null).length, off: all.filter(p => pointH(p) != null && !reliefOf(p)).length, lines: 0, dups: reliefDups(rel).length };
+  const first = rel[0] || data.lines.find(l => CT_STRUCT.has(l.type) && lineZs(l));
+  if (!first) return { pts: [], segs: [], rep, zone: null };
+  const zone = first.latlngs ? sk42(first.latlngs[0][0], first.latlngs[0][1]).zone : sk42(first.lat, first.lng).zone, def = gkDef(zone);
+  const f0 = first.latlngs ? first.latlngs[0] : [first.lat, first.lng], [e0, n0] = proj4('WGS84', def, [f0[1], f0[0]]), o = { x: Math.round(n0), y: Math.round(e0) };   // местное начало: треугольники считаются точнее
+  const xy = (lat, lng) => { const [e, n] = proj4('WGS84', def, [lng, lat]); return { x: n - o.x, y: e - o.y }; };
+  const pts = [], segs = [], idx = (c, h) => { const k = pts.findIndex(q => Math.hypot(q.x - c.x, q.y - c.y) < RELIEF_DUP_M); if (k >= 0) return k; pts.push({ x: c.x, y: c.y, h }); return pts.length - 1; };
+  for (const p of rel) idx(xy(p.lat, p.lng), pointH(p));
+  for (const l of data.lines) {
+    if (!CT_STRUCT.has(l.type) || !Array.isArray(l.latlngs) || !l.latlngs.every(a => isFinite(+a[0]) && isFinite(+a[1]))) continue;
+    const zs = lineZs(l); if (!zs) continue;
+    rep.lines++;
+    const step = ctMaxEdge() / 2, q = l.latlngs.map(a => xy(a[0], a[1]));
+    for (let i = 1; i < q.length; i++) {                                 // отрезок длиннее половины «не соединять» — промежуточные точки по прямой (бордюр, снятый по концам)
+      if (zs[i - 1] == null || zs[i] == null) continue;
+      const d = Math.hypot(q[i].x - q[i - 1].x, q[i].y - q[i - 1].y), n = Math.max(1, Math.ceil(d / step));
+      let prev = idx(q[i - 1], zs[i - 1]);
+      for (let k = 1; k <= n; k++) { const u = k / n, cur = idx({ x: q[i - 1].x + (q[i].x - q[i - 1].x) * u, y: q[i - 1].y + (q[i].y - q[i - 1].y) * u }, zs[i - 1] + (zs[i] - zs[i - 1]) * u); if (cur !== prev) segs.push([prev, cur]); prev = cur; }
+    }
+  }
+  return { pts, segs, rep, zone, xy, o };
+}
+// горизонтали: пересечения уровней с треугольниками, склейка в линии по общим рёбрам; уровень h = k · сечение
+function ctBuild() {
+  const inp = ctInputs(), step = ctStep(), N = ctThickN(), maxE = ctMaxEdge();
+  const out = { step, N, lines: [], rep: inp.rep, gaps: 0, zone: inp.zone, tris: 0, o: inp.o, xy: inp.xy, holes: [] };
+  if (inp.pts.length < 3) return out;
+  const P = inp.pts, T0 = conformTin(P, inp.segs.slice()), long = t => Math.max(...[0, 1, 2].map(k => Math.hypot(P[t[k]].x - P[t[(k + 1) % 3]].x, P[t[k]].y - P[t[(k + 1) % 3]].y))) > maxE;
+  const T = T0.filter(t => !long(t)), ekk = (a, b) => a < b ? a + '_' + b : b + '_' + a, cnt = new Map(); for (const t of T0) for (let k = 0; k < 3; k++) { const e = ekk(t[k], t[(k + 1) % 3]); cnt.set(e, (cnt.get(e) || 0) + 1); }
+  for (const t of T0) if (long(t)) { out.gaps++; if ([0, 1, 2].every(k => cnt.get(ekk(t[k], t[(k + 1) % 3])) === 2)) out.holes.push(t.map(i => ({ x: P[i].x, y: P[i].y }))); }   // дыра — только внутри снятого (ни одной стороны на краю участка)
+  out.tris = T.length;
+  const lev = new Map();                                                 // уровень → отрезки [ключ ребра A, точка A, ключ ребра B, точка B]
+  const ek = (a, b) => a < b ? a + '_' + b : b + '_' + a;
+  for (const t of T) {
+    const hs = t.map(i => P[i].h), lo = Math.min(...hs), hi = Math.max(...hs);
+    for (let k = Math.ceil(lo / step - 1e-9); k * step <= hi + 1e-9; k++) {
+      const z = +(k * step).toFixed(3), cut = [];
+      for (let e = 0; e < 3; e++) { const a = t[e], b = t[(e + 1) % 3], ha = P[a].h, hb = P[b].h;
+        if ((ha < z && hb >= z) || (hb < z && ha >= z)) { const s = (z - ha) / (hb - ha); cut.push([ek(a, b), { x: P[a].x + (P[b].x - P[a].x) * s, y: P[a].y + (P[b].y - P[a].y) * s }]); } }
+      if (cut.length === 2) { if (!lev.has(z)) lev.set(z, []); lev.get(z).push(cut); }
+    }
+  }
+  for (const [z, ss] of lev) {                                           // склейка: конец к началу по одному и тому же ребру
+    const byKey = new Map(); ss.forEach((s, i) => { for (const [k] of s) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(i); } });
+    const used = new Uint8Array(ss.length);
+    for (let i0 = 0; i0 < ss.length; i0++) {
+      if (used[i0]) continue; used[i0] = 1;
+      const line = [ss[i0][0], ss[i0][1]];
+      for (const dir of [1, 0]) {                                        // растим в обе стороны
+        for (;;) { const endKey = dir ? line[line.length - 1][0] : line[0][0], nx = (byKey.get(endKey) || []).find(j => !used[j]); if (nx == null) break;
+          used[nx] = 1; const s = ss[nx], other = s[0][0] === endKey ? s[1] : s[0]; if (dir) line.push(other); else line.unshift(other); }
+      }
+      const pts = line.map(q => q[1]), closed = line.length > 3 && line[0][0] === line[line.length - 1][0];
+      const k = Math.round(z / step), thick = k % N === 0;
+      out.lines.push({ h: z, thick, closed, pts: ctSmooth(pts, closed) });
+    }
+  }
+  out.P = P; out.T = T;
+  return out;
+}
+// сглаживание: одна итерация Чайкина, концы на месте — горизонталь как от руки, но не уходит от точек
+function ctSmooth(pts, closed) {
+  if (pts.length < 3 || !pref('ctSmooth', true)) return pts;
+  const r = closed ? [] : [pts[0]], n = pts.length;
+  for (let i = 0; i < n - 1; i++) { const a = pts[i], b = pts[i + 1], d = Math.hypot(b.x - a.x, b.y - a.y), u = d > 0 ? Math.min(0.25, CT_SMOOTH_M / d) : 0.25;   // срез угла — не больше 0,5 м: горизонталь не уходит за бровку и на соседнюю
+    r.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u }, { x: b.x - (b.x - a.x) * u, y: b.y - (b.y - a.y) * u }); }
+  if (closed) r.push(r[0]); else r.push(pts[n - 1]);
+  return r;
+}
+// подпись горизонтали: «120», «120,5» (дробь — только у половинных при сечении 0,5 и мельче — по ГКИНП как «120,5»); основание цифр — вниз по скату
+const ctText = (h, step) => Number.isInteger(+h.toFixed(3)) ? String(Math.round(h)) : planNum(h, step < 0.5 ? 2 : 1);
+// высота поверхности в точке (для направления ската у подписи и бергштриха)
+function ctHeightAt(c, R) {
+  for (const t of R.T) { const w = bary(R.P, t, c); if (w) return w[0] * R.P[t[0]].h + w[1] * R.P[t[1]].h + w[2] * R.P[t[2]].h; }
+  return null;
+}
+// места подписей и бергштрихов (в метрах местной системы): подписи — на утолщённых, через ~15 см плана, на прямых участках; не ближе 2 мм плана к знакам и линиям плана
+function ctMarks(R) {
+  const km = DXF_M_PER_MM, every = CT_LBL_EVERY_MM * km, lh = CT_LBL_MM * km, lbl = [], ticks = [];
+  const obst = data.points.filter(p => isFinite(+p.lat) && isFinite(+p.lng)).map(p => R.xy ? R.xy(p.lat, p.lng) : null).filter(Boolean), anyThick = R.lines.some(l => l.thick);
+  for (const L of R.lines) {
+    const pts = L.pts, d = [0]; for (let i = 1; i < pts.length; i++) d.push(d[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+    const len = d[d.length - 1], txt = ctText(L.h, R.step), tw = txt.length * lh * DXF_CHAR_W + lh * 0.6;
+    const at = s => { let i = 1; while (i < d.length - 1 && d[i] < s) i++; const a = pts[i - 1], b = pts[i], u = (s - d[i - 1]) / ((d[i] - d[i - 1]) || 1); return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, ang: Math.atan2(b.x - a.x, b.y - a.y) }; };   // ang: от оси Y (восток) к X (север)
+    if ((L.thick || !anyThick) && len > tw * 3) {
+      for (let s = Math.min(len / 2, every / 2); s < len - tw; s += every) {
+        const c = at(s), s0 = s - tw / 2, s1 = s + tw / 2, a0 = at(Math.max(0, s0)), a1 = at(Math.min(len, s1));
+        if (Math.abs(((a1.ang - a0.ang + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) > CT_BEND) continue;   // крутой изгиб под цифрами — не здесь
+        if (obst.some(o => Math.hypot(o.x - c.x, o.y - c.y) < tw / 2 + 2 * km)) continue;                          // рядом знак — не здесь
+        const nx = Math.cos(c.ang), ny = -Math.sin(c.ang), h1 = ctHeightAt({ x: c.x + nx * lh, y: c.y + ny * lh }, R), h2 = ctHeightAt({ x: c.x - nx * lh, y: c.y - ny * lh }, R);
+        const upLeft = h1 != null && h2 != null ? h1 > h2 : true;          // слева по ходу линии — выше
+        lbl.push({ x: c.x, y: c.y, ang: c.ang, up: upLeft, txt, s0, s1, line: L, w: tw });
+      }
+    }
+    if (L.closed && len < 60 * km * 10) {                               // вершина или котловина: бергштрих наружу или внутрь — вниз по скату
+      const c = at(len / 4), nx = Math.cos(c.ang), ny = -Math.sin(c.ang), h1 = ctHeightAt({ x: c.x + nx * lh, y: c.y + ny * lh }, R), h2 = ctHeightAt({ x: c.x - nx * lh, y: c.y - ny * lh }, R);
+      if (h1 != null && h2 != null) { const sg = h1 < h2 ? 1 : -1, tl = CT_TICK_MM * km; ticks.push({ x: c.x, y: c.y, x2: c.x + nx * tl * sg, y2: c.y + ny * tl * sg }); }
+    }
+  }
+  return { lbl, ticks };
+}
+// разрыв горизонтали под подписью: часть линии от s0 до s1 (с зазором) убирается
+function ctCut(L, cuts, gap) {
+  const pts = L.pts, d = [0]; for (let i = 1; i < pts.length; i++) d.push(d[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+  const len = d[d.length - 1], keep = []; let s = 0;
+  for (const c of cuts.slice().sort((a, b) => a.s0 - b.s0)) { keep.push([s, Math.max(s, c.s0 - gap)]); s = Math.min(len, c.s1 + gap); }
+  keep.push([s, len]);
+  const at = t => { let i = 1; while (i < d.length - 1 && d[i] < t) i++; const a = pts[i - 1], b = pts[i], u = (t - d[i - 1]) / ((d[i] - d[i - 1]) || 1); return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u }; };
+  return keep.filter(([a, b]) => b - a > 1e-6).map(([a, b]) => [at(a), ...pts.filter((q, i) => d[i] > a && d[i] < b), at(b)]);
+}
+function ctResult() {
+  const sig = JSON.stringify([ctStep(), ctThickN(), ctMaxEdge(), pref('ctSmooth', true), planScale, data.points.filter(inRelief).map(p => [p.lat, p.lng, pointH(p)]), data.lines.filter(l => CT_STRUCT.has(l.type)).map(l => [l.latlngs, l.hs])]);
+  if (ctCache && ctCache.sig === sig) return ctCache.R;
+  const R = ctBuild(); R.marks = R.lines.length ? ctMarks(R) : { lbl: [], ticks: [] };
+  ctCache = { sig, R }; return R;
+}
+// на экране: линии — свой слой под знаками, подписи — повёрнутые цифры с разрывом линии
+function drawContours() {
+  if (ctLayer) { ctLayer.remove(); ctLayer = null; }
+  if (!ctOn) return;
+  let R; try { R = ctResult(); } catch (e) { console.warn('горизонтали', e); return; }
+  if (R.zone == null || (!R.lines.length && !R.holes.length)) return;   // горизонталей нет, а редкие места есть — их всё равно показать
+  ctLayer = L.layerGroup().addTo(map);
+  if (!R.llc) R.llc = new Map();
+  const toLL = q => { let v = R.llc.get(q); if (!v) { v = fromSk42(q.x + R.o.x, q.y + R.o.y, R.zone); if (typeof q === 'object') R.llc.set(q, v); } return v; }, w = Math.max(0.6, CT_W_MM * MM), wt = Math.max(1, CT_WT_MM * MM), gap = 0.6 * DXF_M_PER_MM;
+  const byLine = new Map(); for (const m of R.marks.lbl) { if (!byLine.has(m.line)) byLine.set(m.line, []); byLine.get(m.line).push(m); }
+  for (const Ln of R.lines) for (const part of byLine.has(Ln) ? ctCut(Ln, byLine.get(Ln), gap) : [Ln.pts])
+    L.polyline(part.map(toLL), { color: REL_HEX, weight: Ln.thick ? wt : w, interactive: false, className: 'ct' }).addTo(ctLayer);
+  for (const t of R.marks.ticks) L.polyline([toLL(t), toLL({ x: t.x2, y: t.y2 })], { color: REL_HEX, weight: w, interactive: false }).addTo(ctLayer);
+  for (const h of R.holes) L.polygon(h.map(toLL), { color: '#c62828', weight: 1, dashArray: '4 4', fillColor: '#c62828', fillOpacity: 0.08, interactive: false }).addTo(ctLayer);   // редко снято — доснять
+  const fs = Math.max(8, CT_LBL_MM * MM * 1.35);
+  for (const m of R.marks.lbl) {
+    let deg = -m.ang * 180 / Math.PI;                                    // на экране — по часовой от востока
+    if (!m.up) deg += 180;                                               // верх цифр — к подъёму
+    deg = ((deg % 360) + 360) % 360;
+    L.marker(toLL(m), { interactive: false, icon: L.divIcon({ className: 'ctl', iconSize: [0, 0], html: `<span style="transform:translate(-50%,-50%) rotate(${deg.toFixed(1)}deg);font-size:${fs.toFixed(1)}px">${esc(m.txt)}</span>` }) }).addTo(ctLayer);
+  }
+}
+// окно «Горизонтали»: сечение, утолщение, «не соединять дальше», отчёт — сколько точек вошло и какие выпали
+function contourSheet() {
+  const R = ctResult(), rep = R.rep;
+  showSheet(`<div class="sh-head"><b>Горизонтали</b><button class="x" data-close>×</button></div><div class="form">
+    <div class="hint" style="margin:2px 0 8px">Строятся по точкам «в рельеф» (Меню → «Точки рельефа») и по отметкам бровок, подошв, обрывов, подпорных стенок — через эти линии горизонталь не перескакивает. В план не записываются: пересчитываются сами, в DXF уходят слоем «ГОРИЗОНТАЛИ».</div>
+    <div class="meas-verdict ${rep.dups ? 'bad' : R.holes.length || !R.lines.length ? 'mid' : 'ok'}" style="margin-bottom:8px"><div>Вошло точек: <b>${rep.points}</b>, линий с отметками: <b>${rep.lines}</b>${R.tris ? `, треугольников ${R.tris}` : ''}.<br>
+      Выпало: не в рельефе — ${rep.off}, в рельефе без отметки — ${rep.noH}${R.holes.length ? `, <b>редко снятых мест внутри участка — ${R.holes.length}</b> (на карте — красным пунктиром, доснимите пикеты)` : ''}.${rep.dups ? `<br><b>Совпадающих точек с разными отметками: ${rep.dups}</b> — исправьте в «Точках рельефа», иначе горизонтали «завьются».` : ''}</div></div>
+    <div class="row2"><div><label for="ctStep">Сечение, м</label><select id="ctStep">${CT_STEPS.map(v => `<option value="${v}"${v === R.step ? ' selected' : ''}>${mText(v, v < 1 ? 2 : 1)}</option>`).join('')}</select></div>
+      <div><label for="ctThick">Утолщать каждую</label><select id="ctThick">${[2, 3, 4, 5, 10].map(v => `<option value="${v}"${v === R.N ? ' selected' : ''}>${v}-ю</option>`).join('')}</select></div></div>
+    <div class="row2"><div><label for="ctMax">Не соединять дальше, м</label><input id="ctMax" inputmode="decimal" value="${ctMaxEdge()}" autocomplete="off"></div>
+      <div><label for="ctSm">Сглаживать</label><select id="ctSm"><option value="1"${pref('ctSmooth', true) ? ' selected' : ''}>да</option><option value="0"${pref('ctSmooth', true) ? '' : ' selected'}>нет</option></select></div></div>
+    <div class="hint">По ГКИНП для 1:500 сечение 0,5 м; 1,0 м — горный рельеф (уклоны больше 6°); 0,25 м — только спланированные площадки. Утолщают 4-ю при 0,5 м (отметки, кратные 2 м), 5-ю при 1 м.</div>
+    <div class="acts"><button class="btn" id="ctOff">${ctOn ? 'Скрыть' : 'Отмена'}</button><button class="btn primary" id="ctGo"${rep.points + rep.lines ? '' : ' disabled'}>${ctOn ? 'Перестроить' : 'Показать'}</button></div></div>`);
+  $('ctStep').onchange = () => { setPref('ctStep', Number($('ctStep').value)); setPref('ctThick', CT_THICK_DEF[Number($('ctStep').value)]); contourSheet(); };
+  $('ctThick').onchange = () => { setPref('ctThick', Number($('ctThick').value)); contourSheet(); };
+  $('ctSm').onchange = () => { setPref('ctSmooth', $('ctSm').value === '1'); contourSheet(); };
+  $('ctMax').onchange = () => { const v = parseNum($('ctMax').value); if (v >= 5 && v <= 500) setPref('ctMaxEdge', v); else toast('От 5 до 500 м'); contourSheet(); };
+  $('ctOff').onclick = () => { ctOn = false; setPref('ctOn', false); drawContours(); closeSheet(); };
+  $('ctGo').onclick = () => { ctOn = true; setPref('ctOn', true); ctCache = null; drawContours(); closeSheet(); const n = ctResult().lines.length; const hl = ctResult().holes.length; toast(n ? `Горизонталей: ${n}${hl ? ', редко снятых мест: ' + hl : ''}` : hl ? `Горизонтали не получились: точки сняты реже ${ctMaxEdge()} м — места показаны красным` : 'Горизонтали не получились: перепад меньше сечения или мало точек'); };
+}
+function ctClipOut(pts, rects) {
+  let parts = [pts];
+  for (const r of rects) {
+    const next = [];
+    for (const pl of parts) {
+      let cur = [pl[0]];
+      for (let i = 1; i < pl.length; i++) {
+        const a = pl[i - 1], b = pl[i], dx = b[0] - a[0], dy = b[1] - a[1];
+        let t0 = 0, t1 = 1, hit = true;
+        for (const [p, q] of [[-dx, a[0] - r.x0], [dx, r.x1 - a[0]], [-dy, a[1] - r.y0], [dy, r.y1 - a[1]]]) {
+          if (p === 0) { if (q < 0) { hit = false; break; } continue; }
+          const t = q / p; if (p < 0) { if (t > t1) { hit = false; break; } if (t > t0) t0 = t; } else { if (t < t0) { hit = false; break; } if (t < t1) t1 = t; }
+        }
+        if (!hit || t1 <= t0) { cur.push(b); continue; }
+        if (t0 > 0) cur.push([a[0] + dx * t0, a[1] + dy * t0]);
+        if (cur.length > 1) next.push(cur);
+        cur = t1 < 1 ? [[a[0] + dx * t1, a[1] + dy * t1], b] : [b];
+      }
+      if (cur.length > 1) next.push(cur);
+    }
+    parts = next;
+  }
+  return parts;
+}
+// в DXF: 3D-полилинии с отметкой (КРЕДО, Civil 3D берут), утолщённые — свой слой; подписи — текстом вдоль, с разрывом линии; бергштрихи
+function ctDxf(ent, useLayer, xyz) {
+  if (!ctOn) return;
+  const R = ctResult(); if (!R.lines.length || R.zone == null) return;
+  const lyN = useLayer('ГОРИЗОНТАЛИ', 'relief'), lyT = useLayer('ГОРИЗОНТАЛИ_УТОЛЩ', 'relief'), lyL = useLayer('ГОРИЗОНТАЛИ_ПОДПИСИ', 'relief'), gap = 0.6 * DXF_M_PER_MM;
+  const P = q => { const ll = fromSk42(q.x + R.o.x, q.y + R.o.y, R.zone); return xyz([ll.lat, ll.lng], null); };
+  const busy = dxfLbl.concat(dxfBoxes), okLbl = m => { const [x, y] = P(m).map(Number), r = m.w / 2 + 0.5 * DXF_M_PER_MM; return !busy.some(b => x + r > b.x0 && x - r < b.x1 && y + r > b.y0 && y - r < b.y1); };
+  const lbls = R.marks.lbl.filter(okLbl);
+  const byLine = new Map(); for (const m of lbls) { if (!byLine.has(m.line)) byLine.set(m.line, []); byLine.get(m.line).push(m); }
+  const pad = 0.3 * DXF_M_PER_MM, rects = dxfLbl.concat(dxfBoxes).map(r => ({ x0: r.x0 - pad, y0: r.y0 - pad, x1: r.x1 + pad, y1: r.y1 + pad }));   // подписи точек — горизонталь под ними прерывается
+  for (const Ln of R.lines) for (const part of byLine.has(Ln) ? ctCut(Ln, byLine.get(Ln), gap) : [Ln.pts]) {
+    if (part.length < 2) continue;
+    const xy = part.map(q => P(q).slice(0, 2).map(Number)), bb = xy.reduce((b, p) => [Math.min(b[0], p[0]), Math.min(b[1], p[1]), Math.max(b[2], p[0]), Math.max(b[3], p[1])], [Infinity, Infinity, -Infinity, -Infinity]);
+    for (const seg of ctClipOut(xy, rects.filter(r => r.x0 < bb[2] && r.x1 > bb[0] && r.y0 < bb[3] && r.y1 > bb[1]))) {
+      ent(0, 'POLYLINE', 8, Ln.thick ? lyT : lyN, 66, 1, 10, 0, 20, 0, 30, 0, 70, 8);
+      for (const q of seg) ent(0, 'VERTEX', 8, Ln.thick ? lyT : lyN, 10, f3(q[0]), 20, f3(q[1]), 30, Ln.h.toFixed(3), 70, 32);
+      ent(0, 'SEQEND', 8, Ln.thick ? lyT : lyN);
+    }
+  }
+  for (const t of R.marks.ticks) { const [x1, y1] = P(t), [x2, y2] = P({ x: t.x2, y: t.y2 }); ent(0, 'LINE', 8, lyN, 10, x1, 20, y1, 30, 0, 11, x2, 21, y2, 31, 0); }
+  for (const m of lbls) {
+    let deg = ((m.ang * 180 / Math.PI) + 360) % 360;                   // DXF: против часовой от востока; ang — так и считан (север к востоку)
+    if (!m.up) deg = (deg + 180) % 360;
+    const [x, y] = P(m);
+    ent(0, 'TEXT', 8, lyL, 10, x, 20, y, 30, 0, 40, (CT_LBL_MM * DXF_M_PER_MM).toFixed(3), 1, dxfStr(m.txt), 50, deg.toFixed(1), 7, DXF_STYLE, 72, 1, 11, x, 21, y, 31, 0, 73, 2);
+  }
 }
 /* Перенос свойств: следующий колодец, задвижка, участок сети того же вида — с диаметром, материалом, владельцем прошлого */
 const CARRY = { well: ['wd', 'wm'], arm: ['d'], net: ['mat', 'd', 'mark', 'volt', 'owner', 'hKind'] };
@@ -8400,6 +8627,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
   { id: 'check', icon: '✓', text: 'Проверка перед сдачей' },
   { id: 'journal', icon: '☰', text: `Журнал съёмки: ${data.points.length} ${plural(data.points.length, 'точка', 'точки', 'точек')}, фильтры` },
+  { id: 'contours', icon: '〰', text: ctOn ? `Горизонтали: показаны, сечение ${mText(ctStep(), ctStep() < 1 ? 2 : 1)} м` : 'Горизонтали по точкам рельефа' },
   { id: 'relief', icon: '⛰', text: `Точки рельефа: ${data.points.filter(inRelief).length} из ${data.points.filter(p => pointH(p) != null).length} — что идёт в горизонтали` },
   { id: 'heights', icon: '△', text: hgt.ref ? `Отметки: привязка к реперу ${hgt.ref.name || ''}`.trim() : hgt.dh ? 'Отметки: с поправкой' : 'Отметки: привязать к реперу' },
   { id: 'cad', icon: '⬠', text: 'Кадастр: участки, площадь и ΔP, сведения о точках' },
@@ -8479,6 +8707,7 @@ function settingsMenu() {
     { id: 'yjskey', icon: '🔑', text: yandexJsKey() ? 'Ключ Яндекс Карт: спутник — введён, сменить или удалить' : 'Ключ Яндекс Карт: спутник и гибрид →' },
     { id: 'ykey', icon: '🔑', text: yandexKey() ? 'Ключ Яндекс Карт: введён — сменить или удалить' : 'Ключ Яндекс Карт — для «Схемы Яндекса» →' },
     { id: 'dxfframe', icon: '▭', text: 'В DXF — рамка листа и штамп', on: pref('dxfFrame', true), check: true },
+    { id: 'dxfrel', icon: '⛰', text: 'В DXF — точки рельефа и ситуации на разных слоях (_РЕЛЬЕФ / _СИТ, для КРЕДО)', on: pref('dxfRelLayers', false), check: true },
     { header: 'Помощники' },
     { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' }
   ], act => { MENU[act](); if (['sound', 'voice', 'volkeys', 'screen', 'netcolors', 'dxfframe', 'angkind', 'angunit', 'wgsfmt', 'crosssize'].includes(act)) settingsMenu(); });
@@ -8559,8 +8788,10 @@ const MENU = {
   planscale: () => openList('Масштаб плана', [500, 1000, 2000].map(v => ({ id: String(v), icon: '⊡', text: `1:${v}` + (v === 500 ? ' — исполнительная съёмка, сети' : v === 1000 ? ' — посёлки, промплощадки' : ' — незастроенная территория'), on: v === planScale, radio: true })), v => setPlanScale(Number(v))),
   journal: () => journalSheet(),
   relief: () => reliefSheet(),
+  contours: () => contourSheet(),
   redo: () => redoSheet(),
   settings: () => settingsMenu(),
+  dxfrel: () => { const on = !pref('dxfRelLayers', false); setPref('dxfRelLayers', on); toast(on ? 'DXF: слои точек с окончанием _РЕЛЬЕФ и _СИТ — в КРЕДО назначьте «рельефная / ситуационная» по слою' : 'DXF: слои точек прежние; рельеф — в скрытом атрибуте РЕЛЬЕФ'); },
   dxfframe: () => { const on = !pref('dxfFrame', true); setPref('dxfFrame', on); toast(on ? 'DXF — с рамкой листа, сеткой и штампом' : 'DXF — только план, без рамки (для вставки в чужой чертёж)'); },
   about: () => alert(`Полевой план, сборка ${APP_BUILD}.
 
@@ -9362,7 +9593,7 @@ function toDxf() {
   const okLL = a => a && isFinite(+a[0]) && isFinite(+a[1]);              // NaN/Infinity в одной точке испортили бы весь файл (AutoCAD не откроет)
   for (const p of data.points.filter(q => okLL([q.lat, q.lng]))) {
     // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
-    const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : '') + (approxNote(p) ? '_ПРИБЛ' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
+    const H = pointH(p), lay = useLayer(dxfLayerOfPoint(p) + (H == null ? '_БЕЗ_H' : pref('dxfRelLayers', false) ? (reliefOf(p) ? '_РЕЛЬЕФ' : '_СИТ') : '') + (approxNote(p) ? '_ПРИБЛ' : ''), NET_KIND[p.type]), [x, y, z] = xyz([p.lat, p.lng], H);
     const ps0 = POINTS[p.type], vh = ps0 && ps0.svgFor ? '_' + [...ps0.svgFor(p)].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7).toString(36).slice(0, 5) : '';   // буква покрытия и т. п. — свой блок
     const blk = (String(codeOf(p.type) || 'POINT').toUpperCase().replace(/[^A-ZА-ЯЁ0-9_$-]+/g, '_').slice(0, 31 - vh.length) || 'POINT') + vh.toUpperCase();   // без типа — не падаем
     blocks.add(blk); if (!blkType.has(blk)) blkType.set(blk, p);   // по первой точке кода — её знак (тип и атрибуты)
@@ -9401,6 +9632,7 @@ function toDxf() {
       ent(0, 'TEXT', 8, lay2, 10, mx, 20, my, 30, 0, 40, DXF_TEXT_M, 1, label, 50, deg.toFixed(2), 7, DXF_STYLE, 72, 1, 11, mx, 21, my, 31, 0);
     }
   }
+  try { ctDxf(ent, useLayer, xyz); } catch (e) { console.warn('горизонтали в DXF', e); }   // горизонтали, если показаны; ошибка в них не роняет выгрузку
   if (!isFinite(box[0]) || !isFinite(box[2])) box.splice(0, 4, 0, 0, 100, 100);
   else if (pref('dxfFrame', true)) { for (const b of dxfBoxes) { box[0] = Math.min(box[0], b.x0); box[1] = Math.min(box[1], b.y0); box[2] = Math.max(box[2], b.x1); box[3] = Math.max(box[3], b.y1); } dxfFrame(box, ent, useLayer); }   // лист — с учётом подписей                                   // рамка листа и штамп — на своих слоях
   const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2, vh = Math.max(box[3] - box[1], (box[2] - box[0]) / 1.5, 20) * 1.1;
@@ -10737,7 +10969,7 @@ function rasterMenu() {
 
 /* ───────────── Старт ───────────── */
 
-ready = true; updateAim();                                            // вторая строка вверху — сразу, не дожидаясь движения карты
+ready = true; updateAim(); if (ctOn) ctSoon();                                            // вторая строка вверху — сразу, не дожидаясь движения карты
 loadGeoid().catch(() => { /* без сети и кэша — попробуем при съёмке */ });
 if (NATIVE) { startGnss(); startGps(); checkUpdate(); if (RX && rxCfg.auto) rxConnect(); }   // в Android-приложении спутники и GPS включаются сразу, проверяется обновление
 // вернулись в приложение (из другого окна, после сна телефона) — ещё раз проверить обновление, перезапускать не нужно
