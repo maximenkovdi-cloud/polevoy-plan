@@ -502,7 +502,8 @@ const POINT_GROUPS = [
     { id: 'pole_metal', name: 'Столб металлический', svg: '<circle cx="12" cy="12" r="4.2" fill="currentColor"/>' },
     { id: 'pole_truss', name: 'Опора металлическая фермовая', svg: '<rect x="6" y="6" width="12" height="12" fill="#fff" stroke="currentColor" stroke-width="1.6"/>' + Ln(6, 6, 18, 18) + Ln(18, 6, 6, 18) },
     { id: 'pole_rc', name: 'Столб железобетонный', svg: '<circle cx="12" cy="12" r="5" fill="#fff" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/>' },
-    { id: 'lamp', name: 'Фонарь на столбе', svg: '<circle cx="12" cy="19" r="3" fill="#fff" stroke="currentColor" stroke-width="1.5"/>' + Ln(12, 16, 12, 6) + Ln(8, 6, 16, 6) + '<path d="M8 6v3.5M16 6v3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' }
+    { id: 'lamp', name: 'Фонарь на столбе', svg: '<circle cx="12" cy="19" r="3" fill="#fff" stroke="currentColor" stroke-width="1.5"/>' + Ln(12, 16, 12, 6) + Ln(8, 6, 16, 6) + '<path d="M8 6v3.5M16 6v3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' },
+    { id: 'pole_line', name: 'Опора ЛЭП / связи с проводами (настраиваемая)', pole: true, svg: '<path d="M7.5 12H2.5M2.5 12l2.6-1.6M2.5 12l2.6 1.6M16.5 12h5M21.5 12l-2.6-1.6M21.5 12l-2.6 1.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="4.2" fill="#fff" stroke="currentColor" stroke-width="1.6"/>', svgFor: p => poleSvg(p) }
   ]},
   { id: 'power', title: 'Электро', items: [
     { id: 'tr_pole', name: 'Трансформатор на столбе', svg: '<rect x="8" y="9" width="8" height="6" fill="currentColor"/>', suffix: 'тр.' },
@@ -2003,7 +2004,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 119;
+const APP_BUILD = 120;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -2692,7 +2693,7 @@ drawCompass();
 
 const pointLayer = L.layerGroup().addTo(map);
 let selected = null;                          // { kind: 'point'|'line', obj }
-function symbolSvg(svg, px, color) { return `<svg viewBox="0 0 24 24" width="${px}" height="${px}" style="color:${color || 'var(--sym)'};display:block">${svg}</svg>`; }
+function symbolSvg(svg, px, color, over) { return `<svg viewBox="0 0 24 24" width="${px}" height="${px}" style="color:${color || 'var(--sym)'};display:block${over ? ';overflow:visible' : ''}">${svg}</svg>`; }   // over — на карте: стрелки проводов опоры выходят за квадрат знака
 // «2026-11-01» → «01.11»
 const dayMonth = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return m ? m[3] + '.' + m[2] : d || ''; };
 // дата из формы: «01.11.2026», «1.11.26» или «2026-11-01» → «2026-11-01»; пусто — пусто; иначе null
@@ -2711,6 +2712,7 @@ function pointLabel(p) {
   if (/^w_/.test(p.type) && hasH(p.h) && wellBottom(p) != null) return [p.name, `${planNum(p.h, 2)}/${planNum(wellBottom(p), 2)}`].filter(Boolean).join(' ');            // отметка высоты — сама отметка, два знака (1:500)
   if (s.defect) { const a = p.attr || {}; return a.fixed ? [p.name || s.defect, 'устр.' + (a.fixedAt ? ' ' + dayMonth(a.fixedAt) : '')].join(' ') : [p.name || s.defect, dayMonth(a.found)].filter(Boolean).join(' ') + (a.urgent ? ', авар.' : ''); }
   if (s.arm) { const a = p.attr || {}; return [s.arm + (p.name ? '-' + p.name : ''), hasH(a.d) ? 'Ø' + a.d : '', a.state || ''].filter(Boolean).join(' '); }
+  if (s.pole) { const a = p.attr || {}; return [p.name, a.tr === true ? 'тр.' : '', typeof a.volt === 'string' ? a.volt : ''].filter(Boolean).join(' '); }
   return [s.prefix, p.name, s.suffix].filter(Boolean).join(' ');
 }
 // рисунок знака: у надписи покрытия — своя буква, у крылец — поворот стеной к зданию
@@ -2801,7 +2803,7 @@ function drawPoints() {
     if (SYM_PX < PLAN_HIDE_PX && !(selected && selected.obj === p)) continue;   // на мелком масштабе знак меньше точки — не виден, как на бумаге
     const s = POINTS[p.type] || POINTS.mark, lbl = LBL_PX < LBL_HIDE_PX ? '' : pointLabel(p), sel = selected && selected.obj === p;
     const icon = L.divIcon({ className: 'sym' + (sel ? ' sel' : '') + (p.wait ? ' wait' : ''), iconSize: [TAP_PX, TAP_PX], iconAnchor: [TAP_PX / 2, TAP_PX / 2],
-      html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point')) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}"${s.defect || s.cadNew ? ` style="color:${objColor(p, 'point')}"` : ''}>${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
+      html: symbolSvg(pointSvg(p), SYM_PX, objColor(p, 'point'), true) + (lbl ? `<span class="lbl${s.frac ? ' frac' : ''}"${s.defect || s.cadNew ? ` style="color:${objColor(p, 'point')}"` : ''}>${s.frac ? fracHtml(p) : esc(lbl)}</span>` : '') });
     const marker = L.marker([p.lat, p.lng], { icon }).on('click', e => { L.DomEvent.stop(e); if (mode && pickTool) { pickTap(L.latLng(p.lat, p.lng)); return; } if (mode) addAt(snapOn ? L.latLng(p.lat, p.lng) : e.latlng, null, 'tap'); else showCard('point', p); }).addTo(pointLayer);   // в рисовании касание точки — вершина ровно в ней
     pointMarkers.push({ p, marker, lbl });
   }
@@ -2829,6 +2831,11 @@ function placePointLabels() {
       const side = k => ({ x: c.x + k * nx * d - w / 2, y: c.y + k * ny * d - h / 2 }), up = ny <= 0 ? 1 : -1;
       tries.unshift(side(up), side(-up));
     }
+    if ((POINTS[p.type] || {}).pole) {
+      const wr = poleWires(p.attr), at = (az, d) => { const t = az * Math.PI / 180, e = Math.sin(t) >= 0, n = Math.cos(t) >= 0; return { x: e ? c.x + d : c.x - d - w, y: n ? c.y - d - h : c.y + d }; };
+      const qs = [45, 315, 135, 225].map(az => ({ az, sc: wr.length ? Math.min(...wr.map(v => azDiff(v, az))) : 90 })).sort((x, y) => y.sc - x.sc);
+      tries.splice(0, tries.length, ...qs.map(q => at(q.az, SYM_R + 1)), ...qs.map(q => at(q.az, Math.max(4.8 * MM, SYM_R + 1))));   // стрелки заняты — подпись в четверть, где не задевает
+    }
     const box = tries.map(t => ({ x: t.x, y: t.y, w, h })).find(b => labelsAll || !hits(b, null)) || (labelsAll ? { x: tries[0].x, y: tries[0].y, w, h } : null);
     span.classList.toggle('off', !box);
     if (!box) continue;
@@ -2842,7 +2849,8 @@ function frame(mayReuse) {                                            // mayReus
   const reuse = mayReuse === true && netReusable() && pointsReusable();   // знаки и линии обновляются вместе — одна область, без двойных опор и подписей поверх знаков
   if (!reuse && !pointsFresh()) drawPoints();
   occReset();
-  for (const { p } of pointMarkers) { const c = map.latLngToContainerPoint([p.lat, p.lng]); reserve({ x: c.x - SYM_R, y: c.y - SYM_R, w: 2 * SYM_R, h: 2 * SYM_R }, p.id); }
+  for (const { p } of pointMarkers) { const c = map.latLngToContainerPoint([p.lat, p.lng]); reserve({ x: c.x - SYM_R, y: c.y - SYM_R, w: 2 * SYM_R, h: 2 * SYM_R }, p.id);
+    if ((POINTS[p.type] || {}).pole) { const L5 = 4.6 * MM, b = Math.max(3, MM); for (const az of poleWires(p.attr)) { const t = (az * Math.PI) / 180; for (let k = 0; k <= 8; k++) { const d = SYM_R + (L5 - SYM_R) * k / 8; reserve({ x: c.x + Math.sin(t) * d - b / 2, y: c.y - Math.cos(t) * d - b / 2, w: b, h: b }, p.id); } } } }   // стрелки проводов — заняты
   for (const line of data.lines) {                                    // сама линия — препятствие для чужих надписей
     const pts = screenPts(line);
     for (let i = 1; i < pts.length; i++) {
@@ -3576,7 +3584,8 @@ function showCard(kind, obj) {
     const s = POINTS[obj.type] || POINTS.mark, c = coordText(L.latLng(obj.lat, obj.lng));
     icon = symbolSvg(pointSvg(obj), 34, objColor(obj, kind)); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
     if (s.frac) name = s.name + (pointLabel(obj) ? ' — ' + esc(pointLabel(obj)) : '');
-    if (s.svgFor) name = s.name.replace(/ \(.*\)$/, '') + ' — ' + esc(((COVERS.find(c => c[0] === (obj.attr || {}).cover) || COVERS[0])[1]));
+    if (s.pole) { const a = obj.attr || {}; name = [(POLE_KINDS.find(k => k[0] === a.kind) || POLE_KINDS[0])[1], 'опора: ' + (POLE_MATS.find(m => m[0] === a.mat) || POLE_MATS[0])[1].toLowerCase(), a.tr === true ? 'трансформатор' : '', poleWires(a).length + ' пров.'].filter(Boolean).map(esc).join(', ') + (pointLabel(obj) ? ' — ' + esc(pointLabel(obj)) : ''); }
+    if (s.svgFor && !s.pole) name = s.name.replace(/ \(.*\)$/, '') + ' — ' + esc(((COVERS.find(c => c[0] === (obj.attr || {}).cover) || COVERS[0])[1]));
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
     if (obj.no) kv.unshift(['№', esc(obj.no)]);
@@ -3852,6 +3861,7 @@ const parseNum = s => Number(String(s).replace(/\s/g, '').replace(/[−–]/g, '
 
 function editPoint(p) {
   const s = POINTS[p.type] || POINTS.mark;
+  if (s.pole) return editPole(p);
   if (s.svgFor || s.frac) return editStreetMark(p, s);
   if (s.wall) return openForm(s.name, [
     { key: 'rot', label: 'Поворот, °', type: 'number', value: p.rot || 0, placeholder: '0',
@@ -3944,6 +3954,118 @@ function editArm(p, s) {
   });
 }
 // надпись покрытия и отметки у бортового камня — свои поля вместо номера и отметки
+// Опора ЛЭП / связи с отходящими проводами (ГКИНП 1989, зн. 106–116, 136–137): звено 4,5 мм от центра (через опору — 9 мм), линия 0,2 мм, наконечник ≈1 мм;
+// высокое напряжение — двойной «<<», низкое — одинарный, связь — без стрелок, линия 0,15 мм с поперечной засечкой; трансформатор — залитый прямоугольник 1,5×1,0 мм (зн. 113). Стрелки — азимуты (по часовой от севера), до 8 штук.
+const POLE_KINDS = [['lv', 'ЛЭП низкого напряжения'], ['hv', 'ЛЭП высокого напряжения'], ['comm', 'Линия связи']];
+const POLE_MATS = [['wood', 'Дерево'], ['rc', 'Ж/б'], ['metal', 'Металл'], ['truss', 'Ферма']];
+const POLE_MAX_WIRES = 8, POLE_SNAP_DEG = 5, POLE_NEAR_M = 120, POLE_SAME_DEG = 6, POLE_ON_LINE_M = 3;
+function poleWires(a) {
+  const w = Array.isArray(a && a.wires) ? a.wires : [];
+  return w.map(Number).filter(v => Number.isFinite(v) && v >= 0 && v < 360).map(v => Math.round(v) % 360).filter((v, i, arr) => arr.indexOf(v) === i).slice(0, POLE_MAX_WIRES);
+}
+function poleSvg(p) {
+  const a = p.attr || {}, u = 24 / SYM_MM, c = 12, f = n => n.toFixed(2), rot = Number(p.rot) || 0;
+  const kind = POLE_KINDS.some(k => k[0] === a.kind) ? a.kind : 'lv', mat = POLE_MATS.some(m => m[0] === a.mat) ? a.mat : 'wood';
+  const st = `fill="none" stroke="currentColor" stroke-width="${f((kind === 'comm' ? 0.15 : 0.2) * u)}" stroke-linecap="round" stroke-linejoin="round"`;
+  const tw = 1.5 * u / 2, th = 1.0 * u / 2, body = a.tr === true ? `<rect x="${f(c - tw)}" y="${f(c - th)}" width="${f(2 * tw)}" height="${f(2 * th)}" fill="currentColor"/>` : POINTS['pole_' + mat].svg;
+  const edge = (ux, uy) => a.tr === true ? Math.min(tw / Math.max(Math.abs(ux), 1e-9), th / Math.max(Math.abs(uy), 1e-9)) : mat === 'truss' ? 6 / Math.max(Math.abs(ux), Math.abs(uy)) : mat === 'rc' ? 5.8 : 5;   // от края знака опоры
+  let s = '';
+  for (const az of poleWires(a)) {
+    const t = (az - rot) * Math.PI / 180, ux = Math.sin(t), uy = -Math.cos(t), len = 4.5 * u, r0 = edge(ux, uy), tx = c + ux * len, ty = c + uy * len;
+    s += `<path d="M${f(c + ux * r0)} ${f(c + uy * r0)}L${f(tx)} ${f(ty)}" ${st}/>`;
+    if (kind === 'comm') { const k = 0.5 * u; s += `<path d="M${f(tx - uy * k)} ${f(ty + ux * k)}L${f(tx + uy * k)} ${f(ty - ux * k)}" ${st}/>`; continue; }   // засечка поперёк на конце (зн. 137)
+    const ang = Math.atan2(uy, ux), hl = 1.0 * u, sp = 0.45;
+    for (const back of kind === 'hv' ? [0, 1.0 * u] : [0]) {
+      const hx = tx - ux * back, hy = ty - uy * back;
+      s += `<path d="M${f(hx - Math.cos(ang - sp) * hl)} ${f(hy - Math.sin(ang - sp) * hl)}L${f(hx)} ${f(hy)}L${f(hx - Math.cos(ang + sp) * hl)} ${f(hy - Math.sin(ang + sp) * hl)}" ${st}/>`;
+    }
+  }
+  return s + body;
+}
+// азимут с точки a на точку b (по часовой от севера), для коротких расстояний
+const llAz = (a, b) => { const dx = (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180), dy = b.lat - a.lat; return ((Math.atan2(dx, dy) * 180 / Math.PI) + 360) % 360; };
+// направления проводов по линиям ЛЭП и связи, проходящим через опору (вершина в пределах 3 м): на соседние вершины
+function poleWiresFromLines(p) {
+  const here = L.latLng(p.lat, p.lng), out = [];
+  for (const l of data.lines) {
+    const k = (LINES[l.type] || {}).kind;
+    if (k !== 'power' && k !== 'air' || !Array.isArray(l.latlngs)) continue;
+    l.latlngs.forEach((ll, i) => {
+      if (here.distanceTo(ll) > POLE_ON_LINE_M) return;
+      for (const j of [i - 1, i + 1]) if (l.latlngs[j]) out.push(Math.round(llAz(here, L.latLng(l.latlngs[j]))));
+    });
+  }
+  return out;
+}
+// ближайшие опоры (знаки опор и вершины линий ЛЭП/связи) — кнопками «стрелка туда»
+function poleNeighbours(p) {
+  const here = L.latLng(p.lat, p.lng), cand = [];
+  for (const q of data.points) if (q !== p && /^pole_|^tr_pole$/.test(q.type)) cand.push({ ll: L.latLng(q.lat, q.lng), name: (POINTS[q.type] || POINTS.mark).name.replace(/ \(.*\)$/, '') + (q.no ? ' № ' + q.no : '') });
+  for (const l of data.lines) { const k = (LINES[l.type] || {}).kind; if ((k === 'power' || k === 'air') && Array.isArray(l.latlngs)) for (const ll of l.latlngs) cand.push({ ll: L.latLng(ll), name: 'опора линии' }); }
+  return cand.map(c => ({ ...c, d: here.distanceTo(c.ll), az: Math.round(llAz(here, c.ll)) })).filter(c => c.d > 1 && c.d <= POLE_NEAR_M).sort((x, y) => x.d - y.d)
+    .filter((c, i, arr) => arr.findIndex(o => azDiff(o.az, c.az) < POLE_SAME_DEG) === i).slice(0, 6);   // по направлению — только ближняя (пролёт за пролётом — одна кнопка)
+}
+const azDiff = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+// карточка опоры: тип, материал, трансформатор, напряжение и круг направлений — касание круга ставит стрелку (в перчатках — крупно)
+function editPole(p) {
+  const a = p.attr || {};
+  let st = { kind: POLE_KINDS.some(k => k[0] === a.kind) ? a.kind : 'lv', mat: POLE_MATS.some(m => m[0] === a.mat) ? a.mat : 'wood', tr: a.tr === true, wires: poleWires(a), sel: -1, volt: typeof a.volt === 'string' ? a.volt : '' };
+  const near = poleNeighbours(p), fromLines = [...new Set(poleWiresFromLines(p))];
+  const seg = (name, list, val) => `<div class="seg" data-seg="${name}" style="flex-wrap:wrap;margin:4px 0 10px">${list.map(([v, t]) => `<button type="button" data-v="${v}" class="${v === val ? 'on' : ''}">${esc(t)}</button>`).join('')}</div>`;
+  const R = 120, C = 130;
+  const dial = () => {
+    const rays = st.wires.map((az, i) => { const t = az * Math.PI / 180, x = C + Math.sin(t) * R, y = C - Math.cos(t) * R, on = i === st.sel;
+      return `<line x1="${C}" y1="${C}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${on ? 'var(--accent, #1976d2)' : 'currentColor'}" stroke-width="${on ? 6 : 4}" stroke-linecap="round"/><text x="${(C + Math.sin(t) * (R - 22)).toFixed(1)}" y="${(C - Math.cos(t) * (R - 22) + 5).toFixed(1)}" font-size="14" text-anchor="middle" fill="currentColor" stroke="var(--panel)" stroke-width="3" paint-order="stroke">${az}°</text>`; }).join('');
+    const ticks = [0, 90, 180, 270].map((az, i) => { const t = az * Math.PI / 180; return `<text x="${(C + Math.sin(t) * (R + 4)).toFixed(1)}" y="${(C - Math.cos(t) * (R + 4) + 5).toFixed(1)}" font-size="13" text-anchor="middle" fill="var(--muted)">${'СВЮЗ'[i]}</text>`; }).join('');
+    return `<svg id="poleDial" viewBox="0 0 ${2 * C} ${2 * C}" style="width:min(78vw,300px);height:auto;display:block;margin:0 auto;touch-action:none;color:var(--ink)">
+      <circle cx="${C}" cy="${C}" r="${R}" fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>${ticks}${rays}
+      <g transform="translate(${C - 36} ${C - 36}) scale(3)">${poleSvg({ attr: { kind: st.kind, mat: st.mat, tr: st.tr, wires: [] } })}</g></svg>`;
+  };
+  const render = () => {
+    showSheet(`<div class="sh-head"><b>Опора ЛЭП / связи</b><button class="x" data-close>×</button></div><div class="form">
+      <label>Линия</label>${seg('kind', POLE_KINDS, st.kind)}
+      <label>Опора</label>${seg('mat', POLE_MATS, st.mat)}
+      <label style="display:flex;gap:10px;align-items:center;min-height:44px"><input type="checkbox" id="poleTr"${st.tr ? ' checked' : ''} style="width:26px;height:26px"> Трансформатор на опоре</label>
+      <label for="poleVolt">Напряжение, провода (подпись)</label><input id="poleVolt" value="${esc(st.volt)}" placeholder="${st.kind === 'comm' ? '8 пр.' : st.kind === 'hv' ? '10 кВ' : '0,4 кВ'}" autocomplete="off">
+      <label style="margin-top:10px">Провода: коснитесь круга в сторону провода (${st.wires.length} из ${POLE_MAX_WIRES})</label>${dial()}
+      <div class="row2" style="margin-top:6px"><button type="button" class="btn" id="poleLL"${st.sel < 0 ? ' disabled' : ''}>⟲ −15°</button><button type="button" class="btn" id="poleRR"${st.sel < 0 ? ' disabled' : ''}>⟳ +15°</button></div>
+      <div class="row2"><button type="button" class="btn" id="poleL"${st.sel < 0 ? ' disabled' : ''}>⟲ −${POLE_SNAP_DEG}°</button><button type="button" class="btn" id="poleR"${st.sel < 0 ? ' disabled' : ''}>⟳ +${POLE_SNAP_DEG}°</button></div>
+      <div class="row2"><button type="button" class="btn" id="poleDel"${st.sel < 0 ? ' disabled' : ''}>Убрать стрелку</button><button type="button" class="btn" id="poleClr"${st.wires.length ? '' : ' disabled'}>Убрать все</button></div>
+      ${fromLines.length ? `<button type="button" class="btn" id="poleLines" style="width:100%;margin-top:6px">По линиям через опору (${fromLines.length})</button>` : ''}
+      ${near.length ? `<div class="hint" style="margin-top:8px">Стрелка на соседнюю опору:</div>${near.map((n, i) => `<button type="button" class="btn" data-near="${i}" style="width:100%;margin-top:4px;text-align:left">${st.wires.some(w => azDiff(w, n.az) < POLE_SAME_DEG) ? '✓ ' : '+ '}${esc(n.name)} — ${mText(n.d, 1)} м, ${n.az}°</button>`).join('')}` : ''}
+      <div class="acts"><button class="btn" data-close>Отмена</button><button class="btn primary" id="poleSave">Сохранить</button></div></div>`);
+    document.querySelectorAll('#sheetPanel [data-seg] button').forEach(b => b.onclick = () => { keep(); st[b.parentNode.dataset.seg] = b.dataset.v; render(); });
+    $('poleTr').onchange = e => { keep(); st.tr = e.target.checked; render(); };
+    $('poleDial').onclick = e => {
+      keep();
+      const r = $('poleDial').getBoundingClientRect(), x = (e.clientX - r.left) / r.width * 2 * C - C, y = (e.clientY - r.top) / r.height * 2 * C - C;
+      if (Math.hypot(x, y) < 18) return;                                 // в середину — мимо
+      const az = (Math.round(((Math.atan2(x, -y) * 180 / Math.PI + 360) % 360) / POLE_SNAP_DEG) * POLE_SNAP_DEG) % 360;
+      const k = st.wires.findIndex(w => azDiff(w, az) < POLE_SAME_DEG);
+      if (k >= 0) st.sel = st.sel === k ? -1 : k;                        // рядом со стрелкой — выбрать её
+      else if (st.wires.length < POLE_MAX_WIRES) { st.wires.push(az); st.sel = st.wires.length - 1; }
+      else toast(`Больше ${POLE_MAX_WIRES} проводов на одной опоре не бывает — уберите лишнюю стрелку`);
+      render();
+    };
+    const turn = d => { keep(); st.wires[st.sel] = (st.wires[st.sel] + d + 360) % 360; render(); };
+    $('poleL').onclick = () => turn(-POLE_SNAP_DEG); $('poleR').onclick = () => turn(POLE_SNAP_DEG); $('poleLL').onclick = () => turn(-15); $('poleRR').onclick = () => turn(15);
+    $('sheet').onclick = e => { if (e.target.closest('[data-close]')) closeSheet(); };   // мимо окна — не закрывать: правки стрелок не теряются
+    $('poleDel').onclick = () => { keep(); st.wires.splice(st.sel, 1); st.sel = -1; render(); };
+    $('poleClr').onclick = () => { keep(); st.wires = []; st.sel = -1; render(); };
+    if ($('poleLines')) $('poleLines').onclick = () => { keep(); for (const az of fromLines) if (!st.wires.some(w => azDiff(w, az) < POLE_SAME_DEG) && st.wires.length < POLE_MAX_WIRES) st.wires.push(az); st.sel = -1; render(); };
+    document.querySelectorAll('#sheetPanel [data-near]').forEach(b => b.onclick = () => { keep(); const az = near[+b.dataset.near].az, k = st.wires.findIndex(w => azDiff(w, az) < POLE_SAME_DEG);
+      if (k >= 0) { st.sel = k; render(); return; }                       // уже есть — выделить (убрать — кнопкой «Убрать стрелку»)
+      if (st.wires.length < POLE_MAX_WIRES) { st.wires.push(az); st.sel = st.wires.length - 1; } render(); });
+    $('poleSave').onclick = () => {
+      keep();
+      p.attr = { ...a, kind: st.kind, mat: st.mat, tr: st.tr, wires: poleWires({ wires: st.wires }), volt: st.volt };
+      if (!p.attr.tr) delete p.attr.tr; if (!p.attr.volt) delete p.attr.volt;
+      closeSheet(); save(); drawPoints(); frame(); showCard('point', p);
+    };
+  };
+  const keep = () => { const v = $('poleVolt'); if (v) { st.volt = v.value.trim().slice(0, 40); } };
+  render();
+}
 function editStreetMark(p, s) {
   const a = p.attr || {};
   const fields = s.frac
@@ -5318,7 +5440,7 @@ const JOURNAL_FILTERS = [
   ['all', 'Все', () => true],
   ['tap', 'Без GPS', p => !p.q],
   ['nofix', 'Не FIX', p => p.q && p.q.fix && p.q.fix !== 'FIX'],
-  ['noh', 'Без отметки', p => pointH(p) == null && !(POINTS[p.type] || {}).svgFor],
+  ['noh', 'Без отметки', p => pointH(p) == null && !((POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).pole)],
   ['spoof', 'Рядом с подменой', p => !!(journalSn.has(p) ? journalSn.get(p) : pointSpoofNote(p))],
   ['wait', 'Ждут GPS', p => !!p.wait]];
 let journalFilter = 'all';
@@ -9105,6 +9227,7 @@ function dxfVtxBuild() {
 function dxfFreeSide(p) {
   const dirs = [];
   for (const nb of (dxfVtx && dxfVtx.get(dxfVKey(p.lat, p.lng))) || []) dirs.push(planeInverse(L.latLng(p.lat, p.lng), L.latLng(nb)).dir);
+  if ((POINTS[p.type] || {}).pole) dirs.push(...poleWires(p.attr));   // провода опоры — тоже заняты
   const quads = [{ n: true, e: true, az: 45 }, { n: true, e: false, az: 315 }, { n: false, e: true, az: 135 }, { n: false, e: false, az: 225 }];
   if (!dirs.length) return quads;
   return quads.map(q => ({ q, sc: Math.min(...dirs.map(d => Math.abs(angDiff(d, q.az)))) })).sort((a, b) => b.sc - a.sc).map(o => o.q);   // все четверти — от свободной к занятой
@@ -9191,11 +9314,15 @@ function toDxf() {
     const val = { НОМЕР: p.no || '', ОТМ_ПОДП: H == null ? '' : planNum(H, 2), ОТМ_НИЗ: /^w_/.test(p.type) && wellBottom(p) != null ? planNum(wellBottom(p), 2) : '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
       ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : !p.q && p.approx != null ? f3(p.approx) : '' };
     const d0 = DXF_TEXT_M, vis = ATTRS.filter(a => !a[1]).map(a => String(val[a[0]] || '')), lw = Math.max(1, ...vis.map(t => t.length)) * d0 * DXF_CHAR_W + 0.6 * d0, lh = vis.filter(Boolean).length * 1.2 * d0 + 0.4 * d0;
-    const rectOf = q => { const x0 = q.e ? +x : +x - lw, y0 = q.n ? +y : +y - lh; return { x0, y0, x1: x0 + lw, y1: y0 + lh }; };
-    const order = dxfFreeSide(p), q = order.find(o => { const r = rectOf(o); return !dxfLbl.some(t => t.x0 < r.x1 && t.x1 > r.x0 && t.y0 < r.y1 && t.y1 > r.y0); }) || order[0], sx = q.e ? 1 : -1;   // и не на подписи соседних точек
+    const pw = (POINTS[p.type] || {}).pole ? poleWires(p.attr) : [], km5 = DXF_M_PER_MM, near = q => { const tx0 = q.e ? +x + 0.6 * d0 : +x - lw, tx1 = q.e ? +x + lw : +x - 0.6 * d0, ty0 = q.n ? +y + 0.4 * d0 : +y - lh, ty1 = q.n ? +y + lh : +y - 0.5 * d0, hb = 0.45 * km5;   // настоящие края текста; запас — полширины наконечника
+      return pw.some(w => { const t = w * Math.PI / 180; for (let k = 0; k <= 16; k++) { const d = (0.5 + 4.0 * k / 16) * km5, px = +x + Math.sin(t) * d, py = +y + Math.cos(t) * d; if (px > tx0 - hb && px < tx1 + hb && py > ty0 - hb && py < ty1 + hb) return true; } return false; }); };
+    const po = q => near(q) ? 4.8 * km5 : 0;   // подпись задела бы стрелку провода — за концы стрелок
+    const rectOf = q => { const o = po(q), x0 = q.e ? +x + o : +x - lw - o, y0 = q.n ? +y + o : +y - lh - o; return { x0, y0, x1: x0 + lw, y1: y0 + lh }; };
+    const free = o => { const r = rectOf(o); return !dxfLbl.some(t => t.x0 < r.x1 && t.x1 > r.x0 && t.y0 < r.y1 && t.y1 > r.y0); };
+    const order = dxfFreeSide(p), q = order.find(o => !po(o) && free(o)) || order.find(free) || order[0], sx = q.e ? 1 : -1;   // сначала — рядом со знаком, без стрелок   // и не на подписи соседних точек
     dxfLbl.push(rectOf(q));      // четверть без линий: подписи туда, не поперёк трубы
     const vt = ATTRS.filter(a => !a[1] && val[a[0]]).map(a => a[0]);   // строки подписи — только непустые: без отметки номер не уходит на пустые строки к соседнему знаку
-    ATTRS.forEach(([tag, inv], k) => { const j = vt.indexOf(tag), ln = j < 0 ? k : j, ax = (Number(x) + sx * 0.6 * d0).toFixed(3), ay = (Number(y) + (q.n ? 0.4 + ((j < 0 ? 2 : vt.length - 1) - ln) * 1.2 : -0.4 - (ln + 1) * 1.2) * d0).toFixed(3);
+    ATTRS.forEach(([tag, inv], k) => { const j = vt.indexOf(tag), ln = j < 0 ? k : j, ax = (Number(x) + sx * (0.6 * d0 + po(q))).toFixed(3), ay = (Number(y) + (q.n ? po(q) : -po(q)) + (q.n ? 0.4 + ((j < 0 ? 2 : vt.length - 1) - ln) * 1.2 : -0.4 - (ln + 1) * 1.2) * d0).toFixed(3);
       ent(0, 'ATTRIB', 8, lay, 10, ax, 20, ay, 30, z, 40, DXF_TEXT_M, 1, val[tag], 2, tag, 70, inv, 7, DXF_STYLE, ...(q.e ? [] : [72, 2, 11, ax, 21, ay, 31, z])); });
     ent(0, 'SEQEND', 8, lay);
   }
@@ -9455,7 +9582,7 @@ function checkPlan() {
   const wells = P.filter(p => /^w_/.test(p.type));
   add('bad', 'Колодцы без отметки люка', wells.filter(p => !hasH(p.h)).map(pt));
   add('bad', 'Колодцы без лотков', wells.filter(p => !((p.attr || {}).lot || []).some(l => l && hasH(l.h))).map(pt), 'Нажмите колодец → «Изменить» — отметки лотков и направления');
-  add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !(POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).arm && !(POINTS[p.type] || {}).defect && !isCadPt(p) && pointH(p) == null).map(pt));
+  add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !((POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).pole) && !(POINTS[p.type] || {}).arm && !(POINTS[p.type] || {}).defect && !isCadPt(p) && pointH(p) == null).map(pt));
   add('warn', 'Арматура не на сети (дальше 3 м от линии сети)', P.filter(p => (POINTS[p.type] || {}).arm && !pipeLine(p)).map(pt));
   add('info', 'Аварийные дефекты не устранены', P.filter(p => (POINTS[p.type] || {}).defect && (p.attr || {}).urgent && !(p.attr || {}).fixed).map(pt), 'Сообщите эксплуатирующей организации; ведомость — Меню → «Ведомость дефектов»');
   { const left = soList().filter(p => !p.done).length, bad = soList().filter(p => p.done && !p.done.ok).length;
