@@ -2008,7 +2008,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 125;
+const APP_BUILD = 126;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -3659,7 +3659,7 @@ function showCard(kind, obj) {
     ${obj.photos && obj.photos.length ? `<div class="photos" id="cardPhotos">${obj.photos.map(id => `<button data-photo="${esc(id)}"></button>`).join('')}</div>
       <button class="btn ai-btn${obj.ai ? ' primary' : ''}" data-act="ai">${obj.ai ? '✨ Подсказка готова — посмотреть' : pref('aiQueue', []).some(x => x.id === obj.id) ? '✨ Подсказка ждёт интернета' : '✨ Подсказать знак по фото'}</button>` : ''}
     <details class="sw-wrap"><summary>Цвет: ${esc((COLORS.find(c => c[0] === (obj.color || '')) || COLORS[0])[1])} ▾</summary><div class="swatches">${COLORS.map(([c, t]) => `<button data-color="${c}" title="${t}" class="${(obj.color || '') === c ? 'on' : ''}" style="${c ? 'background:' + c : ''}">${c ? '' : 'ГКИНП'}</button>`).join('')}</div></details>
-    <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts">Вершины</button><button class="btn primary" data-act="reshape" title="Сдвинуть, вписать или удалить вершины">✎ Править</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button><button class="btn" data-act="go" style="grid-column:1/-1">➤ Отправить координаты (куда ехать)</button><button class="btn" data-act="build" style="grid-column:1/-1">${kind === 'line' ? '⚒ Построения: параллельная, продлить, разрезать…' : '⇲ Сдвинуть или копировать'}</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
+    <div class="acts"><button class="btn primary" data-act="stake" style="grid-column:span 2">◎ Вынести в натуру</button>${kind === 'point' ? '<button class="btn primary" data-act="ctrl" style="grid-column:span 2" title="Встать на точку ещё раз и сравнить">✓ Контроль</button>' : '<button class="btn primary" data-act="verts">Вершины</button><button class="btn primary" data-act="reshape" title="Сдвинуть, вписать или удалить вершины">✎ Править</button>'}<button class="btn" data-act="type">Знак…</button><button class="btn" data-act="edit">Изменить</button><button class="btn" data-act="photo">📷 Фото</button><button class="btn" data-act="copy">Коорд.</button><button class="btn" data-act="go" style="grid-column:1/-1">➤ Отправить координаты (куда ехать)</button><button class="btn" data-act="build" style="grid-column:1/-1">${kind === 'line' ? '⚒ Построения: параллельная, продлить, разрезать…' : '↻ Повернуть, ⇲ сдвинуть или копировать'}</button>${kind === 'line' && (LINES[obj.type] || {}).closed && obj.latlngs.length >= 3 ? '<button class="btn" data-act="vol" style="grid-column:1/-1">▲ Объём внутри контура (отвал, котлован)</button>' : ''}${kind === 'line' && obj.latlngs.length >= 2 ? '<button class="btn" data-act="axis" style="grid-column:span 2">⟂ Ось: пикет и смещение</button><button class="btn" data-act="soline" style="grid-column:span 2">+ Точки разбивки</button>' : ''}${kind === 'point' && obj.wait ? '<button class="btn primary" data-act="redo" style="grid-column:1/-1">📡 Доснять по GPS</button>' : ''}${outageFrom(kind, obj) ? '<button class="btn" data-act="outage" style="grid-column:1/-1">⊘ Отключить здесь: какие задвижки закрыть</button>' : ''}</div>`;
   card.style.display = 'block';
   fillThumbs(kind, obj);
   card.onclick = e => {
@@ -3953,7 +3953,8 @@ function editArm(p, s) {
     const d = v.d === '' ? '' : parseNum(v.d), h = v.h === '' ? null : parseNum(v.h);
     if ((d !== '' && !(d > 0 && isFinite(d))) || (h != null && !isFinite(h))) { toast('Диаметр — больше нуля, отметка — число'); return false; }
     const rev = v.flow === '1', pa = pipeAngle(L.latLng(p.lat, p.lng));
-    if (pa) p.rot = pa.rot + (s.flow && rev ? 180 : 0); else delete p.rot;   // угол — всегда от трубы; «наоборот» — разворот на 180°
+    if (p.rotHand) { if (s.flow && rev !== !!(p.attr || {}).rev && p.rot != null) p.rot = (Number(p.rot) + 180) % 360; }   // повёрнут вручную — не трогаем (только «наоборот»)
+    else if (pa) p.rot = pa.rot + (s.flow && rev ? 180 : 0); else delete p.rot;   // угол — от трубы; «наоборот» — разворот на 180°
     if (h !== p.h) { delete p.hSrc; delete p.hInfo; }
     p.name = v.name || ''; p.note = v.note; p.h = h;
     p.attr = { ...a, d, state: v.state || '', well: v.well || '', ...(s.flow ? { rev } : {}) };
@@ -6803,12 +6804,92 @@ function chooseLine(text, cb) {
 }
 function chooseEnd() { lineChoose = null; if (!pickTool) $('pick').style.display = 'none'; }
 function chooseTap(line, ll) { const cb = lineChoose; chooseEnd(); if (cb) cb(line, ll); }
+// поворот знака: угол по ближайшей линии любого вида (дорога, ограда, стена) в пределах ROT_SNAP_M — вдоль неё
+const ROT_SNAP_M = 10;
+function lineAngleNear(ll, except) {
+  const c = map.latLngToContainerPoint(ll), mpp = ll.distanceTo(map.containerPointToLatLng([c.x + 10, c.y])) / 10;
+  let best = null;
+  for (const line of data.lines) {
+    if (line === except || !Array.isArray(line.latlngs) || line.latlngs.length < 2) continue;
+    const pts = screenPts(line);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / L2)), d = Math.hypot(a.x + t * dx - c.x, a.y + t * dy - c.y);
+      if (!best || d < best.d) best = { d, ang: Math.atan2(dy, dx) * 180 / Math.PI, line };
+    }
+  }
+  return best && best.d * mpp <= ROT_SNAP_M ? { rot: ((Math.round(best.ang * 10) / 10) % 360 + 360) % 360, line: best.line, d: best.d * mpp } : null;
+}
+// окно поворота: круг — касание задаёт направление знака (0° — как в каталоге, по часовой — плюс), кнопки ±, «по линии рядом»
+function rotateSheet(p) {
+  let rot = ((Number(p.rot) || 0) % 360 + 360) % 360;
+  const near = lineAngleNear(L.latLng(p.lat, p.lng)), R = 110, C = 125;
+  const render = () => {
+    const t = rot * Math.PI / 180, x = C + Math.cos(t) * R, y = C + Math.sin(t) * R, s = POINTS[p.type] || POINTS.mark;
+    showSheet(`<div class="sh-head"><b>Поворот знака</b><button class="x" data-close>×</button></div><div class="form">
+      <div class="hint" style="margin:2px 0 6px">Коснитесь круга — знак повернётся так, что его правая сторона смотрит туда. Сейчас <b>${mText(rot, 1)}°</b> (0° — как в каталоге, по часовой — больше).</div>
+      <svg id="rotDial" viewBox="0 0 ${2 * C} ${2 * C}" style="width:min(74vw,280px);height:auto;display:block;margin:0 auto;touch-action:none;color:var(--ink)">
+        <circle cx="${C}" cy="${C}" r="${R}" fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        ${[0, 90, 180, 270].map((a, i) => { const q = a * Math.PI / 180; return `<text x="${(C + Math.sin(q) * (R + 4)).toFixed(1)}" y="${(C - Math.cos(q) * (R + 4) + 5).toFixed(1)}" font-size="13" text-anchor="middle" fill="var(--muted)">${'СВЮЗ'[i]}</text>`; }).join('')}
+        <line x1="${C}" y1="${C}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--accent, #1976d2)" stroke-width="5" stroke-linecap="round"/>
+        <g transform="translate(${C - 48} ${C - 48}) scale(4)" style="color:${objColor(p, 'point')}">${pointSvg({ ...p, rot })}</g></svg>
+      <div class="row2" style="margin-top:6px"><button type="button" class="btn" data-d="-15">⟲ −15°</button><button type="button" class="btn" data-d="15">⟳ +15°</button></div>
+      <div class="row2"><button type="button" class="btn" data-d="-5">⟲ −5°</button><button type="button" class="btn" data-d="5">⟳ +5°</button></div>
+      <div class="row2"><button type="button" class="btn" id="rotLine"${near ? '' : ' disabled'}>${near ? `∥ По линии рядом (${mText(near.d, 1)} м)` : 'Линий ближе 10 м нет'}</button><button type="button" class="btn" id="rotZero">0° — как в каталоге</button></div>
+      ${near ? '<button type="button" class="btn" id="rotLine2" style="width:100%;margin-top:4px">∥ По линии, развернуть на 180°</button>' : ''}
+      <div class="acts"><button class="btn" data-close>Отмена</button><button class="btn primary" id="rotSave">Сохранить</button></div></div>`);
+    $('sheet').onclick = e => { if (e.target.closest('[data-close]')) closeSheet(); };   // мимо окна — не закрывать
+    $('rotDial').onclick = e => { const r = $('rotDial').getBoundingClientRect(), dx = (e.clientX - r.left) / r.width * 2 * C - C, dy = (e.clientY - r.top) / r.height * 2 * C - C;
+      if (Math.hypot(dx, dy) < 20) return; rot = (Math.round(((Math.atan2(dy, dx) * 180 / Math.PI) + 360) % 360 / 5) * 5) % 360; render(); };
+    document.querySelectorAll('#sheetPanel [data-d]').forEach(b => b.onclick = () => { rot = ((rot + Number(b.dataset.d)) % 360 + 360) % 360; render(); });
+    if (near) { $('rotLine').onclick = () => { rot = near.rot; render(); }; $('rotLine2').onclick = () => { rot = (near.rot + 180) % 360; render(); }; }
+    $('rotZero').onclick = () => { rot = 0; render(); };
+    $('rotSave').onclick = () => { if (rot) { p.rot = +rot.toFixed(1); p.rotHand = true; } else { delete p.rot; delete p.rotHand; } closeSheet(); save(); drawPoints(); frame(); showCard('point', p); toast(rot ? `Знак повёрнут: ${mText(rot, 1)}°` : 'Поворот снят'); };
+  };
+  render();
+}
+// «12, 13, 15–18» → ['12','13','15','16','17','18']; диапазон не длиннее 500 номеров
+function parseNoList(s) {
+  const out = [];
+  const norm = String(s || '').replace(/№\s*/g, '').replace(/\s*(?:[-–—]|(?:^|\s)до(?=\s))\s*/gi, '–');   // «15 – 18», «15 до 18» (на цифровой клавиатуре нет тире), «№ 12»
+  for (const tok of norm.split(/[,;\s]+/).filter(Boolean)) {
+    const m = /^(\d+)\s*[-–—]\s*(\d+)$/.exec(tok);
+    if (m) { const a = +m[1], b = +m[2], st = a <= b ? 1 : -1; if (Math.abs(b - a) > 500) return null; for (let k = a; st > 0 ? k <= b : k >= b; k += st) out.push(String(k)); }
+    else out.push(tok.replace(/^№/, ''));
+  }
+  return out;
+}
+// линейный знак по уже снятым точкам (как «накладка» GeoniCS): точки остаются, линия идёт через них по порядку номеров, с их отметками
+function lineFromPoints() {
+  openForm('Линия по снятым точкам', [{ key: 'nos', label: 'Номера точек по порядку', value: pref('lineNos', ''), placeholder: '12, 13, 15–18',
+    hint: 'Через запятую, диапазон — через дефис или «до» (15 до 18). Обратный порядок — «18–15». Точки останутся на месте, линия пройдёт через них с их отметками.' }], v => {
+    const nos = parseNoList(v.nos);
+    if (!nos || !nos.length) { toast('Нужны номера точек: «12, 13, 15–18»'); return false; }
+    const all = data.points.concat(vertexPts()), pts = nos.map(no => all.find(p => String(p.no) === no)), miss = nos.filter((no, i) => !pts[i]);
+    if (miss.length) { toast(`Нет точек № ${miss.slice(0, 6).join(', ')}${miss.length > 6 ? '…' : ''}`); return false; }
+    if (pts.length < 2) { toast('Нужно хотя бы две точки'); return false; }
+    setPref('lineNos', v.nos);
+    setTimeout(() => openPicker('line', id => {
+      const closed = !!(LINES[id] || {}).closed;
+      if (closed && pts.length < 3) { toast('Контур — хотя бы три точки'); return; }
+      const line = { id: uid(), no: nextNo(data.lines), type: id, latlngs: pts.map(p => [p.lat, p.lng]), caption: '', count: (LINES[id] || {}).defCount || 1, state: '' };
+      const hs = pts.map(p => { const h = pointH(p); return h == null ? null : { ...(p.hInfo || {}), h, src: p.hSrc || 'point', from: 'точка № ' + p.no }; });   // hEll и антенна — чтобы пересчёт отметок шёл и по вершинам
+      if (hs.some(Boolean)) line.hs = hs;
+      if (pts.some(p => p.wait)) line.wait = new Date().toISOString();
+      if (line.type === GENERIC.line) line.color = pref('color', VIS_COLOR);
+      if (NET_LINE_KINDS.has((LINES[id] || {}).kind)) carryFrom(data.lines, line, CARRY.net);
+      remember('line', id);
+      data.lines.push(line); save(); redrawAll(); showCard('line', line);
+      toast(`Линия L${line.no} — через ${pts.length} ${plural(pts.length, 'точку', 'точки', 'точек')}`);
+    }, 'Выберите знак линии'), 0);
+  }, 'Дальше — знак');
+}
 function buildMenu(kind, obj) {
   if (kind === 'point' && GROUP_OF[obj.type] === 'wells') {
-    openList('Построения · колодец', [{ id: 'out', text: '⟶ Выпуски: трубы от колодца по направлению и длине' }, { id: 'move', text: '⇲ Сдвинуть или копировать' }], a => a === 'out' ? outletForm(obj) : moveForm('point', obj));
+    openList('Построения · колодец', [{ id: 'out', text: '⟶ Выпуски: трубы от колодца по направлению и длине' }, { id: 'rot', text: '↻ Повернуть знак (пальцем или по линии)' }, { id: 'move', text: '⇲ Сдвинуть или копировать' }], a => a === 'rot' ? rotateSheet(obj) : a === 'out' ? outletForm(obj) : moveForm('point', obj));
     return;
   }
-  if (kind === 'point') { moveForm('point', obj); return; }
+  if (kind === 'point') { openList('Построения · знак', [{ id: 'rot', text: '↻ Повернуть знак (пальцем или по линии рядом)' }, { id: 'move', text: '⇲ Сдвинуть или копировать' }], a => a === 'rot' ? rotateSheet(obj) : moveForm('point', obj)); return; }
   const closed = !!(LINES[obj.type] || {}).closed;
   if (obj.latlngs.length < (closed ? 3 : 2)) { toast('У линии слишком мало вершин'); return; }
   const items = [{ id: 'par', text: '∥ Параллельная линия на расстоянии' },
@@ -7473,7 +7554,7 @@ function changeType(kind, obj, id) {
     const s = POINTS[id];
     const pa = s.pipe ? pipeAngle(L.latLng(obj.lat, obj.lng)) : null;
     const r = s.wall ? wallAngle(L.latLng(obj.lat, obj.lng)) : pa ? pa.rot + (s.flow && obj.attr && obj.attr.rev ? 180 : 0) : null;
-    if (r != null) obj.rot = r; else delete obj.rot;
+    if (!obj.rotHand) { if (r != null) obj.rot = r; else delete obj.rot; }   // повёрнут вручную — смена знака угол не сбрасывает
     save(); drawPoints(); frame(); showCard('point', obj);
     if (s.cadNew && !obj.name) { obj.name = nextNewName(); save(); drawPoints(); }
     if (s.svgFor || s.frac || s.wall || s.arm || s.defect || s.cad || /^w_/.test(id)) editPoint(obj);
@@ -8982,6 +9063,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'project', icon: '▣', text: 'Объект: ' + (objectName() || ((projectList().find(p => p.id === projectId) || {}).name) || 'без названия') + ' — сменить, новый' },
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
   { id: 'check', icon: '✓', text: 'Проверка перед сдачей' },
+  { id: 'linepts', icon: '⋯', text: 'Линия по снятым точкам (по номерам: 12, 13, 15–18)' },
   { id: 'codes', icon: '⌁', text: 'Съёмка по кодам: линии и знаки строятся сами (бордюр, ограда, здание по 3 углам)' },
   { id: 'journal', icon: '☰', text: `Журнал съёмки: ${data.points.length} ${plural(data.points.length, 'точка', 'точки', 'точек')}, фильтры` },
   { id: 'contours', icon: '〰', text: ctOn ? `Горизонтали: показаны, сечение ${mText(ctStep(), ctStep() < 1 ? 2 : 1)} м` : 'Горизонтали по точкам рельефа' },
@@ -9149,6 +9231,7 @@ const MENU = {
   planscale: () => openList('Масштаб плана', [500, 1000, 2000].map(v => ({ id: String(v), icon: '⊡', text: `1:${v}` + (v === 500 ? ' — исполнительная съёмка, сети' : v === 1000 ? ' — посёлки, промплощадки' : ' — незастроенная территория'), on: v === planScale, radio: true })), v => setPlanScale(Number(v))),
   journal: () => journalSheet(),
   codes: () => codeStart(),
+  linepts: () => lineFromPoints(),
   relief: () => reliefSheet(),
   contours: () => contourSheet(),
   redo: () => redoSheet(),
