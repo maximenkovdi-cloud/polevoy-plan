@@ -2008,7 +2008,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 128;
+const APP_BUILD = 129;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -3361,6 +3361,11 @@ function drawLines() {
     else if (NO_STATE.has(spec.kind)) DRAW[spec.kind](g, path, spec, line, w, pts);   // у строений, оград и дорог состояний нет; проезжая часть заметно толще краёв тротуаров
     else DRAW[spec.kind](g, path, spec, line, line.state === 'off' ? Math.max(1, C * MM) : w, pts);   // тонкая ровная линия, как пером
     if (line.state === 'off') for (let s = 5 * MM; s < total; s += 11 * MM) tick(g, path, s, 2.8, Math.max(1, C * MM) * 1.3, 60);   // косые штрихи — недействующая
+    if ((line.attr || {}).segLen && pts.length >= 2) {                 // длины участков — над линией, без наложений; каждый участок — своим путём (куски на краю экрана номера вершин не сбивают)
+      const LL = line.latlngs, nL = LL.length, segN = nL - 1 + ((LINES[line.type] || {}).closed && nL >= 3 ? 1 : 0);
+      for (let i = 1; i <= segN; i++) { const A = map.latLngToContainerPoint(LL[i - 1]), B = map.latLngToContainerPoint(LL[i % nL]), ds = Math.hypot(B.x - A.x, B.y - A.y); if (ds <= 14 * MM) continue;
+        const sp2 = el('path', { d: `M${A.x} ${A.y}L${B.x} ${B.y}`, fill: 'none', stroke: 'none' }, g), t = mText(groundDist(LL[i - 1], LL[i % nL]), 2);
+        placeText(g, sp2, ds / 2, t, { dy: -2.2 * MM, size: 2.2 * MM }) || placeText(g, sp2, ds / 2, t, { dy: 2.2 * MM, size: 2.2 * MM }); } }
     if (NO_STATE.has(spec.kind)) { curOwner = null; if (spec.kind === 'fence' && spec.tag) { curOwner = line.id; captionAlong(g, path, pts, spec.tag); curOwner = null; } continue; }
     const tag = { build: 'стр.', approx: 'ориент.' }[line.state];
     const cap = [tag, spec.tag, netCaption(line)].filter(Boolean).join(' ');
@@ -4852,6 +4857,8 @@ function codeParse(field) {
   const parts = String(field || '').trim().split(/\s+/).filter(Boolean);
   let cmd = '', code = '';
   for (const w of parts) { const lw = w.toLowerCase(); if (/^(o|clo|close)$/.test(lw)) cmd = 'close'; else if (/^(e|end)$/.test(lw)) cmd = 'end'; else if (/^(p|beg|b)$/.test(lw)) cmd = 'begin'; else if (!code) code = w; }
+  const g = /^(.+?)\.\.(\S*)$/.exec(code);                             // «как МГГТ» (ABRIS): «50..» — к предыдущему пикету, «50..344» — к пикету 344
+  if (g) return { key: g[1], line: '', cmd, link: g[2] || '-' };
   const m = /^(.+?)-(\d+)$/.exec(code), key = m ? m[1] : code, line = m ? m[2] : '';
   return { key, line, cmd };
 }
@@ -4861,8 +4868,28 @@ function surveyBuild(rows) {
   const open = new Map();                                              // «тип|номер линии» → { line, lastNo }
   const nNo = no => { const m = /\d+/.exec(String(no == null ? '' : no)); return m ? Number(m[0]) : null; };   // «12а» → 12
   const have = new Set(rows.map(r => nNo(r.no)).filter(v => v != null));   // номера, что есть в файле (у любого кода)
+  const mggt = rows.some(r => codeParse(r.code).link);                  // в файле есть «..» — соединения по МГГТ: голый код — начало линии
+  const byNo = new Map(), prevOf = new Map(); let prev = null;   // prevOf — последний пикет этого кода: «50..» — от него
   for (const r of rows) {
-    const { key, line: ln, cmd } = codeParse(r.code), t = codeToType(key), hz = r.h != null ? { h: r.h, src: 'file' } : null;
+    const { key, line: ln, cmd, link } = codeParse(r.code), t = codeToType(key), hz = r.h != null ? { h: r.h, src: 'file' } : null;
+    const me = { r, hz }; byNo.set(String(r.no), me);
+    if (mggt && t && LINES[t] && !ln) {                                  // МГГТ: «50» — начало, «50..» — от предыдущего пикета этого кода, «50..344» — от пикета 344 («-N» и прочее — как обычно)
+      inLines++;
+      const from = link === '-' ? prevOf.get(t) || null : link ? byNo.get(link) : null;
+      const mk = pts0 => { const L0 = { id: uid(), type: t, latlngs: pts0.map(o => [o.r.lat, o.r.lng]), hs: pts0.map(o => o.hz), nos: pts0.map(o => String(o.r.no)), caption: '', count: (LINES[t] || {}).defCount || 1, state: '', from: 'file', _a: pts0[0], _z: pts0[pts0.length - 1] }; lines.push(L0); return L0; };
+      let into;
+      if (!from) { if (link && link !== '-') unknown.set('..' + link + ' (нет такого пикета)', (unknown.get('..' + link + ' (нет такого пикета)') || 0) + 1); into = mk([me]); }
+      else {                                                             // связь — с самой точкой (не с номером: при повторной нумерации второго дня номера совпадают)
+        const L1 = lines.slice().reverse().find(l => l.type === t && l._z === from), L2 = !L1 && lines.slice().reverse().find(l => l.type === t && l._a === from && l.nos.length > 1);
+        if (L1) { L1.latlngs.push([r.lat, r.lng]); L1.hs.push(hz); L1.nos.push(String(r.no)); L1._z = me; into = L1; }
+        else if (L2) { L2.latlngs.unshift([r.lat, r.lng]); L2.hs.unshift(hz); L2.nos.unshift(String(r.no)); L2._a = me; into = L2; }
+        else into = mk([from, me]);
+      }
+      if (cmd === 'close' && into && !(LINES[t] || {}).closed && into.latlngs.length >= 3) { into.latlngs.push(into.latlngs[0].slice()); into.hs.push(into.hs[0]); into.nos.push(into.nos[0]); into._z = into._a; }   // «o» — замкнуть кольцо
+      if (cmd === 'end') prevOf.delete(t); else prevOf.set(t, me);
+      prev = me; continue;
+    }
+    if (t) prevOf.set(t, me); prev = me;
     if (t && LINES[t]) {
       const k = t + '|' + ln, cur = open.get(k), no = nNo(r.no);
       let gap = false;                                                   // пропущен номер, которого нет в файле совсем; чужой код между — не разрыв; скачок больше 10 000 — разрыв
@@ -4886,6 +4913,7 @@ function surveyBuild(rows) {
     pts.push({ id: uid(), no: r.no, type: t && POINTS[t] ? t : GENERIC.point, name: t ? '' : key, lat: r.lat, lng: r.lng, ...(r.h != null ? { h: r.h, hSrc: 'file' } : {}), how: 'coords', made: new Date().toISOString() });
   }
   const ok = lines.filter(l => l.latlngs.length >= ((LINES[l.type] || {}).closed ? 3 : 2));
+  for (const l of lines) { delete l._a; delete l._z; }                // служебные ссылки МГГТ — не в план
   for (const l of ok) if (!l.hs.some(Boolean)) delete l.hs;
   const lone = lines.length - ok.length;                               // линия из одной точки — точкой, с её номером и отметкой
   for (const l of lines) if (!ok.includes(l)) { const z = l.hs[0]; pts.push({ id: uid(), no: l.nos[0], type: GENERIC.point, name: codeLabel(l.type) + ' (одна точка линии)', lat: l.latlngs[0][0], lng: l.latlngs[0][1], ...(z && z.h != null ? { h: z.h, hSrc: 'file' } : {}), how: 'coords', made: new Date().toISOString() }); inLines--; }
@@ -6955,7 +6983,7 @@ function buildMenu(kind, obj) {
   const closed = !!(LINES[obj.type] || {}).closed;
   if (obj.latlngs.length < (closed ? 3 : 2)) { toast('У линии слишком мало вершин'); return; }
   const sp0 = LINES[obj.type] || {}, isSlope = sp0.style === 'slope', isFence = sp0.kind === 'fence';
-  const items = [...(isSlope ? [{ id: 'toe', text: slopeToe(obj.attr) ? '⟂ Подошва — по другой линии (заменить)' : '⟂ Подошва — по другой линии (откос по двум линиям)' }, ...(slopeToe(obj.attr) ? [{ id: 'toeflip', text: '⇅ Бровку и подошву — поменять местами' }, { id: 'toeoff', text: '✕ Убрать подошву (штрихи — по заложению)' }] : [])] : []),
+  const items = [{ id: 'seglen', text: (obj.attr || {}).segLen ? '📏 Убрать подписи длин участков' : '📏 Подписать длины участков (на плане и в DXF)' }, ...(isSlope ? [{ id: 'toe', text: slopeToe(obj.attr) ? '⟂ Подошва — по другой линии (заменить)' : '⟂ Подошва — по другой линии (откос по двум линиям)' }, ...(slopeToe(obj.attr) ? [{ id: 'toeflip', text: '⇅ Бровку и подошву — поменять местами' }, { id: 'toeoff', text: '✕ Убрать подошву (штрихи — по заложению)' }] : [])] : []),
     ...(isFence ? [{ id: 'fflip', text: '⇆ Знак ограды — на другую сторону' }] : []),
     { id: 'par', text: '∥ Параллельная линия на расстоянии' },
     ...(closed ? [] : [{ id: 'ext', text: '⟷ Продлить или обрезать до другой линии' }, { id: 'split', text: '✂ Разрезать в крестике' }, { id: 'join', text: '⊕ Соединить с другой линией' }]),
@@ -6963,6 +6991,7 @@ function buildMenu(kind, obj) {
     { id: 'rot', text: '⟳ Повернуть на угол' }, { id: 'mir', text: '⇋ Зеркально отразить' },
     ...(closed && obj.latlngs.length >= 4 ? [{ id: 'square', text: '∟ Выпрямить углы (дом, снятый по GPS)' }] : [])];
   openList('Построения · L' + (obj.no || ''), items, a => {
+    if (a === 'seglen') { obj.attr = { ...(obj.attr || {}), segLen: !(obj.attr || {}).segLen }; if (!obj.attr.segLen) delete obj.attr.segLen; save(); redrawAll(); showCard('line', obj); }
     if (a === 'toe') slopeSetToe(obj);
     if (a === 'toeflip') slopeFlip(obj);
     if (a === 'toeoff') { const { toe, ...rest } = obj.attr || {}; obj.attr = rest; save(); redrawAll(); showCard('line', obj); }
@@ -9225,6 +9254,7 @@ function settingsMenu() {
     { id: 'yjskey', icon: '🔑', text: yandexJsKey() ? 'Ключ Яндекс Карт: спутник — введён, сменить или удалить' : 'Ключ Яндекс Карт: спутник и гибрид →' },
     { id: 'ykey', icon: '🔑', text: yandexKey() ? 'Ключ Яндекс Карт: введён — сменить или удалить' : 'Ключ Яндекс Карт — для «Схемы Яндекса» →' },
     { id: 'dxfframe', icon: '▭', text: 'В DXF — рамка листа и штамп', on: pref('dxfFrame', true), check: true },
+    { id: 'dxfidx', icon: 'В', text: 'В DXF — буквы сетей (В, К, Г…) в разрывах линий — для печати; для КРЕДО и Civil не включать: линия режется', on: pref('dxfNetIdx', false), check: true },
     { id: 'dxfrel', icon: '⛰', text: 'В DXF — точки рельефа и ситуации на разных слоях (_РЕЛЬЕФ / _СИТ, для КРЕДО)', on: pref('dxfRelLayers', false), check: true },
     { header: 'Помощники' },
     { id: 'ai', icon: '✨', text: aiReady() ? 'Подсказка знака по фото: настроена' : 'Подсказка знака по фото: подключить' }
@@ -9314,6 +9344,7 @@ const MENU = {
   contours: () => contourSheet(),
   redo: () => redoSheet(),
   settings: () => settingsMenu(),
+  dxfidx: () => { const on = !pref('dxfNetIdx', false); setPref('dxfNetIdx', on); toast(on ? 'DXF: буквы сетей — текстом в разрывах (видны в любом CAD)' : 'DXF: сети без букв — сплошной линией'); },
   dxfrel: () => { const on = !pref('dxfRelLayers', false); setPref('dxfRelLayers', on); toast(on ? 'DXF: слои точек с окончанием _РЕЛЬЕФ и _СИТ — в КРЕДО назначьте «рельефная / ситуационная» по слою' : 'DXF: слои точек прежние; рельеф — в скрытом атрибуте РЕЛЬЕФ'); },
   dxfframe: () => { const on = !pref('dxfFrame', true); setPref('dxfFrame', on); toast(on ? 'DXF — с рамкой листа, сеткой и штампом' : 'DXF — только план, без рамки (для вставки в чужой чертёж)'); },
   about: () => alert(`Полевой план, сборка ${APP_BUILD}.
@@ -9884,6 +9915,30 @@ function lineZs(l) {
 }
 // пунктирные знаки — свой тип линии: штрих и пробел в мм плана, как на экране (1 мм на 1:500 = 0,5 м)
 let DXF_M_PER_MM = planScale / 1000;                                    // метров на 1 мм листа
+// буквы сети в DXF: где поставить и как разрезать линию (как на экране: индекс 3 мм, примерно через 4 см плана, разрыв по ширине индекса с полями)
+// V — вершины {x, y, z} в метрах; km — метров на мм плана. Возвращает куски линии (отметка по вершинам — интерполяцией) и места подписей
+const NET_IDX_MM = 3, NET_IDX_EVERY_MM = 40;
+function netIdxPlaces(V, txt, km, closed) {
+  const P = closed && V.length > 2 ? V.concat([V[0]]) : V, d = [0];
+  for (let i = 1; i < P.length; i++) d.push(d[i - 1] + Math.hypot(P[i].x - P[i - 1].x, P[i].y - P[i - 1].y));
+  const L = d[d.length - 1], h = NET_IDX_MM * km, half = (String(txt).length * h * DXF_CHAR_W + h * 0.6) / 2 + 0.8 * km;
+  if (L < 2 * half + 2 * km) return null;                              // слишком короткая — без буквы
+  const at = s => { let i = 1; while (i < d.length - 1 && d[i] < s) i++; const u = (s - d[i - 1]) / ((d[i] - d[i - 1]) || 1), a = P[i - 1], b = P[i]; return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, z: a.z + (b.z - a.z) * u, i, ang: Math.atan2(b.y - a.y, b.x - a.x) }; };
+  const every = NET_IDX_EVERY_MM * km, ss = L < every * 1.5 ? [L / 2] : [];
+  if (!ss.length) for (let s = every / 2; s < L - half; s += every) ss.push(s);
+  const labels = [], cuts = [];
+  for (const s of ss) {
+    if (s - half < 0 || s + half > L) continue;
+    const a0 = at(s - half), a1 = at(s + half), turn = Math.abs(((a1.ang - a0.ang) * 180 / Math.PI + 540) % 360 - 180); if (a0.i !== a1.i && turn > 12) continue;   // на крутом изломе букву не ставим; пологий (частые вершины съёмки) — можно
+    const c = at(s); let deg = c.ang * 180 / Math.PI; if (deg > 90.001) deg -= 180; else if (deg <= -90) deg += 180;   // читается снизу или справа
+    labels.push({ x: c.x, y: c.y, deg, h }); cuts.push([s - half, s + half]);
+  }
+  if (!labels.length) return null;
+  const parts = []; let s0 = 0;
+  for (const [a, b] of cuts) { parts.push([s0, a]); s0 = b; }
+  parts.push([s0, L]);
+  return { labels, parts: parts.filter(([a, b]) => b - a > 1e-6).map(([a, b]) => { const A = at(a), B = at(b), mid = P.filter((q, i) => d[i] > a && d[i] < b); return [{ x: A.x, y: A.y, z: A.z }, ...mid, { x: B.x, y: B.y, z: B.z }]; }) };
+}
 function dxfLtype(l, sp) {
   const d = l.state === 'project' ? [10, 4] : l.state === 'staked' ? [10, 2] : Array.isArray(sp.dash) ? sp.dash : sp.dash ? [2, 1] : sp.kind === 'route' ? [4, 1.5] : null;
   return d ? { name: `DASH_${d[0]}_${d[1]}`.replace(/\./g, 'P'), d } : null;
@@ -10142,9 +10197,21 @@ function toDxf() {
     // с отметками — 3D-полилиния (пропуски — по соседним вершинам), без отметок — плоская, чтобы не было ложных нулей
     const zs = lineZs(l), lt = dxfLtype(l, sp);
     if (lt) ltypes.set(lt.name, lt);
-    ent(0, 'POLYLINE', 8, lay, ...(lt ? [6, lt.name] : []), 66, 1, 10, 0, 20, 0, 30, 0, 70, (zs ? 8 : 0) | (sp.closed ? 1 : 0));
-    l.latlngs.forEach((ll, i) => { const [x, y, zz] = xyz(ll, zs && zs[i]); ent(0, 'VERTEX', 8, lay, 10, x, 20, y, 30, zs ? zz : 0, 70, zs ? 32 : 0); });
-    ent(0, 'SEQEND', 8, lay);
+    const V3 = l.latlngs.map((ll, i) => { const [x, y, zz] = xyz(ll, zs && zs[i]); return { x: +x, y: +y, z: zs ? +zz : 0 }; });
+    const idxTxt = sp.kind === 'indexed' && pref('dxfNetIdx', false) ? (l.state === 'reserve' ? 'тр' : sp.numberedIndex ? String(l.count || 1) : (l.count > 1 ? l.count : '') + (sp.index || '')) : '';
+    const NL = idxTxt ? netIdxPlaces(V3, idxTxt, DXF_M_PER_MM, !!sp.closed) : null;   // буквы сети (В, К, Г…) — текстом в разрывах линии: видны в любом CAD без наших типов линий
+    for (const part of NL ? NL.parts : [V3]) {
+      ent(0, 'POLYLINE', 8, lay, ...(lt ? [6, lt.name] : []), 66, 1, 10, 0, 20, 0, 30, 0, 70, (zs ? 8 : 0) | (sp.closed && !NL ? 1 : 0));
+      for (const q of part) ent(0, 'VERTEX', 8, lay, 10, f3(q.x), 20, f3(q.y), 30, zs ? q.z.toFixed(3) : 0, 70, zs ? 32 : 0);
+      ent(0, 'SEQEND', 8, lay);
+    }
+    if ((l.attr || {}).segLen) for (let i = 1, nV = V3.length, cl = !!sp.closed && nV >= 3; i < nV + (cl ? 1 : 0); i++) {   // длины участков — текстом над серединой участка, читается снизу или справа; у замкнутого — и замыкающая
+      const a = V3[i - 1], b = V3[i % nV], len = Math.hypot(b.x - a.x, b.y - a.y); if (len < 14 * DXF_M_PER_MM) continue;
+      let deg = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI; if (deg > 90.001) deg -= 180; else if (deg <= -90) deg += 180;
+      const r = deg * Math.PI / 180, off = -3.4 * DXF_M_PER_MM, mx = (a.x + b.x) / 2 - Math.sin(r) * off, my = (a.y + b.y) / 2 + Math.cos(r) * off;   // под линией: над ней — подпись сети
+      ent(0, 'TEXT', 8, lay, 10, f3(mx), 20, f3(my), 30, 0, 40, f3(2.2 * DXF_M_PER_MM), 1, dxfStr(mText(groundDist(l.latlngs[i - 1], l.latlngs[i % l.latlngs.length]), 2)), 50, deg.toFixed(1), 7, DXF_STYLE, 72, 1, 11, f3(mx), 21, f3(my), 31, 0);
+    }
+    if (NL) for (const t of NL.labels) ent(0, 'TEXT', 8, lay, 10, f3(t.x), 20, f3(t.y), 30, 0, 40, f3(t.h), 1, dxfStr(idxTxt), 50, t.deg.toFixed(1), 7, DXF_STYLE, 72, 1, 11, f3(t.x), 21, f3(t.y), 31, 0, 73, 2);
     if (sp.style === 'slope' && slopeToe(l.attr)) {                     // откос по двум линиям: подошва и штрихи — линиями (тот же расчёт, что на экране, в метрах)
       const XY = ll => { const [x, y] = xyz(ll); return { x: +x, y: +y }; }, top = l.latlngs.map(XY), toe = slopeToe(l.attr).map(XY), km = DXF_M_PER_MM;
       const tlt = dxfLtype({}, { dash: [0.15, 0.6] }); ltypes.set(tlt.name, tlt);   // подошва — точечный пунктир, как на экране (зн. 84б)
