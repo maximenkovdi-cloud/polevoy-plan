@@ -2008,7 +2008,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 124;
+const APP_BUILD = 125;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -2836,7 +2836,7 @@ function placePointLabels() {
       tries.unshift(side(up), side(-up));
     }
     if ((POINTS[p.type] || {}).pole) {
-      const wr = poleWires(p.attr), at = (az, d) => { const t = az * Math.PI / 180, e = Math.sin(t) >= 0, n = Math.cos(t) >= 0; return { x: e ? c.x + d : c.x - d - w, y: n ? c.y - d - h : c.y + d }; };
+      const wr = poleDirs(p.attr), at = (az, d) => { const t = az * Math.PI / 180, e = Math.sin(t) >= 0, n = Math.cos(t) >= 0; return { x: e ? c.x + d : c.x - d - w, y: n ? c.y - d - h : c.y + d }; };
       const qs = [45, 315, 135, 225].map(az => ({ az, sc: wr.length ? Math.min(...wr.map(v => azDiff(v, az))) : 90 })).sort((x, y) => y.sc - x.sc);
       tries.splice(0, tries.length, ...qs.map(q => at(q.az, SYM_R + 1)), ...qs.map(q => at(q.az, Math.max(4.8 * MM, SYM_R + 1))));   // стрелки заняты — подпись в четверть, где не задевает
     }
@@ -2854,7 +2854,7 @@ function frame(mayReuse) {                                            // mayReus
   if (!reuse && !pointsFresh()) drawPoints();
   occReset();
   for (const { p } of pointMarkers) { const c = map.latLngToContainerPoint([p.lat, p.lng]); reserve({ x: c.x - SYM_R, y: c.y - SYM_R, w: 2 * SYM_R, h: 2 * SYM_R }, p.id);
-    if ((POINTS[p.type] || {}).pole) { const L5 = 4.6 * MM, b = Math.max(3, MM); for (const az of poleWires(p.attr)) { const t = (az * Math.PI) / 180; for (let k = 0; k <= 8; k++) { const d = SYM_R + (L5 - SYM_R) * k / 8; reserve({ x: c.x + Math.sin(t) * d - b / 2, y: c.y - Math.cos(t) * d - b / 2, w: b, h: b }, p.id); } } } }   // стрелки проводов — заняты
+    if ((POINTS[p.type] || {}).pole) { const L5 = 4.6 * MM, b = Math.max(3, MM); for (const az of poleDirs(p.attr)) { const t = (az * Math.PI) / 180; for (let k = 0; k <= 8; k++) { const d = SYM_R + (L5 - SYM_R) * k / 8; reserve({ x: c.x + Math.sin(t) * d - b / 2, y: c.y - Math.cos(t) * d - b / 2, w: b, h: b }, p.id); } } } }   // стрелки проводов — заняты
   for (const line of data.lines) {                                    // сама линия — препятствие для чужих надписей
     const pts = screenPts(line);
     for (let i = 1; i < pts.length; i++) {
@@ -3588,7 +3588,7 @@ function showCard(kind, obj) {
     const s = POINTS[obj.type] || POINTS.mark, c = coordText(L.latLng(obj.lat, obj.lng));
     icon = symbolSvg(pointSvg(obj), 34, objColor(obj, kind)); name = s.name + (obj.name ? ' — ' + esc(pointLabel(obj)) : '');
     if (s.frac) name = s.name + (pointLabel(obj) ? ' — ' + esc(pointLabel(obj)) : '');
-    if (s.pole) { const a = obj.attr || {}; name = [(POLE_KINDS.find(k => k[0] === a.kind) || POLE_KINDS[0])[1], 'опора: ' + (POLE_MATS.find(m => m[0] === a.mat) || POLE_MATS[0])[1].toLowerCase(), a.tr === true ? 'трансформатор' : '', poleWires(a).length + ' пров.'].filter(Boolean).map(esc).join(', ') + (pointLabel(obj) ? ' — ' + esc(pointLabel(obj)) : ''); }
+    if (s.pole) { const a = obj.attr || {}; name = [(POLE_KINDS.find(k => k[0] === a.kind) || POLE_KINDS[0])[1], 'опора: ' + (POLE_MATS.find(m => m[0] === a.mat) || POLE_MATS[0])[1].toLowerCase(), a.tr === true ? 'трансформатор' : '', poleWires(a).length + ' пров.', poleStays(a).length ? poleStays(a).length + ' отт.' : ''].filter(Boolean).map(esc).join(', ') + (pointLabel(obj) ? ' — ' + esc(pointLabel(obj)) : ''); }
     if (s.svgFor && !s.pole) name = s.name.replace(/ \(.*\)$/, '') + ' — ' + esc(((COVERS.find(c => c[0] === (obj.attr || {}).cover) || COVERS[0])[1]));
     sub = obj.note ? esc(obj.note) : 'зона ' + c.s.zone;
     kv = [[esc(planeName()), `X ${f2(c.s.x)}<br>Y ${f2(c.s.y)}`], ['WGS-84', c.wgs]];
@@ -3987,8 +3987,16 @@ function poleSvg(p) {
       s += `<path d="M${f(hx - Math.cos(ang - sp) * hl)} ${f(hy - Math.sin(ang - sp) * hl)}L${f(hx)} ${f(hy)}L${f(hx - Math.cos(ang + sp) * hl)} ${f(hy - Math.sin(ang + sp) * hl)}" ${st}/>`;
     }
   }
+  for (const az of poleStays(a)) {                                      // оттяжка / подкос: штрих 0,8 мм через 0,5 мм на 3 мм, засечка 0,6 мм поперёк
+    const t = (az - rot) * Math.PI / 180, ux = Math.sin(t), uy = -Math.cos(t), r0 = edge(ux, uy), L3 = 3.0 * u, dsh = 0.8 * u, gp = 0.5 * u, sw = `fill="none" stroke="currentColor" stroke-width="${f(0.15 * u)}" stroke-linecap="round"`;
+    for (let d = r0; d < L3; d += dsh + gp) { const e = Math.min(L3, d + dsh); s += `<path d="M${f(c + ux * d)} ${f(c + uy * d)}L${f(c + ux * e)} ${f(c + uy * e)}" ${sw}/>`; }
+    const tx = c + ux * L3, ty = c + uy * L3, k = 0.3 * u; s += `<path d="M${f(tx - uy * k)} ${f(ty + ux * k)}L${f(tx + uy * k)} ${f(ty - ux * k)}" ${sw}/>`;
+  }
   return s + body;
 }
+const POLE_MAX_STAYS = 4;
+const poleStays = a => poleWires({ wires: a && a.stays }).slice(0, POLE_MAX_STAYS);
+const poleDirs = a => [...poleWires(a), ...poleStays(a)];             // всё, что торчит из опоры, — подписи туда не ставить
 // азимут с точки a на точку b (по часовой от севера), для коротких расстояний
 const llAz = (a, b) => { const dx = (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180), dy = b.lat - a.lat; return ((Math.atan2(dx, dy) * 180 / Math.PI) + 360) % 360; };
 // направления проводов по линиям ЛЭП и связи, проходящим через опору (вершина в пределах 3 м): на соседние вершины
@@ -4016,57 +4024,62 @@ const azDiff = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360
 // карточка опоры: тип, материал, трансформатор, напряжение и круг направлений — касание круга ставит стрелку (в перчатках — крупно)
 function editPole(p) {
   const a = p.attr || {};
-  let st = { kind: POLE_KINDS.some(k => k[0] === a.kind) ? a.kind : 'lv', mat: POLE_MATS.some(m => m[0] === a.mat) ? a.mat : 'wood', tr: a.tr === true, wires: poleWires(a), sel: -1, volt: typeof a.volt === 'string' ? a.volt : '' };
+  let st = { kind: POLE_KINDS.some(k => k[0] === a.kind) ? a.kind : 'lv', mat: POLE_MATS.some(m => m[0] === a.mat) ? a.mat : 'wood', tr: a.tr === true, wires: poleWires(a), stays: poleStays(a), edit: 'wires', sel: -1, volt: typeof a.volt === 'string' ? a.volt : '' };
   const near = poleNeighbours(p), fromLines = [...new Set(poleWiresFromLines(p))];
   const seg = (name, list, val) => `<div class="seg" data-seg="${name}" style="flex-wrap:wrap;margin:4px 0 10px">${list.map(([v, t]) => `<button type="button" data-v="${v}" class="${v === val ? 'on' : ''}">${esc(t)}</button>`).join('')}</div>`;
   const R = 120, C = 130;
   const dial = () => {
-    const rays = st.wires.map((az, i) => { const t = az * Math.PI / 180, x = C + Math.sin(t) * R, y = C - Math.cos(t) * R, on = i === st.sel;
-      return `<line x1="${C}" y1="${C}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${on ? 'var(--accent, #1976d2)' : 'currentColor'}" stroke-width="${on ? 6 : 4}" stroke-linecap="round"/><text x="${(C + Math.sin(t) * (R - 22)).toFixed(1)}" y="${(C - Math.cos(t) * (R - 22) + 5).toFixed(1)}" font-size="14" text-anchor="middle" fill="currentColor" stroke="var(--panel)" stroke-width="3" paint-order="stroke">${az}°</text>`; }).join('');
+    const ray = (list, dash, mine) => list.map((az, i) => { const t = az * Math.PI / 180, x = C + Math.sin(t) * R * (dash ? 0.7 : 1), y = C - Math.cos(t) * R * (dash ? 0.7 : 1), on = mine && i === st.sel;
+      return `<line x1="${C}" y1="${C}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${on ? 'var(--accent, #1976d2)' : 'currentColor'}" stroke-width="${on ? 6 : 4}" stroke-linecap="round"${dash ? ' stroke-dasharray="10 7"' : ''} opacity="${mine ? 1 : 0.45}"/><text x="${(C + Math.sin(t) * (R - 22)).toFixed(1)}" y="${(C - Math.cos(t) * (R - 22) + 5).toFixed(1)}" font-size="14" text-anchor="middle" fill="currentColor" stroke="var(--panel)" stroke-width="3" paint-order="stroke">${az}°</text>`; }).join('');
+    const rays = ray(st.wires, false, st.edit === 'wires') + ray(st.stays, true, st.edit === 'stays');
     const ticks = [0, 90, 180, 270].map((az, i) => { const t = az * Math.PI / 180; return `<text x="${(C + Math.sin(t) * (R + 4)).toFixed(1)}" y="${(C - Math.cos(t) * (R + 4) + 5).toFixed(1)}" font-size="13" text-anchor="middle" fill="var(--muted)">${'СВЮЗ'[i]}</text>`; }).join('');
     return `<svg id="poleDial" viewBox="0 0 ${2 * C} ${2 * C}" style="width:min(78vw,300px);height:auto;display:block;margin:0 auto;touch-action:none;color:var(--ink)">
       <circle cx="${C}" cy="${C}" r="${R}" fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>${ticks}${rays}
       <g transform="translate(${C - 36} ${C - 36}) scale(3)">${poleSvg({ attr: { kind: st.kind, mat: st.mat, tr: st.tr, wires: [] } })}</g></svg>`;
   };
+  const arr0 = () => st.edit === 'stays' ? st.stays : st.wires;
   const render = () => {
     showSheet(`<div class="sh-head"><b>Опора ЛЭП / связи</b><button class="x" data-close>×</button></div><div class="form">
       <label>Линия</label>${seg('kind', POLE_KINDS, st.kind)}
       <label>Опора</label>${seg('mat', POLE_MATS, st.mat)}
       <label style="display:flex;gap:10px;align-items:center;min-height:44px"><input type="checkbox" id="poleTr"${st.tr ? ' checked' : ''} style="width:26px;height:26px"> Трансформатор на опоре</label>
       <label for="poleVolt">Напряжение, провода (подпись)</label><input id="poleVolt" value="${esc(st.volt)}" placeholder="${st.kind === 'comm' ? '8 пр.' : st.kind === 'hv' ? '10 кВ' : '0,4 кВ'}" autocomplete="off">
-      <label style="margin-top:10px">Провода: коснитесь круга в сторону провода (${st.wires.length} из ${POLE_MAX_WIRES})</label>${dial()}
+      <div class="seg" id="poleEdit" style="margin:10px 0 4px"><button type="button" data-e="wires" class="${st.edit === 'wires' ? 'on' : ''}">Провода (${st.wires.length})</button><button type="button" data-e="stays" class="${st.edit === 'stays' ? 'on' : ''}">Оттяжки, подкосы (${st.stays.length})</button></div>
+      <label>${st.edit === 'wires' ? `Провода: коснитесь круга в сторону провода (${st.wires.length} из ${POLE_MAX_WIRES})` : `Оттяжки: коснитесь круга в сторону оттяжки (${st.stays.length} из ${POLE_MAX_STAYS}) — на плане штрих с засечкой`}</label>${dial()}
       <div class="row2" style="margin-top:6px"><button type="button" class="btn" id="poleLL"${st.sel < 0 ? ' disabled' : ''}>⟲ −15°</button><button type="button" class="btn" id="poleRR"${st.sel < 0 ? ' disabled' : ''}>⟳ +15°</button></div>
       <div class="row2"><button type="button" class="btn" id="poleL"${st.sel < 0 ? ' disabled' : ''}>⟲ −${POLE_SNAP_DEG}°</button><button type="button" class="btn" id="poleR"${st.sel < 0 ? ' disabled' : ''}>⟳ +${POLE_SNAP_DEG}°</button></div>
-      <div class="row2"><button type="button" class="btn" id="poleDel"${st.sel < 0 ? ' disabled' : ''}>Убрать стрелку</button><button type="button" class="btn" id="poleClr"${st.wires.length ? '' : ' disabled'}>Убрать все</button></div>
+      <div class="row2"><button type="button" class="btn" id="poleDel"${st.sel < 0 ? ' disabled' : ''}>Убрать стрелку</button><button type="button" class="btn" id="poleClr"${arr0().length ? '' : ' disabled'}>Убрать все</button></div>
       ${fromLines.length ? `<button type="button" class="btn" id="poleLines" style="width:100%;margin-top:6px">По линиям через опору (${fromLines.length})</button>` : ''}
       ${near.length ? `<div class="hint" style="margin-top:8px">Стрелка на соседнюю опору:</div>${near.map((n, i) => `<button type="button" class="btn" data-near="${i}" style="width:100%;margin-top:4px;text-align:left">${st.wires.some(w => azDiff(w, n.az) < POLE_SAME_DEG) ? '✓ ' : '+ '}${esc(n.name)} — ${mText(n.d, 1)} м, ${n.az}°</button>`).join('')}` : ''}
       <div class="acts"><button class="btn" data-close>Отмена</button><button class="btn primary" id="poleSave">Сохранить</button></div></div>`);
     document.querySelectorAll('#sheetPanel [data-seg] button').forEach(b => b.onclick = () => { keep(); st[b.parentNode.dataset.seg] = b.dataset.v; render(); });
     $('poleTr').onchange = e => { keep(); st.tr = e.target.checked; render(); };
+    $('poleEdit').onclick = e => { const b = e.target.closest('[data-e]'); if (!b) return; keep(); st.edit = b.dataset.e; st.sel = -1; render(); };
+    const arr = () => st.edit === 'stays' ? st.stays : st.wires, maxN = () => st.edit === 'stays' ? POLE_MAX_STAYS : POLE_MAX_WIRES;
     $('poleDial').onclick = e => {
       keep();
       const r = $('poleDial').getBoundingClientRect(), x = (e.clientX - r.left) / r.width * 2 * C - C, y = (e.clientY - r.top) / r.height * 2 * C - C;
       if (Math.hypot(x, y) < 18) return;                                 // в середину — мимо
       const az = (Math.round(((Math.atan2(x, -y) * 180 / Math.PI + 360) % 360) / POLE_SNAP_DEG) * POLE_SNAP_DEG) % 360;
-      const k = st.wires.findIndex(w => azDiff(w, az) < POLE_SAME_DEG);
+      const A = arr(), k = A.findIndex(w => azDiff(w, az) < POLE_SAME_DEG);
       if (k >= 0) st.sel = st.sel === k ? -1 : k;                        // рядом со стрелкой — выбрать её
-      else if (st.wires.length < POLE_MAX_WIRES) { st.wires.push(az); st.sel = st.wires.length - 1; }
-      else toast(`Больше ${POLE_MAX_WIRES} проводов на одной опоре не бывает — уберите лишнюю стрелку`);
+      else if (A.length < maxN()) { A.push(az); st.sel = A.length - 1; }
+      else toast(st.edit === 'stays' ? `Больше ${POLE_MAX_STAYS} оттяжек не рисуем — уберите лишнюю` : `Больше ${POLE_MAX_WIRES} проводов на одной опоре не бывает — уберите лишнюю стрелку`);
       render();
     };
-    const turn = d => { keep(); st.wires[st.sel] = (st.wires[st.sel] + d + 360) % 360; render(); };
+    const turn = d => { keep(); const A = arr(); A[st.sel] = (A[st.sel] + d + 360) % 360; render(); };
     $('poleL').onclick = () => turn(-POLE_SNAP_DEG); $('poleR').onclick = () => turn(POLE_SNAP_DEG); $('poleLL').onclick = () => turn(-15); $('poleRR').onclick = () => turn(15);
     $('sheet').onclick = e => { if (e.target.closest('[data-close]')) closeSheet(); };   // мимо окна — не закрывать: правки стрелок не теряются
-    $('poleDel').onclick = () => { keep(); st.wires.splice(st.sel, 1); st.sel = -1; render(); };
-    $('poleClr').onclick = () => { keep(); st.wires = []; st.sel = -1; render(); };
-    if ($('poleLines')) $('poleLines').onclick = () => { keep(); for (const az of fromLines) if (!st.wires.some(w => azDiff(w, az) < POLE_SAME_DEG) && st.wires.length < POLE_MAX_WIRES) st.wires.push(az); st.sel = -1; render(); };
-    document.querySelectorAll('#sheetPanel [data-near]').forEach(b => b.onclick = () => { keep(); const az = near[+b.dataset.near].az, k = st.wires.findIndex(w => azDiff(w, az) < POLE_SAME_DEG);
+    $('poleDel').onclick = () => { keep(); arr().splice(st.sel, 1); st.sel = -1; render(); };
+    $('poleClr').onclick = () => { keep(); if (st.edit === 'stays') st.stays = []; else st.wires = []; st.sel = -1; render(); };
+    if ($('poleLines')) $('poleLines').onclick = () => { keep(); st.edit = 'wires'; for (const az of fromLines) if (!st.wires.some(w => azDiff(w, az) < POLE_SAME_DEG) && st.wires.length < POLE_MAX_WIRES) st.wires.push(az); st.sel = -1; render(); };
+    document.querySelectorAll('#sheetPanel [data-near]').forEach(b => b.onclick = () => { keep(); st.edit = 'wires'; const az = near[+b.dataset.near].az, k = st.wires.findIndex(w => azDiff(w, az) < POLE_SAME_DEG);
       if (k >= 0) { st.sel = k; render(); return; }                       // уже есть — выделить (убрать — кнопкой «Убрать стрелку»)
       if (st.wires.length < POLE_MAX_WIRES) { st.wires.push(az); st.sel = st.wires.length - 1; } render(); });
     $('poleSave').onclick = () => {
       keep();
-      p.attr = { ...a, kind: st.kind, mat: st.mat, tr: st.tr, wires: poleWires({ wires: st.wires }), volt: st.volt };
-      if (!p.attr.tr) delete p.attr.tr; if (!p.attr.volt) delete p.attr.volt;
+      p.attr = { ...a, kind: st.kind, mat: st.mat, tr: st.tr, wires: poleWires({ wires: st.wires }), stays: poleStays({ stays: st.stays }), volt: st.volt };
+      if (!p.attr.tr) delete p.attr.tr; if (!p.attr.volt) delete p.attr.volt; if (!p.attr.stays.length) delete p.attr.stays;
       closeSheet(); save(); drawPoints(); frame(); showCard('point', p);
     };
   };
@@ -4523,6 +4536,9 @@ function openSearch() {
   const fromGps = !!gps, last = pref('search', {});
   showSheet(`<div class="sh-head"><b>Найти место</b><button class="x" data-close>×</button></div>
     <div class="form">
+      <label for="sFind">Точка по номеру, отметке или названию</label>
+      <input id="sFind" autocomplete="off" placeholder="125 · отм 120,5 · 120,50 · ПГ-7"><div id="sFound" class="list" style="margin:4px 0 8px"></div>
+      <hr style="border:0;border-top:1px solid var(--line);margin:10px 0 14px">
       <label for="sPlace">Координаты</label>
       <input id="sPlace" autocomplete="off" value="${esc(last.place || '')}" placeholder="X Y (${esc(planeName())}) или 52.9701, 36.0701">
       <div class="hint" style="margin:4px 0 8px">${esc(planeName())}: сначала X (на север), потом Y. Градусы — можно вставить из сообщения, в том числе 52°58'12".</div>
@@ -4540,6 +4556,10 @@ function openSearch() {
     </div>`);
   const seg = id => e => { const b = e.target.closest('button'); if (!b) return; for (const x of $(id).children) x.classList.toggle('on', x === b); };
   $('sFrom').onclick = seg('sFrom'); $('sKind').onclick = seg('sKind');
+  const showFound = () => { const q = $('sFind').value, f = findPoints(q, data.points.concat(vertexPts()));   // и вершины линий из файла съёмки (у них свои номера)
+    $('sFound').innerHTML = !q.trim() ? '' : f.length ? f.map(p => `<div class="item" data-fid="${esc(p.id)}" style="min-height:44px"><span><b>№ ${esc(String(p.no || '—'))}</b> ${esc(p.vertexOf ? 'вершина: ' + ((LINES[p.type] || {}).name || p.type) : pointLabel(p) || (POINTS[p.type] || POINTS.mark).name)}${pointH(p) != null ? ` · H ${mText(pointH(p), 2)}` : ''}</span></div>`).join('') : '<div class="hint">Не нашёл. Номер — цифрами, отметка — с запятой или «отм 120,5».</div>'; };
+  $('sFind').oninput = showFound;
+  $('sFound').onclick = e => { const r = e.target.closest('[data-fid]'); if (!r) return; const p = data.points.concat(vertexPts()).find(x => x.id === r.dataset.fid); if (!p) return; closeSheet(); map.setView([p.lat, p.lng], Math.max(map.getZoom(), 20)); if (p.vertexOf) showCard('line', p.vertexOf); else showCard('point', p); };
   const azOut = () => { const a = parseAz($('sAz').value); $('sAzOut').textContent = !$('sAz').value.trim() ? '' : a == null ? 'не понял угол' : `= ${dmsText(a)} = ${mText(a, 4)}° = ${milText(a)}`; };
   $('sAz').oninput = azOut; azOut();                                    // расшифровка: «43.18» — это 43°10′48″, а не 43°18′
   // координаты: разобрать; далеко от карты — переспросить; переставленные X/Y или широту/долготу — сказать
@@ -4803,6 +4823,170 @@ if (TRACK_N) TRACK_N.points({ from: 0 }).then(r => {
   setPref('trackLive', t.id); trackPoll = setInterval(trackPull, TRACK_POLL_MS);
   saveTracks(); setTrackBtn(); drawTracks(); toast('Идёт запись трека — продолжаю');
 }).catch(() => { /* старое приложение без службы трека */ });
+/* ───────────── Съёмка из файла контроллера / тахеометра: «№ X Y H код» → знаки и линии по кодам (как Field to Finish).
+   Линия — подряд идущие точки одного линейного кода; разрыв номеров (12, 13, 17) — новая линия: не соединять то, что снимали не подряд.
+   После «код» можно: «-2» (номер линии: две линии одного кода вперемешку), «o» / CLO — замкнуть, «e» / END — конец. Неизвестный код — простая точка с кодом в названии, в отчёте. ───────────── */
+// код из файла → тип знака: свой код бригады (таблица кодов), код приложения, название знака
+function codeToType(code) {
+  const c = String(code || '').trim().toLowerCase(); if (!c) return null;
+  for (const [t, v] of Object.entries(codeMap)) if (String(v).toLowerCase() === c && (POINTS[t] || LINES[t])) return t;
+  if (POINTS[c] || LINES[c]) return c;
+  const byName = [...Object.values(POINTS), ...Object.values(LINES)].find(s => s.name.toLowerCase() === c);
+  return byName ? byName.id : null;
+}
+// разбор поля «код»: «бр», «бр-2», «бр-2 o», «бр CLO»
+function codeParse(field) {
+  const parts = String(field || '').trim().split(/\s+/).filter(Boolean);
+  let cmd = '', code = '';
+  for (const w of parts) { const lw = w.toLowerCase(); if (/^(o|clo|close)$/.test(lw)) cmd = 'close'; else if (/^(e|end)$/.test(lw)) cmd = 'end'; else if (/^(p|beg|b)$/.test(lw)) cmd = 'begin'; else if (!code) code = w; }
+  const m = /^(.+?)-(\d+)$/.exec(code), key = m ? m[1] : code, line = m ? m[2] : '';
+  return { key, line, cmd };
+}
+// строки файла (уже в широте/долготе) → точки и линии плана; без побочных действий — для проверки и теста. У вершин линий — номера из файла (l.nos)
+function surveyBuild(rows) {
+  const pts = [], lines = [], unknown = new Map(); let gaps = 0, inLines = 0;
+  const open = new Map();                                              // «тип|номер линии» → { line, lastNo }
+  const nNo = no => { const m = /\d+/.exec(String(no == null ? '' : no)); return m ? Number(m[0]) : null; };   // «12а» → 12
+  const have = new Set(rows.map(r => nNo(r.no)).filter(v => v != null));   // номера, что есть в файле (у любого кода)
+  for (const r of rows) {
+    const { key, line: ln, cmd } = codeParse(r.code), t = codeToType(key), hz = r.h != null ? { h: r.h, src: 'file' } : null;
+    if (t && LINES[t]) {
+      const k = t + '|' + ln, cur = open.get(k), no = nNo(r.no);
+      let gap = false;                                                   // пропущен номер, которого нет в файле совсем; чужой код между — не разрыв; скачок больше 10 000 — разрыв
+      if (cur && no != null && cur.lastNo != null && no - cur.lastNo > 1) { if (no - cur.lastNo >= 10000) gap = true; else for (let q = cur.lastNo + 1; q < no; q++) if (!have.has(q)) { gap = true; break; } }
+      if (gap) gaps++;
+      inLines++;
+      if (!cur || gap || cmd === 'begin') {
+        const L0 = { id: uid(), type: t, latlngs: [[r.lat, r.lng]], hs: [hz], nos: [String(r.no)], caption: '', count: (LINES[t] || {}).defCount || 1, state: '', from: 'file' };
+        lines.push(L0); open.set(k, { line: L0, lastNo: no });
+      } else {
+        const last = cur.line.latlngs[cur.line.latlngs.length - 1];
+        if (Math.abs(last[0] - r.lat) > 1e-9 || Math.abs(last[1] - r.lng) > 1e-9) { cur.line.latlngs.push([r.lat, r.lng]); cur.line.hs.push(hz); cur.line.nos.push(String(r.no)); }   // повтор той же точки — без нулевого отрезка
+        cur.lastNo = no;
+      }
+      const o = open.get(k);
+      if (cmd === 'close') { if (!(LINES[t] || {}).closed && o.line.latlngs.length >= 3) { o.line.latlngs.push(o.line.latlngs[0].slice()); o.line.hs.push(o.line.hs[0]); o.line.nos.push(o.line.nos[0]); } open.delete(k); }
+      if (cmd === 'end') open.delete(k);
+      continue;
+    }
+    if (!t && key) unknown.set(key, (unknown.get(key) || 0) + 1);
+    pts.push({ id: uid(), no: r.no, type: t && POINTS[t] ? t : GENERIC.point, name: t ? '' : key, lat: r.lat, lng: r.lng, ...(r.h != null ? { h: r.h, hSrc: 'file' } : {}), how: 'coords', made: new Date().toISOString() });
+  }
+  const ok = lines.filter(l => l.latlngs.length >= ((LINES[l.type] || {}).closed ? 3 : 2));
+  for (const l of ok) if (!l.hs.some(Boolean)) delete l.hs;
+  const lone = lines.length - ok.length;                               // линия из одной точки — точкой, с её номером и отметкой
+  for (const l of lines) if (!ok.includes(l)) { const z = l.hs[0]; pts.push({ id: uid(), no: l.nos[0], type: GENERIC.point, name: codeLabel(l.type) + ' (одна точка линии)', lat: l.latlngs[0][0], lng: l.latlngs[0][1], ...(z && z.h != null ? { h: z.h, hSrc: 'file' } : {}), how: 'coords', made: new Date().toISOString() }); inLines--; }
+  return { pts, lines: ok, unknown: [...unknown.entries()].sort((a, b) => b[1] - a[1]), gaps, lone, inLines };
+}
+// вершины линий с номерами из файла — как точки для поиска, проверки номеров и пересчёта
+function vertexPts() {
+  const out = [];
+  for (const l of data.lines) if (Array.isArray(l.nos)) l.nos.forEach((no, i) => { const ll = l.latlngs[i]; if (ll && no) out.push({ id: l.id + '#' + i, no, lat: ll[0], lng: ll[1], h: l.hs && l.hs[i] ? l.hs[i].h : null, type: l.type, vertexOf: l }); });
+  return out;
+}
+function surveyImport() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.txt,.csv,.xyz,.prn,text/plain,text/csv';
+  inp.onchange = async () => {
+    const file = inp.files && inp.files[0]; if (!file) return;
+    let txt; const buf = await file.arrayBuffer();
+    try { txt = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { txt = new TextDecoder('windows-1251').decode(buf); }
+    const { rows, skipped } = parseSoText(txt), placed = rows.map(r => { try { return soPlace(r); } catch (e) { return null; } }).filter(Boolean);
+    if (!placed.length) { toast(`В файле не нашёл точек «№ X Y H код» (${planeName()})`); return; }
+    const c = map.getCenter(), far = placed.filter(p => L.latLng(p.lat, p.lng).distanceTo(c) > SO_FAR_KM * 1000).length;
+    if (far && !(await ask(`${far} из ${placed.length} точек дальше ${SO_FAR_KM} км отсюда. Похоже, файл в другой системе координат (сейчас ${esc(planeName())}). Загрузить всё равно?`, 'Загрузить'))) return;
+    const before = new Set([...data.points.map(p => String(p.no)), ...vertexPts().map(p => String(p.no))]);
+    const dupNo = placed.filter(r => before.has(String(r.no))).length;   // номера совпали с уже снятыми — скажем
+    const R = surveyBuild(placed);
+    let l0 = nextNo(data.lines); for (const l of R.lines) l.no = l0++;
+    data.points.push(...R.pts); data.lines.push(...R.lines); save(); redrawAll();
+    map.fitBounds(L.latLngBounds(placed.map(p => [p.lat, p.lng])).pad(0.2));
+    showSheet(`<div class="sh-head"><b>Съёмка загружена</b><button class="x" data-close>×</button></div><div class="form">
+      <div class="meas-verdict ${R.unknown.length || dupNo ? 'mid' : 'ok'}"><div>Строк: <b>${placed.length}</b> → точек-знаков: <b>${R.pts.length}</b>, вершин линий: <b>${R.inLines}</b> в <b>${R.lines.length}</b> ${plural(R.lines.length, 'линии', 'линиях', 'линиях')}${skipped ? `; строк не понял: ${skipped}` : ''}.
+        ${R.gaps ? `<br>Разрывов по номерам: ${R.gaps} — там линия начата заново (номеров нет в файле).` : ''}${R.lone ? `<br>Линий из одной точки: ${R.lone} — поставлены простыми точками.` : ''}${dupNo ? `<br><b>Номера совпали с уже снятыми: ${dupNo}</b> — поиск и пересчёт по номеру возьмут первую; переименуйте при необходимости.` : ''}</div></div>
+      ${R.unknown.length ? `<div class="hint" style="margin-top:8px;color:#c62828"><b>Неизвестные коды</b> — точки поставлены простыми, код в названии:</div>
+        <div class="list">${R.unknown.slice(0, 30).map(([k, n]) => `<div class="item"><span><b>${esc(k)}</b> — ${n} ${plural(n, 'точка', 'точки', 'точек')}</span></div>`).join('')}</div>
+        <div class="hint">Назначьте их в Меню → «Выгрузки» → «Коды знаков» (свой код у нужного знака) и загрузите файл ещё раз — или смените знак в карточке точки.</div>` : '<div class="hint" style="margin-top:8px">Все коды узнаны.</div>'}
+      <div class="acts"><button class="btn primary" data-close>Готово</button></div></div>`);
+  };
+  inp.click();
+}
+// поиск точки по номеру, отметке или названию: «125», «№ 125», «отм 120,5», «120,50», «ПГ-7»; допуск отметки — по числу знаков после запятой
+function findPoints(q, list) {
+  const s = String(q || '').trim(); if (!s) return [];
+  const H = p => { const v = pointH(p); return v == null ? null : v; };
+  const mh = /^(?:отм\.?|h)\s*([+-]?\d+(?:[.,]\d+)?)$/i.exec(s) || (/^[+-]?\d+[.,]\d+$/.test(s) ? [s, s] : null);
+  if (mh) { const v = Number(mh[1].replace(',', '.')), dec = (/[.,](\d+)$/.exec(mh[1]) || ['', ''])[1].length, tol = dec ? 0.5 * Math.pow(10, -dec) : 0.5;
+    return list.filter(p => H(p) != null && Math.abs(H(p) - v) <= tol + 1e-9).sort((a, b) => Math.abs(H(a) - v) - Math.abs(H(b) - v)).slice(0, 20); }
+  const mn = /^(?:№|n|#)?\s*(\d+\S*)$/i.exec(s);
+  if (mn) return list.filter(p => String(p.no) === mn[1]);
+  const low = s.toLowerCase();
+  return list.filter(p => String(p.name || '').toLowerCase().includes(low) || String(p.no || '').toLowerCase() === low).slice(0, 20);
+}
+// пропуски в номерах точек: «15–17, 23» — снимали не подряд или удалили (видно до отъезда)
+function noGaps(list) {
+  const ns = [...new Set(list.map(p => Number(p.no)).filter(v => Number.isInteger(v) && v > 0))].sort((a, b) => a - b), out = [];
+  for (let i = 1; i < ns.length; i++) if (ns[i] - ns[i - 1] > 1) out.push(ns[i] - ns[i - 1] === 2 ? String(ns[i - 1] + 1) : `${ns[i - 1] + 1}–${ns[i] - 1}`);
+  return out;
+}
+/* ───────────── Пересчёт плана по общим точкам (Гельмерт): снятые точки плана ↔ их координаты из каталога; невязки — до применения ─────────────
+   Одна пара — только сдвиг; две и больше — сдвиг и поворот (масштаб 1 — по умолчанию: ГНСС масштаб не искажает; с масштабом — по выбору). Отметки не трогаем. */
+function helmertFit(pairs, withScale) {
+  const n = pairs.length; if (!n) return null;
+  const cx = pairs.reduce((s, p) => s + p.x, 0) / n, cy = pairs.reduce((s, p) => s + p.y, 0) / n, CX = pairs.reduce((s, p) => s + p.X, 0) / n, CY = pairs.reduce((s, p) => s + p.Y, 0) / n;
+  let a = 1, b = 0;
+  if (n >= 2) {
+    let sxx = 0, sa = 0, sb = 0;
+    for (const p of pairs) { const x = p.x - cx, y = p.y - cy, X = p.X - CX, Y = p.Y - CY; sxx += x * x + y * y; sa += x * X + y * Y; sb += x * Y - y * X; }
+    if (sxx > 1e-6) { a = sa / sxx; b = sb / sxx; if (!withScale) { const m = Math.hypot(a, b) || 1; a /= m; b /= m; } }
+  }
+  const T = (x, y) => ({ X: a * (x - cx) - b * (y - cy) + CX, Y: b * (x - cx) + a * (y - cy) + CY });
+  const res = pairs.map(p => { const t = T(p.x, p.y); return { dX: p.X - t.X, dY: p.Y - t.Y, d: Math.hypot(p.X - t.X, p.Y - t.Y) }; });
+  const rms = Math.sqrt(res.reduce((s, r) => s + r.d * r.d, 0) / n);
+  const t0 = T(cx, cy);
+  return { a, b, T, res, rms, scale: Math.hypot(a, b), rot: Math.atan2(b, a) * 180 / Math.PI, shift: Math.hypot(t0.X - cx, t0.Y - cy), n };
+}
+let tfRows = [];                                                         // [{ no, X, Y }] — пока окно открыто
+function transformSheet() {
+  const zone0 = (() => { const p = data.points.find(q => isFinite(+q.lat)); return p ? sk42(p.lat, p.lng).zone : null; })();
+  if (zone0 == null) { toast('В плане нет точек'); return; }
+  const def = gkDef(zone0), xy = (lat, lng) => { const [y, x] = proj4('WGS84', def, [lng, lat]); return { x, y }; };
+  const withScale = !!pref('tfScale', false);
+  const all = data.points.concat(vertexPts()), tol = 0.1 * planScale / 1000;   // допуск невязки — 0,1 мм на плане (5 см на 1:500)
+  const zoneY = Y => Y < 1e6 ? { zone: zone0, y: zone0 * 1e6 + Y } : planeZone(Y);   // Y без номера зоны — в зоне плана, а не центра карты
+  const pairs = tfRows.map(r => { const p = all.find(q => String(q.no) === String(r.no)); if (!p) return null; const c = xy(p.lat, p.lng), z = zoneY(r.Y); return z ? { ...c, X: r.X, Y: z.zone === zone0 ? z.y : NaN, p, r } : null; }).filter(q => q && isFinite(q.X) && isFinite(q.Y));
+  const fit = pairs.length ? helmertFit(pairs, withScale) : null;
+  const spread = pairs.length >= 2 ? Math.max(...pairs.flatMap(a => pairs.map(b => Math.hypot(a.X - b.X, a.Y - b.Y)))) : 0;   // общие точки рядом — поворот ненадёжен
+  showSheet(`<div class="sh-head"><b>Пересчёт по общим точкам</b><button class="x" data-close>×</button></div><div class="form">
+    <div class="hint" style="margin:2px 0 8px">Для каждой общей точки — номер точки плана и её координаты из каталога (${esc(planeName())}). Одна точка — только сдвиг, две и больше — сдвиг и поворот; невязки видны до применения. Отметки не меняются.</div>
+    <div class="row2"><div><label for="tfNo">№ точки плана</label><input id="tfNo" inputmode="numeric" autocomplete="off" placeholder="12"></div><div><label>&nbsp;</label><button type="button" class="btn" id="tfAdd" style="width:100%">＋ Добавить</button></div></div>
+    <div class="row2"><div><label for="tfX">X каталога</label><input id="tfX" inputmode="decimal" autocomplete="off" placeholder="6181590,47"></div><div><label for="tfY">Y каталога</label><input id="tfY" inputmode="decimal" autocomplete="off" placeholder="7413346,04"></div></div>
+    <div class="list" style="margin-top:8px">${tfRows.map((r, i) => { const pr = pairs.find(q => q.r === r), rr = pr && fit ? fit.res[pairs.indexOf(pr)] : null;
+      return `<div class="item" style="min-height:44px"><span style="flex:1"><b>№ ${esc(String(r.no))}</b> → X ${f2(r.X)} Y ${f2(r.Y)}${!pr ? ' — <b style="color:#c62828">нет такой точки или другая зона</b>' : rr ? ` · невязка <b style="color:${rr.d > tol ? '#c62828' : 'inherit'}">${cmText(rr.d)}</b>` : ''}</span><button type="button" class="btn" data-tfdel="${i}" style="min-width:48px">✕</button></div>`; }).join('') || '<div class="hint">Пока нет общих точек.</div>'}</div>
+    ${fit ? `<div class="meas-verdict ${(fit.n >= 2 && fit.rms > tol) || (fit.n >= 2 && spread < 20) ? 'mid' : 'ok'}" style="margin-top:8px"><div>Сдвиг <b>${mText(fit.shift, 3)} м</b>${fit.n >= 2 ? `, поворот <b>${dmsText(Math.abs(fit.rot))}</b>${fit.rot > 0 ? ' (по часовой)' : fit.rot < 0 ? ' (против часовой)' : ''}, масштаб ${withScale ? `<b>${mText((fit.scale - 1) * 1e6, 0)} мм/км</b>` : '1 (не меняется)'}` : ''}.${fit.n >= 3 ? `<br>СКО по невязкам: <b>${cmText(fit.rms)}</b>${fit.rms > tol ? ` — больше ${cmText(tol)} (0,1 мм на плане): проверьте номера и координаты` : ''}.` : fit.n === 2 ? '<br>По двум точкам невязок не видно — добавьте третью для контроля.' : ''}${fit.n >= 2 && spread < 20 ? `<br><b>Общие точки ближе 20 м друг к другу (${mText(spread, 1)} м)</b> — поворот ненадёжен: на 500 м ошибка в сантиметр даст дециметры. Возьмите точки по краям участка.` : ''}</div></div>` : ''}
+    <label style="display:flex;gap:10px;align-items:center;min-height:44px;margin-top:6px"><input type="checkbox" id="tfSc"${withScale ? ' checked' : ''} style="width:24px;height:24px"> С масштабом (для старой съёмки, не по ГНСС)</label>
+    <div class="acts"><button class="btn" data-close>Закрыть</button><button class="btn primary" id="tfGo"${fit ? '' : ' disabled'}>Пересчитать весь план</button></div></div>`);
+  $('tfAdd').onclick = () => { const no = $('tfNo').value.trim(), X = parseNum($('tfX').value), Y = parseNum($('tfY').value);
+    if (!no || !isFinite(X) || !isFinite(Y) || !$('tfX').value.trim() || !$('tfY').value.trim()) { toast('Нужны номер точки, X и Y — числа'); return; }
+    if (!all.some(q => String(q.no) === no)) { toast(`В плане нет точки № ${no}`); return; }
+    tfRows = tfRows.filter(r => String(r.no) !== no).concat([{ no, X, Y }]); transformSheet(); };
+  document.querySelectorAll('#sheetPanel [data-tfdel]').forEach(b => b.onclick = () => { tfRows.splice(+b.dataset.tfdel, 1); transformSheet(); });
+  $('tfSc').onchange = e => { setPref('tfScale', e.target.checked); transformSheet(); };
+  $('tfGo').onclick = async () => {
+    if (!fit) return;
+    if (!(await ask(`Пересчитать все точки и линии плана: сдвиг ${mText(fit.shift, 3)} м${fit.n >= 2 ? `, поворот ${dmsText(Math.abs(fit.rot))}` : ''}? Отменить — кнопкой «Вернуть».`, 'Пересчитать'))) return;
+    const mv = (lat, lng) => { const c = xy(lat, lng), t = fit.T(c.x, c.y), ll = fromSk42(t.X, t.Y, zone0); return [ll.lat, ll.lng]; };
+    let n = 0;
+    for (const p of data.points) if (isFinite(+p.lat) && isFinite(+p.lng)) { const [la, ln] = mv(p.lat, p.lng); p.lat = la; p.lng = ln; n++; }
+    for (const l of data.lines) if (Array.isArray(l.latlngs)) l.latlngs = l.latlngs.map(a => isFinite(+a[0]) && isFinite(+a[1]) ? mv(a[0], a[1]) : a);
+    const dr = fit.n >= 2 ? fit.rot : 0;                                  // направления знаков (поворот, провода и оттяжки опор) — вместе с планом (по часовой — плюс)
+    if (Math.abs(dr) > 1e-9) for (const p of data.points) {
+      if (p.rot != null && isFinite(+p.rot)) p.rot = +((Number(p.rot) + dr + 360) % 360).toFixed(1);
+      if (p.attr && Array.isArray(p.attr.wires)) p.attr = { ...p.attr, wires: p.attr.wires.map(w => isFinite(+w) ? Math.round((Number(w) + dr + 360) % 360) % 360 : w), ...(Array.isArray(p.attr.stays) ? { stays: p.attr.stays.map(w => isFinite(+w) ? Math.round((Number(w) + dr + 360) % 360) % 360 : w) } : {}) };
+    }
+    tfRows = []; closeSheet(); save(); redrawAll(); toast(`Пересчитано: ${n} точек и ${data.lines.length} линий. Ошиблись — «Вернуть»`);
+  };
+}
 function soImport() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.txt,.csv,.xyz,.prn,text/plain,text/csv';
@@ -8851,7 +9035,9 @@ function exportMenu() {
     { id: 'kmz', icon: '⇩', text: 'KMZ с фото (Google Earth)' },
     { id: 'kml', icon: '⇩', text: 'KML без фото' },
     { header: 'Загрузить' },
-    { id: 'import', icon: '⇧', text: 'Загрузить KML / KMZ с фото / копию плана' }
+    { id: 'import', icon: '⇧', text: 'Загрузить KML / KMZ с фото / копию плана' },
+    { id: 'transform', icon: '⤧', text: 'Пересчитать план по общим точкам (сдвиг, поворот, невязки)' },
+    { id: 'survimport', icon: '⇧', text: 'Съёмка из файла «№ X Y H код» — знаки и линии по кодам, отчёт о неизвестных кодах' }
   ], act => MENU[act]());
 }
 // настройки: переключатели — лист остаётся открытым, видно, что включилось
@@ -8895,6 +9081,8 @@ const MENU = {
   kml: () => download(`plan_${today()}.kml`, toKml(), 'application/vnd.google-earth.kml+xml'),
   csv: () => download(`points_${today()}.csv`, toCsv(), 'text/csv;charset=utf-8'),
   import: () => $('fileIn').click(),
+  survimport: () => surveyImport(),
+  transform: () => transformSheet(),
   backup: () => backupMenu(),
   grid: () => { if (map.hasLayer(gridLayer)) map.removeLayer(gridLayer); else gridLayer.addTo(map); },
   raster: () => rasterInput.click(),
@@ -9688,7 +9876,7 @@ function dxfVtxBuild() {
 function dxfFreeSide(p) {
   const dirs = [];
   for (const nb of (dxfVtx && dxfVtx.get(dxfVKey(p.lat, p.lng))) || []) dirs.push(planeInverse(L.latLng(p.lat, p.lng), L.latLng(nb)).dir);
-  if ((POINTS[p.type] || {}).pole) dirs.push(...poleWires(p.attr));   // провода опоры — тоже заняты
+  if ((POINTS[p.type] || {}).pole) dirs.push(...poleDirs(p.attr));   // провода опоры — тоже заняты
   const quads = [{ n: true, e: true, az: 45 }, { n: true, e: false, az: 315 }, { n: false, e: true, az: 135 }, { n: false, e: false, az: 225 }];
   if (!dirs.length) return quads;
   return quads.map(q => ({ q, sc: Math.min(...dirs.map(d => Math.abs(angDiff(d, q.az)))) })).sort((a, b) => b.sc - a.sc).map(o => o.q);   // все четверти — от свободной к занятой
@@ -9775,7 +9963,7 @@ function toDxf() {
     const val = { НОМЕР: p.no || '', ОТМ_ПОДП: H == null ? '' : planNum(H, 2), ОТМ_НИЗ: /^w_/.test(p.type) && wellBottom(p) != null ? planNum(wellBottom(p), 2) : '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
       ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : !p.q && p.approx != null ? f3(p.approx) : '', РЕЛЬЕФ: H == null ? '' : reliefOf(p) ? '1' : '0' };   // для поверхности в GeoniCS / КРЕДО — фильтр по атрибуту
     const d0 = DXF_TEXT_M, vis = ATTRS.filter(a => !a[1]).map(a => String(val[a[0]] || '')), lw = Math.max(1, ...vis.map(t => t.length)) * d0 * DXF_CHAR_W + 0.6 * d0, lh = vis.filter(Boolean).length * 1.2 * d0 + 0.4 * d0;
-    const pw = (POINTS[p.type] || {}).pole ? poleWires(p.attr) : [], km5 = DXF_M_PER_MM, near = q => { const tx0 = q.e ? +x + 0.6 * d0 : +x - lw, tx1 = q.e ? +x + lw : +x - 0.6 * d0, ty0 = q.n ? +y + 0.4 * d0 : +y - lh, ty1 = q.n ? +y + lh : +y - 0.5 * d0, hb = 0.45 * km5;   // настоящие края текста; запас — полширины наконечника
+    const pw = (POINTS[p.type] || {}).pole ? poleDirs(p.attr) : [], km5 = DXF_M_PER_MM, near = q => { const tx0 = q.e ? +x + 0.6 * d0 : +x - lw, tx1 = q.e ? +x + lw : +x - 0.6 * d0, ty0 = q.n ? +y + 0.4 * d0 : +y - lh, ty1 = q.n ? +y + lh : +y - 0.5 * d0, hb = 0.45 * km5;   // настоящие края текста; запас — полширины наконечника
       return pw.some(w => { const t = w * Math.PI / 180; for (let k = 0; k <= 16; k++) { const d = (0.5 + 4.0 * k / 16) * km5, px = +x + Math.sin(t) * d, py = +y + Math.cos(t) * d; if (px > tx0 - hb && px < tx1 + hb && py > ty0 - hb && py < ty1 + hb) return true; } return false; }); };
     const po = q => near(q) ? 4.8 * km5 : 0;   // подпись задела бы стрелку провода — за концы стрелок
     const rectOf = q => { const o = po(q), x0 = q.e ? +x + o : +x - lw - o, y0 = q.n ? +y + o : +y - lh - o; return { x0, y0, x1: x0 + lw, y1: y0 + lh }; };
@@ -10048,6 +10236,7 @@ function checkPlan() {
   { const rp = P.filter(inRelief); add('bad', 'Рельеф: точки совпадают в плане, а отметки разные', [...new Set(reliefDups(rp).flat())].map(pt), 'Меню → «Точки рельефа» — одну из пары исключите или переснимите');
     add('warn', 'Рельеф: включены знаки, у которых отметка обычно не земля (люк, опора…)', rp.filter(p => !reliefTypeDef(p.type)).map(pt), 'Если отметка — по земле, всё верно; иначе — «Точки рельефа» → снять ✓'); }
   add('warn', 'Арматура не на сети (дальше 3 м от линии сети)', P.filter(p => (POINTS[p.type] || {}).arm && !pipeLine(p)).map(pt));
+  { const g = noGaps(P.concat(vertexPts())); add('info', `Пропуски в номерах точек: ${g.slice(0, 8).join(', ')}${g.length > 8 ? '…' : ''}`, g.length ? true : [], 'Снимали не подряд или точку удалили — проверьте по журналу, что ничего не потеряно'); }
   add('info', 'Аварийные дефекты не устранены', P.filter(p => (POINTS[p.type] || {}).defect && (p.attr || {}).urgent && !(p.attr || {}).fixed).map(pt), 'Сообщите эксплуатирующей организации; ведомость — Меню → «Ведомость дефектов»');
   { const left = soList().filter(p => !p.done).length, bad = soList().filter(p => p.done && !p.done.ok).length;
     if (left) out.push({ level: 'info', text: `Разбивка: не вынесено точек — ${left}`, objs: [], hint: 'Меню → «Разбивка»' });
@@ -10263,7 +10452,7 @@ function pointNote(p) {
   const lots = /^w_/.test(p.type) && a.lot && a.lot.length ? 'лотки ' + a.lot.map(l => (hasH(l.h) ? planNum(l.h, 2) : '?') + (l.dir ? ' (' + l.dir + ')' : '')).join(', ') : '';
   return [p.note, approxNote(p), s.frac && hasH(a.bot) ? 'рядом с камнем ' + planNum(a.bot, 2) : '', lots, bot != null && hasH(p.h) ? 'глуб. ' + planNum(Number(p.h) - bot, 2) : ''].filter(Boolean).join('; ');
 }
-const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки', dxf: 'с чертежа (архив)' };
+const H_SRC = { gnss: 'ГНСС', snap: 'с точки привязки', dxf: 'с чертежа (архив)', file: 'из файла съёмки' };
 // метаданные отметки для отчёта: СКО, высота над эллипсоидом, высота антенны (с какой снимали), репер привязки
 const hInfoCols = hi => { const h = hi || {}, ref = h.ref;
   return [h.acc != null ? f3(h.acc) : '', hasH(h.hEll) ? f3(h.hEll) : '', h.ant != null ? f3(h.ant) : '', ref ? (typeof ref === 'object' ? ref.name || 'репер' : ref) : '']; };
