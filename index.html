@@ -2006,7 +2006,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 122;
+const APP_BUILD = 123;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -5490,13 +5490,15 @@ function reliefDups(pts) {
   }
   return out;
 }
-let reliefFlt = { type: '', show: 'all', hMin: '', hMax: '' };
+let reliefFlt = { type: '', show: 'all', hMin: '', hMax: '', box: null };   // box — четыре угла [широта, долгота], выбран рамкой на карте
 // список: какие точки идут в горизонтали; фильтры по знаку, высоте, «в рельефе / нет»; включить или исключить показанные разом
 function reliefSheet() {
   const withH = data.points.filter(p => pointH(p) != null), inR = withH.filter(reliefOf);
   const types = [...new Set(withH.map(p => p.type))].map(t => [t, ((POINTS[t] || POINTS.mark).name || t).replace(/ \(.*\)$/, '')]).sort((a, b) => a[1].localeCompare(b[1], 'ru'));
   const f = reliefFlt, lo = f.hMin === '' ? -Infinity : parseNum(f.hMin), hi = f.hMax === '' ? Infinity : parseNum(f.hMax), badLo = Number.isNaN(lo), badHi = Number.isNaN(hi), bad = badLo || badHi;
-  const pick = (g, a, b) => withH.filter(p => (!g.type || p.type === g.type) && (g.show === 'all' || (g.show === 'in') === reliefOf(p)) && pointH(p) >= a && pointH(p) <= b);
+  const inBox = (g, p) => { if (!g.box) return true; if (!Array.isArray(g.box[0])) return p.lat >= g.box[0] && p.lat <= g.box[2] && p.lng >= g.box[1] && p.lng <= g.box[3];
+    let inside = false; const P = g.box; for (let i = 0, j = P.length - 1; i < P.length; j = i++) if ((P[i][0] > p.lat) !== (P[j][0] > p.lat) && p.lng < (P[j][1] - P[i][1]) * (p.lat - P[i][0]) / (P[j][0] - P[i][0]) + P[i][1]) inside = !inside; return inside; };
+  const pick = (g, a, b) => withH.filter(p => inBox(g, p) && (!g.type || p.type === g.type) && (g.show === 'all' || (g.show === 'in') === reliefOf(p)) && pointH(p) >= a && pointH(p) <= b);
   const list = bad ? [] : pick(f, lo, hi);
   const dups = reliefDups(inR), odd = inR.filter(p => !RELIEF_DEFAULT.has(p.type)), shown = list.slice(0, JOURNAL_MAX);
   showSheet(`<div class="sh-head"><b>Точки рельефа: ${inR.length} из ${withH.length}</b><button class="x" data-close>×</button></div><div class="form">
@@ -5506,6 +5508,7 @@ function reliefSheet() {
     <div class="row2"><div><label for="rfType">Знак</label><select id="rfType"><option value="">все знаки</option>${types.map(([t, n]) => `<option value="${esc(t)}"${t === f.type ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></div>
       <div><label for="rfShow">Показать</label><select id="rfShow">${[['all', 'все'], ['in', 'в рельефе'], ['out', 'не в рельефе']].map(([v, t]) => `<option value="${v}"${v === f.show ? ' selected' : ''}>${t}</option>`).join('')}</select></div></div>
     <div class="row2"><div><label for="rfMin">Отметка от, м</label><input id="rfMin" inputmode="decimal" value="${esc(f.hMin)}"${badLo ? ' style="border-color:#c62828;color:#c62828"' : ''} placeholder="—" autocomplete="off"></div><div><label for="rfMax">до, м</label><input id="rfMax" inputmode="decimal" value="${esc(f.hMax)}"${badHi ? ' style="border-color:#c62828;color:#c62828"' : ''} placeholder="—" autocomplete="off"></div></div>
+    <div class="row2" style="margin-bottom:6px"><button type="button" class="btn" id="rfBox">▭ ${f.box ? 'Другая рамка' : 'Выбрать рамкой на карте'}</button>${f.box ? '<button type="button" class="btn" id="rfBoxOff">✕ Без рамки</button>' : '<span></span>'}</div>
     <div class="row2"><button type="button" class="btn" id="rfOn"${list.length ? '' : ' disabled'}>✓ Включить показанные (${list.length})</button><button type="button" class="btn" id="rfOff"${list.length ? '' : ' disabled'}>✗ Исключить показанные (${list.length})</button></div>
     ${bad ? '<div class="hint" style="color:#c62828">Отметка — число, например 120,5. Пока число неверное, кнопки «Включить / Исключить» выключены.</div>' : ''}
     <button type="button" class="btn" id="rfDef" style="width:100%;margin-top:4px"${list.length ? '' : ' disabled'}>Показанным — как по знаку (${list.length})</button>
@@ -5514,7 +5517,9 @@ function reliefSheet() {
       <span style="flex:none;font-variant-numeric:tabular-nums">${mText(pointH(p), 2)}</span></label>`).join('') || '<div class="hint">Таких точек нет.</div>'}
       ${list.length > JOURNAL_MAX ? `<div class="hint">Показаны ${JOURNAL_MAX} из ${list.length} — сузьте фильтр; «Включить / Исключить» действуют на все ${list.length}.</div>` : ''}</div>
     <div class="acts"><button class="btn primary" data-close>Готово</button></div></div>`);
-  const read = () => ({ type: $('rfType').value, show: $('rfShow').value, hMin: $('rfMin').value.trim(), hMax: $('rfMax').value.trim() });
+  const read = () => ({ type: $('rfType').value, show: $('rfShow').value, hMin: $('rfMin').value.trim(), hMax: $('rfMax').value.trim(), box: reliefFlt.box });
+  $('rfBox').onclick = () => { reliefFlt = read(); closeSheet(); reliefBoxPick(); };
+  if ($('rfBoxOff')) $('rfBoxOff').onclick = () => { reliefFlt = { ...read(), box: null }; again(); };
   const again = () => { const box = $('rfRows'), top = box ? box.scrollTop : 0; reliefSheet(); if ($('rfRows')) $('rfRows').scrollTop = top; };
   const refilter = () => { reliefFlt = read(); again(); };
   $('rfType').onchange = refilter; $('rfShow').onchange = refilter; $('rfMin').onchange = () => setTimeout(refilter, 250); $('rfMax').onchange = () => setTimeout(refilter, 250);
@@ -5530,6 +5535,7 @@ function reliefSheet() {
 const CT_STEPS = [0.25, 0.5, 1];                                       // ГКИНП-02-033-82, п. 2.8: 0,5 — обычно; 1,0 — горный (уклоны больше 6°); 0,25 — спланированные площадки
 const CT_THICK_DEF = { 0.25: 4, 0.5: 4, 1: 5 };                       // зн. 329, п. 449: 4-я при 0,5; 5-я при 1
 const CT_STRUCT = new Set(['sl_low', 'sl_high', 'sl_strong', 'wall_v', 'wall_inc', 'wall_wood', 'cliff', 'ledge', 'gully', 'r_shoulder', 'r_kerb', 'r_nokerb']);   // по ним — структурные линии
+const CT_BREAK = new Set(['cliff', 'wall_v', 'wall_inc', 'wall_wood']), CT_BREAK_MM = 0.8;   // через обрыв и стенку горизонталь не проводят — обрывается у знака
 const CT_BEND = 0.5, CT_SMOOTH_M = 0.5, CT_W_MM = 0.13, CT_WT_MM = 0.23, CT_LBL_MM = 2.0, CT_TICK_MM = 1.0, CT_LBL_EVERY_MM = 150;   // толщины по ГКИНП (0,12–0,15 и 0,2–0,25), цифры, бергштрих, подписи — через ~15 см плана
 let ctOn = !!pref('ctOn', false), ctCache = null, ctLayer = null, ctTimer = 0;
 const ctSoon = () => { clearTimeout(ctTimer); ctTimer = setTimeout(drawContours, 2000); };   // после правки плана — перестроить, но не на каждое касание
@@ -5559,16 +5565,21 @@ function ctInputs() {
       for (let k = 1; k <= n; k++) { const u = k / n, cur = idx({ x: q[i - 1].x + (q[i].x - q[i - 1].x) * u, y: q[i - 1].y + (q[i].y - q[i - 1].y) * u }, zs[i - 1] + (zs[i] - zs[i - 1]) * u); if (cur !== prev) segs.push([prev, cur]); prev = cur; }
     }
   }
-  return { pts, segs, rep, zone, xy, o };
+  const brk = [];                                                       // отрезки обрывов и стенок в местной системе (и без отметок)
+  for (const l of data.lines) if (CT_BREAK.has(l.type) && Array.isArray(l.latlngs) && l.latlngs.every(a => isFinite(+a[0]) && isFinite(+a[1]))) { const q = l.latlngs.map(a => xy(a[0], a[1])); for (let i = 1; i < q.length; i++) brk.push([q[i - 1], q[i]]); }
+  return { pts, segs, rep, zone, xy, o, brk };
 }
 // горизонтали: пересечения уровней с треугольниками, склейка в линии по общим рёбрам; уровень h = k · сечение
 function ctBuild() {
   const inp = ctInputs(), step = ctStep(), N = ctThickN(), maxE = ctMaxEdge();
-  const out = { step, N, lines: [], rep: inp.rep, gaps: 0, zone: inp.zone, tris: 0, o: inp.o, xy: inp.xy, holes: [] };
+  const out = { step, N, lines: [], rep: inp.rep, gaps: 0, zone: inp.zone, tris: 0, o: inp.o, xy: inp.xy, holes: [], cutBrk: 0 };
   if (inp.pts.length < 3) return out;
   const P = inp.pts, T0 = conformTin(P, inp.segs.slice()), long = t => Math.max(...[0, 1, 2].map(k => Math.hypot(P[t[k]].x - P[t[(k + 1) % 3]].x, P[t[k]].y - P[t[(k + 1) % 3]].y))) > maxE;
-  const T = T0.filter(t => !long(t)), ekk = (a, b) => a < b ? a + '_' + b : b + '_' + a, cnt = new Map(); for (const t of T0) for (let k = 0; k < 3; k++) { const e = ekk(t[k], t[(k + 1) % 3]); cnt.set(e, (cnt.get(e) || 0) + 1); }
-  for (const t of T0) if (long(t)) { out.gaps++; if ([0, 1, 2].every(k => cnt.get(ekk(t[k], t[(k + 1) % 3])) === 2)) out.holes.push(t.map(i => ({ x: P[i].x, y: P[i].y }))); }   // дыра — только внутри снятого (ни одной стороны на краю участка)
+  const X = (p, q, a, b) => { const o = (u, v, w) => (v.x - u.x) * (w.y - u.y) - (v.y - u.y) * (w.x - u.x); return o(p, q, a) * o(p, q, b) < 0 && o(a, b, p) * o(a, b, q) < 0; };
+  const overBreak = t => inp.brk.some(([a, b]) => [0, 1, 2].some(k => X(P[t[k]], P[t[(k + 1) % 3]], a, b)));   // треугольник через обрыв — ложный скат, прочь
+  const T = T0.filter(t => !long(t) && !overBreak(t)), ekk = (a, b) => a < b ? a + '_' + b : b + '_' + a, cnt = new Map(); for (const t of T0) for (let k = 0; k < 3; k++) { const e = ekk(t[k], t[(k + 1) % 3]); cnt.set(e, (cnt.get(e) || 0) + 1); }
+  const inR = t => { const [a, b, c] = t.map(i => P[i]), A = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2, per = Math.hypot(b.x - a.x, b.y - a.y) + Math.hypot(c.x - b.x, c.y - b.y) + Math.hypot(a.x - c.x, a.y - c.y); return per ? 2 * A / per : 0; };
+  for (const t of T0) if (long(t)) { out.gaps++; if (inR(t) > maxE / 6 && [0, 1, 2].every(k => cnt.get(ekk(t[k], t[(k + 1) % 3])) === 2)) out.holes.push(t.map(i => ({ x: P[i].x, y: P[i].y }))); }   // дыра — только внутри снятого (ни одной стороны на краю участка)
   out.tris = T.length;
   const lev = new Map();                                                 // уровень → отрезки [ключ ребра A, точка A, ключ ребра B, точка B]
   const ek = (a, b) => a < b ? a + '_' + b : b + '_' + a;
@@ -5593,11 +5604,29 @@ function ctBuild() {
       }
       const pts = line.map(q => q[1]), closed = line.length > 3 && line[0][0] === line[line.length - 1][0];
       const k = Math.round(z / step), thick = k % N === 0;
-      out.lines.push({ h: z, thick, closed, pts: ctSmooth(pts, closed) });
+      const sm = ctSmooth(pts, closed), parts = inp.brk.length ? ctAwayFrom(sm, inp.brk, CT_BREAK_MM * DXF_M_PER_MM) : [sm];
+      if (parts.length !== 1 || parts[0] !== sm) out.cutBrk++;
+      for (const pp of parts) out.lines.push({ h: z, thick, closed: closed && pp === sm, pts: pp });
     }
   }
   out.P = P; out.T = T;
   return out;
+}
+// части линии дальше d от отрезков (обрыв, стенка): линия сгущается шагом d/2, близкие точки выкидываются, линия рвётся
+function ctAwayFrom(pts, segs, d) {
+  const near = q => segs.some(([a, b]) => { const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / L2)); return Math.hypot(a.x + dx * t - q.x, a.y + dy * t - q.y) < d; });
+  const bb = pts.reduce((r, q) => [Math.min(r[0], q.x), Math.min(r[1], q.y), Math.max(r[2], q.x), Math.max(r[3], q.y)], [Infinity, Infinity, -Infinity, -Infinity]);
+  segs = segs.filter(([a, b]) => Math.max(a.x, b.x) > bb[0] - d && Math.min(a.x, b.x) < bb[2] + d && Math.max(a.y, b.y) > bb[1] - d && Math.min(a.y, b.y) < bb[3] + d);   // только обрывы рядом с этой горизонталью
+  if (!segs.length) return [pts];
+  const dense = [{ ...pts[0], v: 1 }];
+  for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / (d / 2))); for (let k = 1; k <= n; k++) dense.push({ x: a.x + (b.x - a.x) * k / n, y: a.y + (b.y - a.y) * k / n, v: k === n ? 1 : 0 }); }
+  const out = []; let cur = [];
+  for (const q of dense) { if (near(q)) { if (cur.length > 1) out.push(cur); cur = []; } else cur.push(q); }
+  if (cur.length > 1) out.push(cur);
+  if (out.length === 1 && out[0].length === dense.length) return [pts];
+  const closed = Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-9;
+  if (closed && out.length > 1 && out[0][0] === dense[0] && out[out.length - 1][out[out.length - 1].length - 1] === dense[dense.length - 1]) out[0] = out.pop().concat(out[0].slice(1));   // замкнутая: концы — один кусок, подпись не дважды
+  return out.map(pp => pp.filter((q, i) => q.v || i === 0 || i === pp.length - 1).map(q => ({ x: q.x, y: q.y })));   // в DXF — только вершины и места разрыва
 }
 // сглаживание: одна итерация Чайкина, концы на месте — горизонталь как от руки, но не уходит от точек
 function ctSmooth(pts, closed) {
@@ -5683,7 +5712,7 @@ function contourSheet() {
   showSheet(`<div class="sh-head"><b>Горизонтали</b><button class="x" data-close>×</button></div><div class="form">
     <div class="hint" style="margin:2px 0 8px">Строятся по точкам «в рельеф» (Меню → «Точки рельефа») и по отметкам бровок, подошв, обрывов, подпорных стенок — через эти линии горизонталь не перескакивает. В план не записываются: пересчитываются сами, в DXF уходят слоем «ГОРИЗОНТАЛИ».</div>
     <div class="meas-verdict ${rep.dups ? 'bad' : R.holes.length || !R.lines.length ? 'mid' : 'ok'}" style="margin-bottom:8px"><div>Вошло точек: <b>${rep.points}</b>, линий с отметками: <b>${rep.lines}</b>${R.tris ? `, треугольников ${R.tris}` : ''}.<br>
-      Выпало: не в рельефе — ${rep.off}, в рельефе без отметки — ${rep.noH}${R.holes.length ? `, <b>редко снятых мест внутри участка — ${R.holes.length}</b> (на карте — красным пунктиром, доснимите пикеты)` : ''}.${rep.dups ? `<br><b>Совпадающих точек с разными отметками: ${rep.dups}</b> — исправьте в «Точках рельефа», иначе горизонтали «завьются».` : ''}</div></div>
+      Выпало: не в рельефе — ${rep.off}, в рельефе без отметки — ${rep.noH}${R.holes.length ? `, <b>редко снятых мест внутри участка — ${R.holes.length}</b> (на карте — красным пунктиром, доснимите пикеты)` : ''}.${R.cutBrk ? `<br>Оборваны у обрывов и стенок: ${R.cutBrk}.` : ''}${rep.dups ? `<br><b>Совпадающих точек с разными отметками: ${rep.dups}</b> — исправьте в «Точках рельефа», иначе горизонтали «завьются».` : ''}</div></div>
     <div class="row2"><div><label for="ctStep">Сечение, м</label><select id="ctStep">${CT_STEPS.map(v => `<option value="${v}"${v === R.step ? ' selected' : ''}>${mText(v, v < 1 ? 2 : 1)}</option>`).join('')}</select></div>
       <div><label for="ctThick">Утолщать каждую</label><select id="ctThick">${[2, 3, 4, 5, 10].map(v => `<option value="${v}"${v === R.N ? ' selected' : ''}>${v}-ю</option>`).join('')}</select></div></div>
     <div class="row2"><div><label for="ctMax">Не соединять дальше, м</label><input id="ctMax" inputmode="decimal" value="${ctMaxEdge()}" autocomplete="off"></div>
@@ -5747,6 +5776,30 @@ function ctDxf(ent, useLayer, xyz) {
     const [x, y] = P(m);
     ent(0, 'TEXT', 8, lyL, 10, x, 20, y, 30, 0, 40, (CT_LBL_MM * DXF_M_PER_MM).toFixed(3), 1, dxfStr(m.txt), 50, deg.toFixed(1), 7, DXF_STYLE, 72, 1, 11, x, 21, y, 31, 0, 73, 2);
   }
+}
+// рамка на карте: два касания — два угла (в перчатках проще, чем тянуть); карта под рамкой не двигается; «Отмена» — назад к списку
+function reliefBoxPick() {
+  const host = map.getContainer(), ov = document.createElement('div'), svg = document.createElementNS(NS, 'svg'), rect = document.createElementNS(NS, 'rect');
+  ov.style.cssText = 'position:absolute;top:0;right:0;bottom:0;left:0;z-index:1000;touch-action:none;cursor:crosshair'; svg.style.cssText = 'width:100%;height:100%;overflow:visible';
+  rect.setAttribute('fill', 'rgba(25,118,210,.12)'); rect.setAttribute('stroke', '#1976d2'); rect.setAttribute('stroke-width', '2'); rect.setAttribute('stroke-dasharray', '6 4');
+  svg.appendChild(rect); ov.appendChild(svg); host.appendChild(ov);
+  L.DomEvent.disableClickPropagation(ov); L.DomEvent.disableScrollPropagation(ov);
+  const box = $('pick'); let mo = null; const done = () => { if (mo) mo.disconnect(); ov.remove(); if (box.querySelector('#rbNo')) box.style.display = 'none'; };
+  box.innerHTML = '<div class="row" style="justify-content:space-between;gap:8px;align-items:center"><b style="flex:1" id="rbTxt">Рамка: коснитесь первого угла</b><button class="btn" id="rbNo">Отмена</button></div>';
+  box.style.display = 'block'; box.style.bottom = ($('bar').offsetHeight + 8) + 'px';
+  $('rbNo').onclick = () => { done(); reliefSheet(); };
+  mo = new MutationObserver(() => { if (!box.querySelector('#rbNo')) done(); }); mo.observe(box, { childList: true, subtree: true });   // другой инструмент занял плашку — рамку прочь, карта не заблокирована
+  const at = e => map.mouseEventToContainerPoint(e);                   // повёрнутая карта — поворот снимается
+  let first = null;
+  ov.onpointermove = e => { if (!first) return; const c = at(e); rect.setAttribute('x', Math.min(first.x, c.x)); rect.setAttribute('y', Math.min(first.y, c.y)); rect.setAttribute('width', Math.abs(c.x - first.x)); rect.setAttribute('height', Math.abs(c.y - first.y)); };
+  ov.onpointerup = e => {
+    const c = at(e);
+    if (!first) { first = c; $('rbTxt').textContent = 'Рамка: коснитесь второго угла'; return; }
+    if (Math.abs(c.x - first.x) < 10 || Math.abs(c.y - first.y) < 10) { toast('Рамка слишком мала — коснитесь второго угла подальше'); return; }
+    const poly = [[first.x, first.y], [c.x, first.y], [c.x, c.y], [first.x, c.y]].map(q => { const ll = map.containerPointToLatLng(q); return [ll.lat, ll.lng]; });   // четыре угла: при повороте карты рамка — повёрнутый прямоугольник
+    reliefFlt = { ...reliefFlt, box: poly };
+    done(); reliefSheet();
+  };
 }
 /* Перенос свойств: следующий колодец, задвижка, участок сети того же вида — с диаметром, материалом, владельцем прошлого */
 const CARRY = { well: ['wd', 'wm'], arm: ['d'], net: ['mat', 'd', 'mark', 'volt', 'owner', 'hKind'] };
