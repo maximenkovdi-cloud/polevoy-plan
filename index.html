@@ -2004,7 +2004,7 @@ setTimeout(syncVolKeys, 0);                                          // посл
 /* ───────────── Обновление Android-приложения: плашка «Доступна новая версия» ───────────── */
 
 // APP_BUILD меняет скрипт выпуска (release.ps1); на сайте лежит version.json с номером последней сборки и ссылкой на APK
-const APP_BUILD = 120;
+const APP_BUILD = 121;
 const UPDATE_URL = 'https://maximenkovdi-cloud.github.io/polevoy-plan/version.json';
 const APK_BASE = 'https://maximenkovdi-cloud.github.io/polevoy-plan/';
 const apkOk = u => typeof u === 'string' && u.startsWith(APK_BASE) && !/[\s"'<>]/.test(u);   // подменённый version.json не уведёт на чужой адрес
@@ -3607,6 +3607,7 @@ function showCard(kind, obj) {
     if (pointSpoofNote(obj)) kv.push(['Внимание', `<b style="color:#c62828">снята ${esc(pointSpoofNote(obj))}</b> — проконтролируйте`]);
     const hInfo = obj.hInfo || (obj.meas ? { acc: obj.meas.hm, from: 'measure' } : {});
     kv.push(['Отметка', (obj.h != null && obj.h !== '' ? `<b>${mText(Number(obj.h), 2)} м</b><br>` : '') + `<span style="color:var(--muted)">${esc(heightNote(obj.h, obj.hSrc, hInfo))}</span>`]);
+    if (pointH(obj) != null) kv.push(['Рельеф', `<button class="btn" data-act="relief" style="min-height:44px">${reliefOf(obj) ? '✓ идёт в горизонтали' : '✗ не в горизонтали'}</button>`]);   // люк, опора — по умолчанию нет
     if (obj.meas) {
       const m = obj.meas, mark = { ok: '✓ годится', mid: '≈ на пределе', bad: '✗ не годится' }[m.ok] || '';
       kv.push(['Измерение', `±${cmText(m.m)} за ${esc(m.sec)} с, отсчётов ${esc(m.n)}${m.hdop != null ? ', HDOP ' + esc(m.hdop) : ''}<br>${mark} для 1:${esc(m.scale)} (допуск ${cmText(m.tol)})`]);
@@ -3660,6 +3661,7 @@ function showCard(kind, obj) {
   card.onclick = e => {
     const act = e.target.closest('[data-act]') && e.target.closest('[data-act]').dataset.act;
     if (act === 'close') hideCard();
+    if (act === 'relief' && kind === 'point') { const v = !reliefOf(obj); if (v === RELIEF_DEFAULT.has(obj.type)) delete obj.relief; else obj.relief = v; save(); showCard(kind, obj); return; }
     const sw = e.target.closest('[data-color]');
     if (sw) {                                                         // смена цвета; выбранный цвет запоминается для новых простых точек и линий
       const c = sw.dataset.color;
@@ -5467,6 +5469,58 @@ function journalSheet() {
     closeSheet(); map.setView([p.lat, p.lng], Math.max(map.getZoom(), 19)); showCard('point', p); };
 }
 
+/* ───────────── Точки рельефа: не каждая отметка — про землю (люк, опора, угол здания — «ситуационная с отметкой», как в КРЕДО) ───────────── */
+// по умолчанию в рельеф — отметка высоты, точка (пикет), яма, бугор; остальное — нет. Своё решение — p.relief = true / false (как сняли, так и решили)
+const RELIEF_DEFAULT = new Set(['spot', 'mark', 'pit', 'mound', 'ss_long', 'ss_temp']);   // точки съёмочной сети — центр у земли
+const RELIEF_DUP_M = 0.1, RELIEF_DUP_DH = 0.05;                         // две точки ближе 10 см с разницей отметок больше 5 см — ошибка для поверхности
+function reliefOf(p) { return p.relief === true || p.relief === false ? p.relief : RELIEF_DEFAULT.has(p.type); }
+function inRelief(p) { return reliefOf(p) && pointH(p) != null; }
+// совпадающие в плане точки рельефа с разными отметками (GeoniCS, «проверка ошибок поверхности»)
+function reliefDups(pts) {
+  const out = [], cell = new Map(), key = (x, y) => Math.floor(x / RELIEF_DUP_M) + ',' + Math.floor(y / RELIEF_DUP_M);
+  const P = pts.map(p => { const c = sk42(p.lat, p.lng); return { p, x: c.x, y: c.y, h: pointH(p) }; });
+  for (const a of P) {
+    const [cx, cy] = key(a.x, a.y).split(',').map(Number);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const b of cell.get((cx + i) + ',' + (cy + j)) || [])
+      if (Math.hypot(a.x - b.x, a.y - b.y) < RELIEF_DUP_M && Math.abs(a.h - b.h) > RELIEF_DUP_DH) out.push([b.p, a.p]);
+    const k = key(a.x, a.y); if (!cell.has(k)) cell.set(k, []); cell.get(k).push(a);
+  }
+  return out;
+}
+let reliefFlt = { type: '', show: 'all', hMin: '', hMax: '' };
+// список: какие точки идут в горизонтали; фильтры по знаку, высоте, «в рельефе / нет»; включить или исключить показанные разом
+function reliefSheet() {
+  const withH = data.points.filter(p => pointH(p) != null), inR = withH.filter(reliefOf);
+  const types = [...new Set(withH.map(p => p.type))].map(t => [t, ((POINTS[t] || POINTS.mark).name || t).replace(/ \(.*\)$/, '')]).sort((a, b) => a[1].localeCompare(b[1], 'ru'));
+  const f = reliefFlt, lo = f.hMin === '' ? -Infinity : parseNum(f.hMin), hi = f.hMax === '' ? Infinity : parseNum(f.hMax), badLo = Number.isNaN(lo), badHi = Number.isNaN(hi), bad = badLo || badHi;
+  const pick = (g, a, b) => withH.filter(p => (!g.type || p.type === g.type) && (g.show === 'all' || (g.show === 'in') === reliefOf(p)) && pointH(p) >= a && pointH(p) <= b);
+  const list = bad ? [] : pick(f, lo, hi);
+  const dups = reliefDups(inR), odd = inR.filter(p => !RELIEF_DEFAULT.has(p.type)), shown = list.slice(0, JOURNAL_MAX);
+  showSheet(`<div class="sh-head"><b>Точки рельефа: ${inR.length} из ${withH.length}</b><button class="x" data-close>×</button></div><div class="form">
+    <div class="hint" style="margin:2px 0 8px">В горизонтали идут только отмеченные ✓. По умолчанию — отметки высот, пикеты, точки съёмочной сети, ямы и бугры (отметка — по дну и по верху); люк, опора, угол здания — нет: их отметка не про землю. Точки без отметки здесь не показаны.</div>
+    ${dups.length ? `<div class="hint" style="color:#c62828;margin-bottom:6px">⚠ Совпадают в плане, а отметки разные: ${dups.length} ${plural(dups.length, 'пара', 'пары', 'пар')} — ${dups.slice(0, 4).map(d => '№ ' + esc(String(d[0].no || '?')) + ' и № ' + esc(String(d[1].no || '?'))).join(', ')}${dups.length > 4 ? '…' : ''}. Одну из каждой пары исключите.</div>` : ''}
+    ${odd.length ? `<div class="hint" style="color:#ef6c00;margin-bottom:6px">Включены вручную не рельефные знаки: ${odd.length} — проверьте, что их отметка — земля.</div>` : ''}
+    <div class="row2"><div><label for="rfType">Знак</label><select id="rfType"><option value="">все знаки</option>${types.map(([t, n]) => `<option value="${esc(t)}"${t === f.type ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></div>
+      <div><label for="rfShow">Показать</label><select id="rfShow">${[['all', 'все'], ['in', 'в рельефе'], ['out', 'не в рельефе']].map(([v, t]) => `<option value="${v}"${v === f.show ? ' selected' : ''}>${t}</option>`).join('')}</select></div></div>
+    <div class="row2"><div><label for="rfMin">Отметка от, м</label><input id="rfMin" inputmode="decimal" value="${esc(f.hMin)}"${badLo ? ' style="border-color:#c62828;color:#c62828"' : ''} placeholder="—" autocomplete="off"></div><div><label for="rfMax">до, м</label><input id="rfMax" inputmode="decimal" value="${esc(f.hMax)}"${badHi ? ' style="border-color:#c62828;color:#c62828"' : ''} placeholder="—" autocomplete="off"></div></div>
+    <div class="row2"><button type="button" class="btn" id="rfOn"${list.length ? '' : ' disabled'}>✓ Включить показанные (${list.length})</button><button type="button" class="btn" id="rfOff"${list.length ? '' : ' disabled'}>✗ Исключить показанные (${list.length})</button></div>
+    ${bad ? '<div class="hint" style="color:#c62828">Отметка — число, например 120,5. Пока число неверное, кнопки «Включить / Исключить» выключены.</div>' : ''}
+    <button type="button" class="btn" id="rfDef" style="width:100%;margin-top:4px"${list.length ? '' : ' disabled'}>Показанным — как по знаку (${list.length})</button>
+    <div id="rfRows" style="max-height:44vh;overflow:auto;margin-top:8px">${shown.map(p => `<label class="meas-row" style="display:flex;align-items:center;gap:10px;min-height:48px;margin:0"><input type="checkbox" data-rid="${esc(p.id)}"${reliefOf(p) ? ' checked' : ''} style="width:26px;height:26px;flex:none">${symbolSvg(pointSvg(p), 24, objColor(p, 'point'))}
+      <span style="flex:1;min-width:0"><b>${esc(String(p.no || ''))}</b> ${esc((POINTS[p.type] || POINTS.mark).name.replace(/ \(.*\)$/, ''))}${p.name ? ' — ' + esc(p.name) : ''}${p.relief === true || p.relief === false ? ' <small style="color:var(--muted)">(вручную)</small>' : ''}</span>
+      <span style="flex:none;font-variant-numeric:tabular-nums">${mText(pointH(p), 2)}</span></label>`).join('') || '<div class="hint">Таких точек нет.</div>'}
+      ${list.length > JOURNAL_MAX ? `<div class="hint">Показаны ${JOURNAL_MAX} из ${list.length} — сузьте фильтр; «Включить / Исключить» действуют на все ${list.length}.</div>` : ''}</div>
+    <div class="acts"><button class="btn primary" data-close>Готово</button></div></div>`);
+  const read = () => ({ type: $('rfType').value, show: $('rfShow').value, hMin: $('rfMin').value.trim(), hMax: $('rfMax').value.trim() });
+  const again = () => { const box = $('rfRows'), top = box ? box.scrollTop : 0; reliefSheet(); if ($('rfRows')) $('rfRows').scrollTop = top; };
+  const refilter = () => { reliefFlt = read(); again(); };
+  $('rfType').onchange = refilter; $('rfShow').onchange = refilter; $('rfMin').onchange = () => setTimeout(refilter, 250); $('rfMax').onchange = () => setTimeout(refilter, 250);
+  const setAll = v => { const g = read(), a = g.hMin === '' ? -Infinity : parseNum(g.hMin), b = g.hMax === '' ? Infinity : parseNum(g.hMax); if (Number.isNaN(a) || Number.isNaN(b)) { toast('Отметка — число, например 120,5'); return; }
+    const L2 = pick(g, a, b); for (const p of L2) { if (v === null || v === RELIEF_DEFAULT.has(p.type)) delete p.relief; else p.relief = v; } save(); reliefFlt = g; again(); toast(`${v === true ? 'Включено' : v === false ? 'Исключено' : 'Как по знаку'}: ${L2.length}`); };
+  $('rfOn').onclick = () => setAll(true); $('rfOff').onclick = () => setAll(false); $('rfDef').onclick = () => setAll(null);
+  $('rfRows').onchange = e => { const id = e.target.dataset && e.target.dataset.rid, p = id && data.points.find(q => q.id === id); if (!p) return;
+    if (e.target.checked === RELIEF_DEFAULT.has(p.type)) delete p.relief; else p.relief = e.target.checked; save(); again(); };   // предупреждения и счётчики — сразу
+}
 /* Перенос свойств: следующий колодец, задвижка, участок сети того же вида — с диаметром, материалом, владельцем прошлого */
 const CARRY = { well: ['wd', 'wm'], arm: ['d'], net: ['mat', 'd', 'mark', 'volt', 'owner', 'hKind'] };
 function carryFrom(list, obj, keys) {
@@ -8346,6 +8400,7 @@ $('btnMenu').onclick = () => openList('Меню', [
   { id: 'passport', icon: '✎', text: objectName() ? 'Паспорт объекта (в выгрузки)' : 'Паспорт объекта: заполнить' },
   { id: 'check', icon: '✓', text: 'Проверка перед сдачей' },
   { id: 'journal', icon: '☰', text: `Журнал съёмки: ${data.points.length} ${plural(data.points.length, 'точка', 'точки', 'точек')}, фильтры` },
+  { id: 'relief', icon: '⛰', text: `Точки рельефа: ${data.points.filter(inRelief).length} из ${data.points.filter(p => pointH(p) != null).length} — что идёт в горизонтали` },
   { id: 'heights', icon: '△', text: hgt.ref ? `Отметки: привязка к реперу ${hgt.ref.name || ''}`.trim() : hgt.dh ? 'Отметки: с поправкой' : 'Отметки: привязать к реперу' },
   { id: 'cad', icon: '⬠', text: 'Кадастр: участки, площадь и ΔP, сведения о точках' },
   ...(waitList().length ? [{ id: 'redo', icon: '📡', text: `Доснять по GPS: ${waitList().length} ${plural(waitList().length, 'точка', 'точки', 'точек')} (поставлены при подмене)` }] : []),
@@ -8503,6 +8558,7 @@ const MENU = {
   export: () => exportMenu(),
   planscale: () => openList('Масштаб плана', [500, 1000, 2000].map(v => ({ id: String(v), icon: '⊡', text: `1:${v}` + (v === 500 ? ' — исполнительная съёмка, сети' : v === 1000 ? ' — посёлки, промплощадки' : ' — незастроенная территория'), on: v === planScale, radio: true })), v => setPlanScale(Number(v))),
   journal: () => journalSheet(),
+  relief: () => reliefSheet(),
   redo: () => redoSheet(),
   settings: () => settingsMenu(),
   dxfframe: () => { const on = !pref('dxfFrame', true); setPref('dxfFrame', on); toast(on ? 'DXF — с рамкой листа, сеткой и штампом' : 'DXF — только план, без рамки (для вставки в чужой чертёж)'); },
@@ -9302,7 +9358,7 @@ function toDxf() {
   const E = [], ent = (...kv) => { for (let i = 0; i < kv.length; i += 2) E.push(String(kv[i]), kv[i] === 1 ? dxfStr(kv[i + 1]) : String(kv[i + 1]).replace(/[\r\n]+/g, ' ')); dxfTxtBox(kv); };
   dxfBoxes = []; dxfVtxBuild(); dxfLbl = [];   // перевод строки в значении сломал бы файл
   const blocks = new Set(), blkType = new Map(), ltypes = new Map();
-  const ATTRS = [['НОМЕР', 0], ['ОТМ_ПОДП', 0], ['ОТМ_НИЗ', 0], ['ОТМ', 1], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1]];   // [тег, 1 — невидимый]; отметку видно подписью с запятой (ГОСТ Р 21.101 п. 5.4), а ОТМ — то же число с точкой для программ рельефа
+  const ATTRS = [['НОМЕР', 0], ['ОТМ_ПОДП', 0], ['ОТМ_НИЗ', 0], ['ОТМ', 1], ['КОД', 1], ['ПРИМ', 1], ['ИСТОЧНИК_H', 1], ['СКО', 1], ['РЕЛЬЕФ', 1]];   // [тег, 1 — невидимый]; отметку видно подписью с запятой (ГОСТ Р 21.101 п. 5.4), а ОТМ — то же число с точкой для программ рельефа
   const okLL = a => a && isFinite(+a[0]) && isFinite(+a[1]);              // NaN/Infinity в одной точке испортили бы весь файл (AutoCAD не откроет)
   for (const p of data.points.filter(q => okLL([q.lat, q.lng]))) {
     // точки без отметки — в свой слой «…_БЕЗ_H», чтобы их нули не попали в поверхность рельефа
@@ -9312,7 +9368,7 @@ function toDxf() {
     blocks.add(blk); if (!blkType.has(blk)) blkType.set(blk, p);   // по первой точке кода — её знак (тип и атрибуты)
     ent(0, 'INSERT', 8, lay, 66, 1, 2, blk, 10, x, 20, y, 30, z, ...(p.rot && isFinite(+p.rot) ? [50, (-Number(p.rot)).toFixed(1)] : []));   // поворот: на экране — по часовой, в DXF — против
     const val = { НОМЕР: p.no || '', ОТМ_ПОДП: H == null ? '' : planNum(H, 2), ОТМ_НИЗ: /^w_/.test(p.type) && wellBottom(p) != null ? planNum(wellBottom(p), 2) : '', ОТМ: H == null ? '' : H.toFixed(2), КОД: codeOf(p.type), ПРИМ: [p.name, pointNote(p)].filter(Boolean).join(' '),
-      ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : !p.q && p.approx != null ? f3(p.approx) : '' };
+      ИСТОЧНИК_H: H == null ? '' : H_SRC[p.hSrc] || 'вручную', СКО: p.q && p.q.acc != null ? f3(p.q.acc) : !p.q && p.approx != null ? f3(p.approx) : '', РЕЛЬЕФ: H == null ? '' : reliefOf(p) ? '1' : '0' };   // для поверхности в GeoniCS / КРЕДО — фильтр по атрибуту
     const d0 = DXF_TEXT_M, vis = ATTRS.filter(a => !a[1]).map(a => String(val[a[0]] || '')), lw = Math.max(1, ...vis.map(t => t.length)) * d0 * DXF_CHAR_W + 0.6 * d0, lh = vis.filter(Boolean).length * 1.2 * d0 + 0.4 * d0;
     const pw = (POINTS[p.type] || {}).pole ? poleWires(p.attr) : [], km5 = DXF_M_PER_MM, near = q => { const tx0 = q.e ? +x + 0.6 * d0 : +x - lw, tx1 = q.e ? +x + lw : +x - 0.6 * d0, ty0 = q.n ? +y + 0.4 * d0 : +y - lh, ty1 = q.n ? +y + lh : +y - 0.5 * d0, hb = 0.45 * km5;   // настоящие края текста; запас — полширины наконечника
       return pw.some(w => { const t = w * Math.PI / 180; for (let k = 0; k <= 16; k++) { const d = (0.5 + 4.0 * k / 16) * km5, px = +x + Math.sin(t) * d, py = +y + Math.cos(t) * d; if (px > tx0 - hb && px < tx1 + hb && py > ty0 - hb && py < ty1 + hb) return true; } return false; }); };
@@ -9583,6 +9639,8 @@ function checkPlan() {
   add('bad', 'Колодцы без отметки люка', wells.filter(p => !hasH(p.h)).map(pt));
   add('bad', 'Колодцы без лотков', wells.filter(p => !((p.attr || {}).lot || []).some(l => l && hasH(l.h))).map(pt), 'Нажмите колодец → «Изменить» — отметки лотков и направления');
   add('warn', 'Точки без отметки', P.filter(p => !/^w_/.test(p.type) && !((POINTS[p.type] || {}).svgFor && !(POINTS[p.type] || {}).pole) && !(POINTS[p.type] || {}).arm && !(POINTS[p.type] || {}).defect && !isCadPt(p) && pointH(p) == null).map(pt));
+  { const rp = P.filter(inRelief); add('bad', 'Рельеф: точки совпадают в плане, а отметки разные', [...new Set(reliefDups(rp).flat())].map(pt), 'Меню → «Точки рельефа» — одну из пары исключите или переснимите');
+    add('warn', 'Рельеф: включены знаки, у которых отметка обычно не земля (люк, опора…)', rp.filter(p => !RELIEF_DEFAULT.has(p.type)).map(pt), 'Если отметка — по земле, всё верно; иначе — «Точки рельефа» → снять ✓'); }
   add('warn', 'Арматура не на сети (дальше 3 м от линии сети)', P.filter(p => (POINTS[p.type] || {}).arm && !pipeLine(p)).map(pt));
   add('info', 'Аварийные дефекты не устранены', P.filter(p => (POINTS[p.type] || {}).defect && (p.attr || {}).urgent && !(p.attr || {}).fixed).map(pt), 'Сообщите эксплуатирующей организации; ведомость — Меню → «Ведомость дефектов»');
   { const left = soList().filter(p => !p.done).length, bad = soList().filter(p => p.done && !p.done.ok).length;
